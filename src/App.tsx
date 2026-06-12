@@ -45,9 +45,33 @@ export default function App() {
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState("");
+  const [isPulling, setIsPulling] = useState(false);
+  const [isCloudDataFresh, setIsCloudDataFresh] = useState(false);
 
   // Push notification state for "Order Cancelled" updates
   const [notifications, setNotifications] = useState<{ id: string; message: string; timestamp: string }[]>([]);
+
+  const pullDatabaseFromCloud = async () => {
+    const config = dbService.getCloudConfig();
+    const hasAppsScript = config.appsScriptUrl && 
+      !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && 
+      !config.appsScriptUrl.includes("AKfycbz_Example");
+
+    if (!hasAppsScript) return;
+
+    setIsPulling(true);
+    try {
+      await dbService.pullMasters();
+      await dbService.pullRecords();
+      updatePendingCount();
+      setIsCloudDataFresh(true);
+    } catch (err) {
+      console.warn("Manual pull from cloud failed", err);
+      setIsCloudDataFresh(false);
+    } finally {
+      setIsPulling(false);
+    }
+  };
 
   // Load state on mount
   useEffect(() => {
@@ -65,6 +89,33 @@ export default function App() {
     setSelectedOperator(savedOp);
 
     updatePendingCount();
+
+    // Auto pull data from Spreadsheet on startup if online and appsScriptUrl is configured
+    const autoPullData = async () => {
+      const config = dbService.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && 
+        !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && 
+        !config.appsScriptUrl.includes("AKfycbz_Example");
+      
+      if (hasAppsScript && !pref) {
+        setIsPulling(true);
+        try {
+          await dbService.pullMasters();
+          await dbService.pullRecords();
+          updatePendingCount();
+          setIsCloudDataFresh(true);
+        } catch (err) {
+          console.warn("Auto pull on startup failed, using local cache", err);
+          setIsCloudDataFresh(false);
+        } finally {
+          setIsPulling(false);
+        }
+      } else {
+        setIsCloudDataFresh(false);
+      }
+    };
+
+    autoPullData();
 
     // Set up a periodic background sync simulation if online
     const interval = setInterval(() => {
@@ -191,6 +242,9 @@ export default function App() {
         triggerSync={triggerSync}
         isSyncing={isSyncing}
         selectedOperator={selectedOperator}
+        isPulling={isPulling}
+        onPullFromCloud={pullDatabaseFromCloud}
+        isCloudDataFresh={isCloudDataFresh}
       />
 
       {/* Real-time push notification toaster alerts */}
@@ -268,6 +322,8 @@ export default function App() {
                 triggerSync={triggerSync}
                 isSyncing={isSyncing}
                 onRecordAdded={updatePendingCount}
+                isPulling={isPulling}
+                isCloudDataFresh={isCloudDataFresh}
               />
             )}
 

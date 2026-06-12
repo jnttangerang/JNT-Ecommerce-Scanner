@@ -35,6 +35,8 @@ interface ScannerProps {
   triggerSync: () => void;
   isSyncing: boolean;
   onRecordAdded?: () => void;
+  isPulling?: boolean;
+  isCloudDataFresh?: boolean;
 }
 
 export const ScannerScreen: React.FC<ScannerProps> = ({
@@ -44,7 +46,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   pendingCount,
   triggerSync,
   isSyncing,
-  onRecordAdded
+  onRecordAdded,
+  isPulling = false,
+  isCloudDataFresh = false
 }) => {
   // Lists
   const [scannedRecords, setScannedRecords] = useState<ScanRecord[]>([]);
@@ -84,6 +88,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       stopCamera();
     };
   }, []);
+
+  // Reload records whenever a background sync or pull completes
+  useEffect(() => {
+    if (!isSyncing && !isPulling) {
+      loadRecords();
+    }
+  }, [isSyncing, isPulling]);
 
   const loadRecords = () => {
     const all = dbService.getRecords();
@@ -311,7 +322,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <span className="text-slate-800 font-bold text-xs truncate max-w-[150px]">{config.outlet}</span>
               </div>
               <div className="flex items-center space-x-2 mt-0.5">
-                <span className="text-red-650 font-extrabold text-sm">{config.seller}</span>
+                <span className="text-red-650 font-extrabold text-sm" style={{ color: "#ef2727" }}>{config.seller}</span>
                 <span className="text-slate-300 font-black">•</span>
                 <span className="text-slate-600 text-xs font-semibold truncate max-w-[100px]">{config.operator}</span>
               </div>
@@ -328,6 +339,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   ? "bg-red-600 hover:bg-red-700 text-white shadow-sm cursor-pointer animate-pulse"
                   : "bg-slate-50 text-slate-400 border border-slate-200 cursor-not-allowed"
               }`}
+              style={pendingCount > 0 ? { backgroundColor: "#ff0000", color: "#ffffff" } : undefined}
               id="upload-now-batch"
             >
               <FolderSync className="h-4 w-4" />
@@ -342,12 +354,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         </div>
 
         {/* Total stats card */}
-        <div className="bg-red-50/65 border border-red-105 rounded-2xl p-4 flex items-center justify-between relative overflow-hidden">
+        <div 
+          className="bg-red-50/65 border border-red-105 rounded-2xl p-4 flex items-center justify-between relative overflow-hidden"
+          style={{ backgroundColor: "#ffffff" }}
+        >
           <div className="absolute right-[-10px] bottom-[-20px] text-red-600/5 font-black text-7xl select-none font-mono">
             SUM
           </div>
           <div>
-            <span className="text-[10px] font-extrabold text-red-600 tracking-wider uppercase block">TOTAL SCAN BATCH</span>
+            <span className="text-[10px] font-extrabold text-red-600 tracking-wider uppercase block">TOTAL SCAN</span>
             <span className="text-3xl font-black text-red-600 font-mono tracking-tight" id="total-scan-ticker">
               {totalToday}
             </span>
@@ -368,7 +383,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             <div className="bg-slate-950 px-4 py-3 border-b border-slate-850 flex items-center justify-between">
               <span className="font-semibold text-xs tracking-wide text-slate-200 flex items-center uppercase">
                 <Camera className="h-3.5 w-3.5 mr-2 text-red-500" />
-                DOKUMENTASI FOTO & BARCODE
+                FOTO & SCAN BARCODE
               </span>
               <div className="flex items-center space-x-1.5">
                 <span className={`h-2 w-2 rounded-full ${cameraActive ? "bg-green-500 animate-ping" : "bg-slate-700"}`} />
@@ -379,7 +394,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             </div>
 
             {/* Video feed backdrop frame */}
-            <div className="relative bg-black aspect-video md:aspect-[4/3] flex flex-col items-center justify-center overflow-hidden border-b border-slate-850">
+            <div className="relative bg-black h-[350px] sm:h-[450px] w-full flex flex-col items-center justify-center overflow-hidden border-b border-slate-850">
               {/* Target Scan Lines overlay */}
               <div className="absolute inset-0 border-[3px] border-transparent pointer-events-none z-10">
                 {/* Simulated laser scan */}
@@ -442,7 +457,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     </p>
                   </div>
                   <p className="text-slate-400 text-xs max-w-xs leading-relaxed">
-                    Paket ini telah terdaftar dalam database pickup hari ini. Total scan tidak bertambah demi mencegah double input.
+                    Resi telah terdaftar dalam database pickup hari ini. Total scan tidak bertambah demi mencegah double resi.
                   </p>
                   <button
                     onClick={() => {
@@ -482,7 +497,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
                   <div className="w-full max-w-md bg-slate-900/60 p-3 rounded-xl border border-slate-805 text-center text-[11px] text-slate-300">
                     <p className="font-semibold">Operator wajib memeriksa:</p>
-                    <p className="text-slate-400">Apakah barcode & teks resi terlihat jelas dan tidak buram?</p>
+                    <p className="text-slate-400">Apakah barcode & nomor resi terlihat jelas dan tidak buram?</p>
                   </div>
 
                   {/* Dual options triggers */}
@@ -516,8 +531,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     type="text"
                     value={manualResi}
                     onChange={(e) => setManualResi(e.target.value)}
-                    placeholder="Contoh: JX9530937001 atau tempel barcode"
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 font-mono text-sm focus:outline-none focus:border-red-500 uppercase placeholder:text-slate-500"
+                    placeholder="Ketik manual"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 font-mono text-xs focus:outline-none focus:border-red-500 uppercase placeholder:text-slate-500"
                     id="manual-resi-input"
                   />
                   <div className="absolute right-3 top-3 text-[10px] text-slate-500 font-mono tracking-widest uppercase">
@@ -533,6 +548,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       ? "bg-red-600 text-white hover:bg-red-500 cursor-pointer"
                       : "bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-850"
                   }`}
+                  style={manualResi.trim() ? { backgroundColor: "#e31111", color: "#ffffff" } : undefined}
                   id="manual-resi-submit-button"
                 >
                   SIMPAN RESI
@@ -555,7 +571,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                         ? "bg-red-600 text-white font-extrabold animate-pulse shadow-sm"
                         : "text-slate-500 hover:text-red-600 hover:bg-slate-100/50"
                     }`}
-                    title="Bersihkan basis data harian"
+                    title="Bersihkan database harian"
                   >
                     <Trash2 className="h-3 w-3" />
                     <span>{showResetConfirm ? "YAKIN? KLIK LAGI UNTUK RESET" : "RESET LOCAL DB"}</span>
@@ -590,7 +606,27 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             
             <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
               <div>
-                <h3 className="font-bold text-sm text-slate-800 uppercase tracking-tight">DAFTAR 20 RESI TERAKHIR</h3>
+                <h3 className="font-bold text-sm text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                  DAFTAR 20 RESI TERAKHIR
+                  {(() => {
+                    const isDataRealtime = !isOffline && pendingCount === 0 && isCloudDataFresh;
+                    return isDataRealtime ? (
+                      <span 
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase tracking-wider"
+                        title="Data berasal langsung dari spreadsheet dan up-to-date"
+                      >
+                        ● SYNCED
+                      </span>
+                    ) : (
+                      <span 
+                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200 uppercase tracking-wider"
+                        title="Data cache lokal (belum disinkron / offline)"
+                      >
+                        ● STALE
+                      </span>
+                    );
+                  })()}
+                </h3>
                 <p className="text-[10px] text-slate-500">Terbaru berada di urutan paling atas</p>
               </div>
               <span className="bg-slate-100 border border-slate-200 px-2.5 py-1 rounded text-[11px] font-bold text-slate-600 font-mono">

@@ -224,7 +224,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           <div>
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center">
               <User className="h-3.5 w-3.5 mr-1 text-red-600" />
-              Nama Operator Pickup
+              Nama Operator
             </label>
             <select
               value={selectedOperator}

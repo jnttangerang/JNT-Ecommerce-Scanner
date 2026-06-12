@@ -17,6 +17,9 @@ interface HeaderProps {
   triggerSync: () => void;
   isSyncing: boolean;
   selectedOperator: string;
+  isPulling?: boolean;
+  onPullFromCloud?: () => void;
+  isCloudDataFresh?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,7 +30,10 @@ export const Header: React.FC<HeaderProps> = ({
   pendingCount,
   triggerSync,
   isSyncing,
-  selectedOperator
+  selectedOperator,
+  isPulling = false,
+  onPullFromCloud,
+  isCloudDataFresh = false
 }) => {
   const [currentTime, setCurrentTime] = useState("");
 
@@ -96,6 +102,62 @@ export const Header: React.FC<HeaderProps> = ({
               <span>{isSyncing ? "Sync..." : `Sync (${pendingCount})`}</span>
             </button>
           )}
+
+          {/* Tarik Sheet Button to Fetch Live Data if Apps Script is configured */}
+          {(() => {
+            const config = dbService.getCloudConfig();
+            const hasAppsScript = config.appsScriptUrl && 
+              !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && 
+              !config.appsScriptUrl.includes("AKfycbz_Example");
+            if (!hasAppsScript) return null;
+            return (
+              <button
+                onClick={onPullFromCloud}
+                disabled={isPulling || isOffline}
+                className={`flex items-center justify-center px-3 py-1.5 rounded-lg border text-xs font-semibold select-none transition-all ${
+                  isPulling
+                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-wait"
+                    : isOffline
+                    ? "bg-slate-50 text-slate-350 border-slate-150 cursor-not-allowed"
+                    : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200 active:scale-95 cursor-pointer"
+                }`}
+                title="Tarik/Seleraskan Data Master & Resi dari Spreadsheet"
+                id="pull-from-cloud-button"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isPulling ? "animate-spin text-amber-500" : "text-slate-500"}`} />
+                <span className="hidden sm:inline ml-1.5 text-slate-705">Tarik Sheet</span>
+              </button>
+            );
+          })()}
+
+          {/* Synced vs Stale Local Cache Indicator Badge */}
+          {(() => {
+            const isDataRealtime = !isOffline && pendingCount === 0 && isCloudDataFresh;
+            return isDataRealtime ? (
+              <div 
+                className="flex items-center space-x-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[11px] font-bold select-none"
+                title="Data di aplikasi Anda 100% sinkron dan up-to-date dengan Spreadsheet cloud!"
+                id="synced-cloud-badge"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="hidden md:inline">SYNCED (LIVE)</span>
+                <span className="inline md:hidden">SYNCED</span>
+              </div>
+            ) : (
+              <div 
+                className="flex items-center space-x-1.5 bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1.5 rounded-lg text-[11px] font-bold select-none"
+                title="Menampilkan data cache lokal (Stale). Klik tombol 'Tarik Sheet' atau hubungkan jaringan untuk memuat ulang."
+                id="stale-cache-badge"
+              >
+                <span className="h-2 w-2 rounded-full bg-amber-500 animate-[pulse_1.5s_infinite]" />
+                <span className="hidden md:inline">STALE (CACHE)</span>
+                <span className="inline md:hidden">STALE</span>
+              </div>
+            );
+          })()}
 
           {/* Interactive Network status toggle */}
           <button

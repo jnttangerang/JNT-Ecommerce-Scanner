@@ -1164,7 +1164,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
           {/* Block 1: GitHub Repositories Setup */}
-          <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-4">
+          <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-4" style={{ color: "#202020" }}>
             <h5 className="font-bold text-slate-900 text-xs flex items-center">
               <Github className="h-5 w-5 text-slate-800 mr-1.5" />
               I. MENGUNGGAH KE GITHUB
@@ -1194,14 +1194,14 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
           </div>
 
           {/* Block 2: Vercel Cloud Hosting Setup */}
-          <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-4">
+          <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-4" style={{ color: "#202020" }}>
             <h5 className="font-bold text-slate-900 text-xs flex items-center">
               <Cloud className="h-5 w-5 text-black mr-1.5" />
               II. DEPLOYMENT KE VERCEL
             </h5>
             
-            <ol className="list-decimal list-inside text-xs space-y-2.5 text-slate-650 leading-relaxed font-semibold">
-              <li>
+            <ol className="list-decimal list-inside text-xs space-y-2.5 text-slate-650 leading-relaxed font-semibold" style={{ color: "#626262" }}>
+              <li style={{ color: "#818181" }}>
                 Kunjungi <a href="https://vercel.com" target="_blank" rel="noopener noreferrer" className="text-red-600 underline font-bold">Vercel.com</a> dan impor repo <span className="font-bold font-mono">jt-pickup-scanner</span> Anda.
               </li>
               <li>
@@ -1521,8 +1521,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
           onClick={handleLogout}
           className="bg-slate-100 hover:bg-red-50 text-slate-650 hover:text-red-600 border border-slate-200 hover:border-red-200 transition-all font-bold px-4 py-2.5 rounded-2xl text-xs flex items-center justify-center space-x-2 cursor-pointer shadow-sm md:w-auto"
         >
-          <LogOut className="h-3.5 w-3.5" />
-          <span>Keluar Dashboard</span>
+          <LogOut className="h-3.5 w-3.5" style={{ color: "#e50000", height: "18px", width: "18px" }} />
+          <span style={{ color: "#303030" }}>Keluar Dashboard</span>
         </button>
       </div>
 
@@ -1552,7 +1552,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
           <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">ORDER CANCELLED</span>
           <div className="flex items-baseline space-x-2 mt-1">
-            <span className="text-3xl font-black text-red-650 font-mono">{statsTotalCancelled}</span>
+            <span className="text-3xl font-black text-red-650 font-mono" style={{ color: "#ff0000" }}>{statsTotalCancelled}</span>
             <span className="text-xs text-slate-500 font-medium">ditolak</span>
           </div>
           <span className="text-[10px] text-red-600 font-bold block mt-1">harus dikembalikan ke seller</span>
@@ -1874,6 +1874,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
             value={selectedStatusFilter}
             onChange={(e) => setSelectedStatusFilter(e.target.value)}
             className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-705 focus:outline-none"
+            style={{ color: "#616161" }}
           >
             <option value="ALL">--- Hubungan Status (Semua) ---</option>
             <option value="SCANNED">SCANNED (Aktif)</option>

@@ -22,25 +22,23 @@ export interface CloudConfig {
 }
 
 const DEFAULT_CLOUD_CONFIG: CloudConfig = {
-  coreFolderUrl: "https://drive.google.com/drive/folders/1_Zt8E_Pickup_Ecommerce_Scanner_JT_Example",
-  fotoFolderId: "1_Ph0t0_Res1_Folder_ID_Example",
-  spreadsheetId: "1_JT_Pickup_Ecommerce_Spreadsheet_ID_Example",
-  appsScriptUrl: "https://script.google.com/macros/s/AKfycbz_Example_Apps_Script_Web_App_URL_Here/exec",
+  coreFolderUrl: "https://drive.google.com/drive/folders/1Q1Ch2LDxr30cHbyd-xFueIqAnLHANPPY",
+  fotoFolderId: "https://drive.google.com/drive/folders/19peJr4JWqKA6Ei4AwuXgohhF2C59ugyp",
+  spreadsheetId: "12ly2pM3Vof9IKTwjselkLUX6sMdcdI6rcb_KvbjcQ_Y",
+  appsScriptUrl: "https://script.google.com/macros/s/AKfycbwB-vEtnAnfpMMdOdBEbe-cidDpnu1gao_rU_CC4AXhtfg2hTh4awm8MvThT884WCIR/exec",
   faviconUrl: ""
 };
 
 // Default Master Data
 const DEFAULT_OUTLETS: Outlet[] = [
   { NamaOutlet: "J&T Pasir Jaha Balaraja" },
-  { NamaOutlet: "J&T Jayanti" },
-  { NamaOutlet: "J&T Cikupa Mas" }
+  { NamaOutlet: "J&T Jayanti" }
 ];
 
 const DEFAULT_OPERATORS: Operator[] = [
   { NamaOperator: "FITRI FAJRIA" },
   { NamaOperator: "M. HARI YANTO" },
-  { NamaOperator: "M. DANANG" },
-  { NamaOperator: "ANITA SARI" }
+  { NamaOperator: "M. DANANG" }
 ];
 
 const DEFAULT_SELLERS: Seller[] = [
@@ -168,7 +166,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText(`PENGIRIM: ${seller}`, 20, 80);
     ctx.font = "normal 11px sans-serif";
-    ctx.fillText("PENERIMA: Bpk. Joko Widodo (JAKARTA)", 20, 98);
+    ctx.fillText("PENERIMA: BUDI (JAKARTA)", 20, 98);
     
     // Mock Barcode bars
     ctx.fillStyle = "#000000";
@@ -202,6 +200,11 @@ export class DatabaseService {
   public getOutlets(): Outlet[] {
     const raw = localStorage.getItem(OUTLET_KEY);
     if (!raw) {
+      const config = this.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
+      if (hasAppsScript) {
+        return [];
+      }
       localStorage.setItem(OUTLET_KEY, JSON.stringify(DEFAULT_OUTLETS));
       return DEFAULT_OUTLETS;
     }
@@ -243,6 +246,11 @@ export class DatabaseService {
   public getOperators(): Operator[] {
     const raw = localStorage.getItem(OPERATOR_KEY);
     if (!raw) {
+      const config = this.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
+      if (hasAppsScript) {
+        return [];
+      }
       localStorage.setItem(OPERATOR_KEY, JSON.stringify(DEFAULT_OPERATORS));
       return DEFAULT_OPERATORS;
     }
@@ -252,6 +260,11 @@ export class DatabaseService {
   public getSellers(): Seller[] {
     const raw = localStorage.getItem(SELLER_KEY);
     if (!raw) {
+      const config = this.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
+      if (hasAppsScript) {
+        return [];
+      }
       localStorage.setItem(SELLER_KEY, JSON.stringify(DEFAULT_SELLERS));
       return DEFAULT_SELLERS;
     }
@@ -344,6 +357,12 @@ export class DatabaseService {
   public getRecords(): ScanRecord[] {
     const raw = localStorage.getItem(RECORDS_KEY);
     if (!raw) {
+      const config = this.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
+      if (hasAppsScript) {
+        localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
+        return [];
+      }
       const hist = generateHistoricalData();
       localStorage.setItem(RECORDS_KEY, JSON.stringify(hist));
       return hist;
@@ -498,6 +517,72 @@ export class DatabaseService {
   }
 
   /**
+   * Pull Master Data (Outlets, Operators, Sellers) from Spreadsheet
+   */
+  public async pullMasters(): Promise<{ success: boolean; error?: string }> {
+    const config = this.getCloudConfig();
+    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+      return { success: false, error: "Apps Script URL is not configured." };
+    }
+
+    try {
+      const response = await fetch(config.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify({ action: "get_masters" })
+      });
+      const data = await response.json();
+      if (data && data.success) {
+        const fetchedSellers = (data.sellers || []).map((name: string) => ({ NamaSeller: name.trim() })).filter((x: any) => x.NamaSeller);
+        const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
+        const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
+
+        localStorage.setItem(SELLER_KEY, JSON.stringify(fetchedSellers));
+        localStorage.setItem(OPERATOR_KEY, JSON.stringify(fetchedOperators));
+        localStorage.setItem(OUTLET_KEY, JSON.stringify(fetchedOutlets));
+        return { success: true };
+      }
+      return { success: false, error: "Data masters kosong atau respons gagal." };
+    } catch (err: any) {
+      console.error("Gagal menarik data master", err);
+      return { success: false, error: err.toString() };
+    }
+  }
+
+  /**
+   * Pull Scanned Records from Spreadsheet
+   */
+  public async pullRecords(): Promise<{ success: boolean; error?: string }> {
+    const config = this.getCloudConfig();
+    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+      return { success: false, error: "Apps Script URL is not configured." };
+    }
+
+    try {
+      const response = await fetch(config.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify({ action: "get_records" })
+      });
+      const data = await response.json();
+      if (data && data.success) {
+        localStorage.setItem(RECORDS_KEY, JSON.stringify(data.records || []));
+        return { success: true };
+      }
+      return { success: false, error: "Gagal menarik data resi." };
+    } catch (err: any) {
+      console.error("Gagal menarik data resi", err);
+      return { success: false, error: err.toString() };
+    }
+  }
+
+  /**
    * Clear active log database (for setup & testing)
    */
   public resetDatabase() {
@@ -546,6 +631,8 @@ function doPost(e) {
       return handleAddOutlet(payload.outletName);
     } else if (action === "get_masters") {
       return handleGetMasters();
+    } else if (action === "get_records") {
+      return handleGetRecords();
     } else if (action === "sync_masters") {
       return handleSyncMasters(payload.sellers, payload.operators, payload.outlets);
     }
@@ -714,6 +801,62 @@ function handleGetMasters() {
   }
   
   return ContentService.createTextOutput(JSON.stringify({ success: true, sellers: sellers, operators: operators, outlets: outlets }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleGetRecords() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheets = ss.getSheets();
+  const records = [];
+  
+  for (let i = 0; i < sheets.length; i++) {
+    const sName = sheets[i].getName();
+    if (sName.indexOf("Data Resi J&T") === 0 || sName.indexOf("Data Resi") === 0) {
+      const lastRow = sheets[i].getLastRow();
+      if (lastRow > 1) {
+        const data = sheets[i].getRange(2, 1, lastRow - 1, 9).getValues();
+        for (let j = 0; j < data.length; j++) {
+          const row = data[j];
+          let tglStr = "";
+          if (row[1] instanceof Date) {
+            const d = row[1];
+            const YYYY = d.getFullYear();
+            const MM = String(d.getMonth() + 1).padStart(2, "0");
+            const DD = String(d.getDate()).padStart(2, "0");
+            tglStr = YYYY + "-" + MM + "-" + DD;
+          } else {
+            tglStr = row[1] ? row[1].toString() : "";
+          }
+
+          let jamStr = "";
+          if (row[2] instanceof Date) {
+            const d = row[2];
+            const hh = String(d.getHours()).padStart(2, "0");
+            const mm = String(d.getMinutes()).padStart(2, "0");
+            const ssSec = String(d.getSeconds()).padStart(2, "0");
+            jamStr = hh + ":" + mm + ":" + ssSec;
+          } else {
+            jamStr = row[2] ? row[2].toString() : "";
+          }
+
+          records.push({
+            ID: row[0] ? row[0].toString() : "",
+            Tanggal: tglStr,
+            Jam: jamStr,
+            Resi: row[3] ? row[3].toString() : "",
+            Outlet: row[4] ? row[4].toString() : "",
+            Seller: row[5] ? row[5].toString() : "",
+            Operator: row[6] ? row[6].toString() : "",
+            Status: row[7] ? row[7].toString() : "SCANNED",
+            PhotoURL: row[8] ? row[8].toString() : "",
+            SyncStatus: "SYNCED"
+          });
+        }
+      }
+    }
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ success: true, records: records }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
