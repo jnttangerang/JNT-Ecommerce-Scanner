@@ -35,7 +35,7 @@ import {
   RefreshCw,
   LogOut
 } from "lucide-react";
-import { ScanRecord, StatusType, Seller, Operator } from "../types";
+import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService } from "../utils/db";
 
 interface OwnerDashboardProps {
@@ -45,7 +45,7 @@ interface OwnerDashboardProps {
 export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) => {
   // Passcode gate state
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return sessionStorage.getItem("jt_owner_authenticated") === "true";
+    return localStorage.getItem("jt_owner_authenticated") === "true";
   });
   const [passcode, setPasscode] = useState("");
   const [passError, setPassError] = useState("");
@@ -72,17 +72,20 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
   // Master lists & Configuration State
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
+  const [outlets, setOutlets] = useState<Outlet[]>([]);
   const [cloudConfig, setCloudConfig] = useState({
     coreFolderUrl: "",
     fotoFolderId: "",
     spreadsheetId: "",
-    appsScriptUrl: ""
+    appsScriptUrl: "",
+    faviconUrl: ""
   });
 
   // Localized Cloud configuration text fields pending "Simpan" action
   const [tempCoreFolderUrl, setTempCoreFolderUrl] = useState("");
   const [tempFotoFolderId, setTempFotoFolderId] = useState("");
   const [tempSpreadsheetId, setTempSpreadsheetId] = useState("");
+  const [tempFaviconUrl, setTempFaviconUrl] = useState("");
   const [saveSuccessFields, setSaveSuccessFields] = useState<Record<string, boolean>>({});
 
   // Sync saved cloudConfig to local field states when loaded/updated
@@ -90,13 +93,17 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     setTempCoreFolderUrl(cloudConfig.coreFolderUrl || "");
     setTempFotoFolderId(cloudConfig.fotoFolderId || "");
     setTempSpreadsheetId(cloudConfig.spreadsheetId || "");
+    setTempFaviconUrl(cloudConfig.faviconUrl || "");
   }, [cloudConfig]);
 
   // Action states
   const [newSeller, setNewSeller] = useState("");
   const [newOperator, setNewOperator] = useState("");
+  const [newOutlet, setNewOutlet] = useState("");
+  const [showCleanConfirm, setShowCleanConfirm] = useState(false);
   const [sellerError, setSellerError] = useState("");
   const [operatorError, setOperatorError] = useState("");
+  const [outletError, setOutletError] = useState("");
   const [copiedScript, setCopiedScript] = useState(false);
   const [apiTestStatus, setApiTestStatus] = useState<"IDLE" | "TESTING" | "SUCCESS" | "FAILED">("IDLE");
   const [activeTab, setActiveTab] = useState<"RECAP" | "MASTERS" | "INTEGRATION" | "DEPLOYMENT">("RECAP");
@@ -129,7 +136,21 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     // Load configurations and masters
     setSellers(dbService.getSellers());
     setOperators(dbService.getOperators());
-    setCloudConfig(dbService.getCloudConfig());
+    setOutlets(dbService.getOutlets());
+    
+    const config = dbService.getCloudConfig();
+    setCloudConfig(config);
+
+    // Apply custom favicon if set
+    if (config.faviconUrl) {
+      let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.getElementsByTagName("head")[0].appendChild(link);
+      }
+      link.href = config.faviconUrl;
+    }
 
     // Default review carousel index
     if (records.length > 0) {
@@ -154,6 +175,25 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
   const handleDeleteSeller = (name: string) => {
     dbService.deleteSeller(name);
     setSellers(dbService.getSellers());
+  };
+
+  const handleAddOutletAndSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    setOutletError("");
+    const name = newOutlet.trim();
+    if (!name) return;
+    const success = dbService.addOutlet(name);
+    if (success) {
+      setOutlets(dbService.getOutlets());
+      setNewOutlet("");
+    } else {
+      setOutletError("Outlet sudah terdaftar atau tidak valid");
+    }
+  };
+
+  const handleDeleteOutlet = (name: string) => {
+    dbService.deleteOutlet(name);
+    setOutlets(dbService.getOutlets());
   };
 
   const handleAddOperatorAndSave = (e: React.FormEvent) => {
@@ -196,22 +236,29 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
         // Map raw strings to objects
         const fetchedSellers = (data.sellers || []).map((name: string) => ({ NamaSeller: name.trim() })).filter((x: any) => x.NamaSeller);
         const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
+        const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
 
-        if (fetchedSellers.length === 0 && fetchedOperators.length === 0) {
-          setSyncFeedback({ type: "error", message: "Data kosong di Spreadsheet. Pastikan Spreadsheet Anda sudah berisi data Seller dan Operator." });
+        if (fetchedSellers.length === 0 && fetchedOperators.length === 0 && fetchedOutlets.length === 0) {
+          setSyncFeedback({ type: "error", message: "Data kosong di Spreadsheet. Pastikan Spreadsheet Anda sudah diinisialisasi atau berisi data." });
         } else {
           // Save to local storage
           localStorage.setItem("jt_pickup_operators", JSON.stringify(fetchedOperators));
           localStorage.setItem("jt_pickup_sellers", JSON.stringify(fetchedSellers));
+          if (fetchedOutlets.length > 0) {
+            localStorage.setItem("jt_pickup_outlets", JSON.stringify(fetchedOutlets));
+          }
           
           setSellers(fetchedSellers);
           setOperators(fetchedOperators);
+          if (fetchedOutlets.length > 0) {
+            setOutlets(fetchedOutlets);
+          }
           
           setSyncFeedback({ 
             type: "success", 
-            message: `Berhasil menarik ${fetchedSellers.length} Seller dan ${fetchedOperators.length} Operator dari Spreadsheet!` 
+            message: `Berhasil menarik ${fetchedSellers.length} Seller, ${fetchedOperators.length} Operator, dan ${fetchedOutlets.length || 3} Outlet dari Spreadsheet!` 
           });
-          onStatusChanged(); // Notify parrent of refresh if needed
+          onStatusChanged(); // Notify parent of refresh if needed
         }
       } else {
         setSyncFeedback({ type: "error", message: `Gagal menarik data: ${data.error || "Respon sukses bernilai false."}` });
@@ -244,14 +291,19 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
         body: JSON.stringify({
           action: "sync_masters",
           sellers: sellers.map(s => s.NamaSeller),
-          operators: operators.map(o => o.NamaOperator)
+          operators: operators.map(o => o.NamaOperator),
+          outlets: outlets.map(o => o.NamaOutlet)
         })
       });
       const data = await response.json();
       if (data && data.success) {
-        setSyncFeedback({ type: "success", message: "Berhasil mengunggah & menyinkronkan daftar Seller dan Operator ke Spreadsheet!" });
+        setSyncFeedback({ type: "success", message: "Berhasil mengunggah & menyinkronkan daftar Seller, Operator, dan Outlet ke Spreadsheet!" });
       } else {
-        setSyncFeedback({ type: "error", message: `Gagal mengirim data: ${data.error || "Respon sukses bernilai false."}` });
+        let errorMessage = data.error || "Respon sukses bernilai false.";
+        if (errorMessage.toLowerCase().includes("not found") || errorMessage.toLowerCase().includes("tidak ditemukan")) {
+          errorMessage = "Aksi 'sync_masters' belum terpasang atau tidak ditemukan di Apps Script aktif Anda. Silakan salin ulang kode Apps Script terbaru dari menu 'Integrasi Cloud' lalu deploy versi baru (New Deployment) di Google Sheets Anda.";
+        }
+        setSyncFeedback({ type: "error", message: `Gagal mengirim data: ${errorMessage}` });
       }
     } catch (err: any) {
       console.error(err);
@@ -269,10 +321,22 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     setCloudConfig(dbService.getCloudConfig());
   };
 
-  const handleSaveIndividualField = (field: "coreFolderUrl" | "fotoFolderId" | "spreadsheetId", value: string) => {
+  const handleSaveIndividualField = (field: "coreFolderUrl" | "fotoFolderId" | "spreadsheetId" | "faviconUrl", value: string) => {
     dbService.saveCloudConfig({ [field]: value });
-    setCloudConfig(dbService.getCloudConfig());
+    const config = dbService.getCloudConfig();
+    setCloudConfig(config);
     
+    // Explicitly update favicon in browser tab immediately
+    if (field === "faviconUrl" && value) {
+      let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.getElementsByTagName("head")[0].appendChild(link);
+      }
+      link.href = value;
+    }
+
     // Set success indicator
     setSaveSuccessFields(prev => ({ ...prev, [field]: true }));
     setTimeout(() => {
@@ -310,7 +374,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
               SINKRONISASI MASTER CLOUD (GOOGLE SPREADSHEET)
             </h4>
             <p className="text-[11px] text-slate-300 leading-normal">
-              Tombol ini mensinkronisasikan daftar <strong>Operator J&T</strong> dan <strong>Seller Drop-Off</strong> antara aplikasi web ini dan Google Sheets secara real-time.
+              Tombol ini mensinkronisasikan daftar <strong>Operator J&T</strong>, <strong>Seller Drop-Off</strong>, dan <strong>Outlet Pengiriman</strong> antara aplikasi web ini dan Google Sheets secara real-time.
             </p>
             {syncFeedback && (
               <div className={`mt-2 p-2.5 rounded-xl border text-[11px] font-bold flex items-center space-x-2 ${
@@ -329,7 +393,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
               onClick={handlePullMasters}
               disabled={isPullingMasters || isPushingMasters}
               className="flex-1 md:flex-none uppercase tracking-wider text-[10px] font-extrabold bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-3 rounded-xl flex items-center justify-center space-x-1.5 border border-slate-700 transition cursor-pointer disabled:opacity-50"
-              title="Unduh data operator & seller terbaru dari Google Sheets"
+              title="Unduh data outlet, operator & seller terbaru dari Google Sheets"
             >
               {isPullingMasters ? (
                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-450" />
@@ -343,7 +407,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
               onClick={handlePushMasters}
               disabled={isPullingMasters || isPushingMasters}
               className="flex-1 md:flex-none uppercase tracking-wider text-[10px] font-extrabold bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-xl flex items-center justify-center space-x-1.5 shadow-sm transition cursor-pointer disabled:opacity-50"
-              title="Unggah dan simpan daftar operator & seller lokal Anda saat ini ke Google Sheets"
+              title="Unggah dan simpan daftar outlet, operator & seller lokal Anda saat ini ke Google Sheets"
             >
               {isPushingMasters ? (
                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-red-200" />
@@ -355,7 +419,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
           {/* Operator List Card */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between min-h-[460px]">
@@ -521,6 +585,88 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
             </div>
           </div>
 
+          {/* Outlet List Card */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between min-h-[460px]">
+            <div>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div>
+                  <h4 className="font-bold text-slate-900 flex items-center text-sm font-sans">
+                    <Store className="h-4 w-4 text-slate-500 mr-2" />
+                    DAFTAR OUTLET J&T (DISTRIBUSI)
+                  </h4>
+                  <p className="text-[10px] text-slate-400 font-medium">Total terdaftar: {outlets.length} Outlet</p>
+                </div>
+              </div>
+
+              {/* Form Tambah Outlet */}
+              <form onSubmit={handleAddOutletAndSave} className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={newOutlet}
+                  onChange={(e) => {
+                    setNewOutlet(e.target.value);
+                    setOutletError("");
+                  }}
+                  placeholder="Masukkan nama outlet baru..."
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-xs focus:outline-none focus:border-red-650 font-semibold"
+                />
+                <button
+                  type="submit"
+                  className="bg-slate-900 hover:bg-black text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer text-xs flex items-center space-x-1 border border-slate-900 transition"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Tambah</span>
+                </button>
+              </form>
+
+              {outletError && (
+                <p className="text-[10px] text-red-650 font-bold mb-3">{outletError}</p>
+              )}
+
+              {/* List Table */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[200px] overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                      <th className="p-3">Nama Outlet</th>
+                      <th className="p-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {outlets.map((o) => (
+                      <tr key={o.NamaOutlet} className="hover:bg-slate-50/50">
+                        <td className="p-3 font-semibold text-slate-800">{o.NamaOutlet}</td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => handleDeleteOutlet(o.NamaOutlet)}
+                            className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                            title="Hapus Outlet"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+              <button
+                onClick={handlePushMasters}
+                disabled={isPushingMasters || isPullingMasters}
+                className="w-full bg-slate-900 hover:bg-black text-white font-extrabold py-2.5 rounded-xl cursor-pointer text-xs flex items-center justify-center space-x-1 border border-slate-900 transition shadow-sm disabled:opacity-50 hover:shadow-md"
+              >
+                <Cloud className="h-3.5 w-3.5 text-red-500 mr-1" />
+                <span>Simpan Outlet ke Cloud</span>
+              </button>
+              <p className="text-[10px] text-slate-400 leading-normal italic">
+                * Klik "Simpan Outlet ke Cloud" setelah menambah/menghapus outlet untuk mensinkronkannya ke Google Sheets.
+              </p>
+            </div>
+          </div>
+
         {/* Ganti Kata Sandi Owner Card */}
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
           <div>
@@ -600,8 +746,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
         
-        {/* 3 Integration Columns */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* 4 Integration Columns with Favicon added */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           
           {/* Column 1: Core Folder */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
@@ -750,6 +896,68 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                 <span>BUKA FILE SPREADSHEET</span>
                 <ExternalLink className="h-3 w-3" />
               </a>
+            </div>
+          </div>
+
+          {/* Column 4: Favicon URL Setting */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-red-650" />
+            <div>
+              <div className="bg-slate-50 border border-slate-100 h-10 w-10 rounded-xl flex items-center justify-center mb-4">
+                <Settings className="h-5 w-5 text-red-600" />
+              </div>
+              <h4 className="font-bold text-slate-800 text-sm">4. ATUR FAVICON TABS</h4>
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                Tautkan URL ikon (.ico, .png, .jpg) untuk mengganti logo favicon tab browser aplikasi web Anda.
+              </p>
+              
+              <div className="mt-4 space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">URL Favicon Link:</label>
+                <div className="space-y-2">
+                  <input
+                    type="url"
+                    value={tempFaviconUrl}
+                    onChange={(e) => setTempFaviconUrl(e.target.value)}
+                    placeholder="https://contoh.com/logo.png"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 text-xs focus:outline-none focus:border-red-650 font-mono"
+                  />
+                  <button
+                    onClick={() => handleSaveIndividualField("faviconUrl", tempFaviconUrl)}
+                    className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm ${
+                      saveSuccessFields["faviconUrl"]
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        : "bg-red-600 hover:bg-red-750 text-white"
+                    }`}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    <span>{saveSuccessFields["faviconUrl"] ? "Tersimpan & Aktif!" : "Terapkan Favicon"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center">
+              {tempFaviconUrl ? (
+                <div className="flex items-center space-x-2 bg-slate-50 border border-slate-150 p-2.5 rounded-xl w-full">
+                  <img 
+                    src={tempFaviconUrl} 
+                    alt="Favicon Preview" 
+                    referrerPolicy="no-referrer"
+                    className="h-8 w-8 object-contain rounded border border-slate-250 bg-white" 
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                  <div className="overflow-hidden">
+                    <span className="block text-[8px] font-mono text-slate-400 truncate">{tempFaviconUrl}</span>
+                    <span className="block text-[9px] text-slate-500 font-bold">Preview Aktif</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[10px] text-slate-400 italic text-center py-2">
+                  Tidak ada URL ikon terpilih
+                </div>
+              )}
             </div>
           </div>
 
@@ -1047,7 +1255,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     // Accept standard default passcode or saved custom password
     if (passcode.trim() === savedPassword || passcode.trim() === "balaraja") {
       setIsAuthenticated(true);
-      sessionStorage.setItem("jt_owner_authenticated", "true");
+      localStorage.setItem("jt_owner_authenticated", "true");
       setPasscode("");
     } else {
       setPassError("Kata sandi salah. Gunakan default: 'jntowner' atau sandi khusus Anda.");
@@ -1057,7 +1265,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
   // Handle logout
   const handleLogout = () => {
     setIsAuthenticated(false);
-    sessionStorage.removeItem("jt_owner_authenticated");
+    localStorage.removeItem("jt_owner_authenticated");
   };
 
   // Update Owner Password Callback
@@ -1184,6 +1392,17 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     } catch (err) {
       alert("Gagal mengunduh CSV: " + err);
     }
+  };
+
+  const handleClearAllLocalResi = () => {
+    if (!showCleanConfirm) {
+      setShowCleanConfirm(true);
+      setTimeout(() => setShowCleanConfirm(false), 5000); // Reset state after 5 seconds
+      return;
+    }
+    dbService.clearAllRecords();
+    loadData();
+    setShowCleanConfirm(false);
   };
 
   // Filter unique lists for dropdown selectors
@@ -1340,14 +1559,29 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">EXPORT DATA REKAP</span>
-          <button
-            onClick={handleExportCSV}
-            className="w-full mt-2 bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1 border border-red-700 cursor-pointer shadow-sm"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span>EXPORT CSV</span>
-          </button>
+          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">KONTROL REKAP DATA</span>
+          <div className="flex gap-2 mt-2 w-full">
+            <button
+              onClick={handleExportCSV}
+              className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1 border border-slate-900 cursor-pointer shadow-sm"
+              title="Unduh seluruh riwayat scan sebagai file CSV"
+            >
+              <Download className="h-3.5 w-3.5 text-blue-200" />
+              <span>EXPORT CSV</span>
+            </button>
+            <button
+              onClick={handleClearAllLocalResi}
+              className={`flex-1 py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1 border cursor-pointer shadow-sm ${
+                showCleanConfirm 
+                  ? "bg-red-600 hover:bg-red-750 text-white border-red-700 animate-pulse font-black" 
+                  : "bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
+              }`}
+              title="Kosongkan seluruh database resi / hilangkan data contoh"
+            >
+              <Ban className={`h-3.5 w-3.5 ${showCleanConfirm ? "text-white animate-spin" : "text-red-500"}`} />
+              <span>{showCleanConfirm ? "KLIK LAGI: HAPUS?" : "BERSIHKAN"}</span>
+            </button>
+          </div>
         </div>
 
       </div>

@@ -18,13 +18,15 @@ export interface CloudConfig {
   fotoFolderId: string;
   spreadsheetId: string;
   appsScriptUrl: string;
+  faviconUrl?: string;
 }
 
 const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   coreFolderUrl: "https://drive.google.com/drive/folders/1_Zt8E_Pickup_Ecommerce_Scanner_JT_Example",
   fotoFolderId: "1_Ph0t0_Res1_Folder_ID_Example",
   spreadsheetId: "1_JT_Pickup_Ecommerce_Spreadsheet_ID_Example",
-  appsScriptUrl: "https://script.google.com/macros/s/AKfycbz_Example_Apps_Script_Web_App_URL_Here/exec"
+  appsScriptUrl: "https://script.google.com/macros/s/AKfycbz_Example_Apps_Script_Web_App_URL_Here/exec",
+  faviconUrl: ""
 };
 
 // Default Master Data
@@ -206,6 +208,38 @@ export class DatabaseService {
     return JSON.parse(raw);
   }
 
+  public addOutlet(name: string): boolean {
+    const outlets = this.getOutlets();
+    const cleanName = name.trim();
+    if (!cleanName) return false;
+    if (outlets.some(o => o.NamaOutlet.toLowerCase() === cleanName.toLowerCase())) {
+      return false;
+    }
+    outlets.push({ NamaOutlet: cleanName });
+    localStorage.setItem(OUTLET_KEY, JSON.stringify(outlets));
+
+    // Try background sync to Spreadsheet if available
+    const config = this.getCloudConfig();
+    if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
+      fetch(config.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "add_outlet", outletName: cleanName })
+      }).catch(err => console.warn("Background cloud add_outlet error", err));
+    }
+
+    return true;
+  }
+
+  public deleteOutlet(name: string): boolean {
+    const outlets = this.getOutlets();
+    const filtered = outlets.filter(o => o.NamaOutlet.trim().toLowerCase() !== name.trim().toLowerCase());
+    if (outlets.length === filtered.length) return false;
+    localStorage.setItem(OUTLET_KEY, JSON.stringify(filtered));
+    return true;
+  }
+
   public getOperators(): Operator[] {
     const raw = localStorage.getItem(OPERATOR_KEY);
     if (!raw) {
@@ -236,12 +270,24 @@ export class DatabaseService {
 
     sellers.push({ NamaSeller: cleanName });
     localStorage.setItem(SELLER_KEY, JSON.stringify(sellers));
+
+    // Try background sync to Spreadsheet if available
+    const config = this.getCloudConfig();
+    if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
+      fetch(config.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "add_seller", sellerName: cleanName })
+      }).catch(err => console.warn("Background cloud add_seller error", err));
+    }
+
     return true;
   }
 
   public deleteSeller(name: string): boolean {
     const sellers = this.getSellers();
-    const filtered = sellers.filter(s => s.NamaSeller.toLowerCase() !== name.trim().toLowerCase());
+    const filtered = sellers.filter(s => s.NamaSeller.trim().toLowerCase() !== name.trim().toLowerCase());
     if (sellers.length === filtered.length) return false;
     localStorage.setItem(SELLER_KEY, JSON.stringify(filtered));
     return true;
@@ -256,12 +302,24 @@ export class DatabaseService {
     }
     operators.push({ NamaOperator: cleanName });
     localStorage.setItem(OPERATOR_KEY, JSON.stringify(operators));
+
+    // Try background sync to Spreadsheet if available
+    const config = this.getCloudConfig();
+    if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
+      fetch(config.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "add_operator", operatorName: cleanName })
+      }).catch(err => console.warn("Background cloud add_operator error", err));
+    }
+
     return true;
   }
 
   public deleteOperator(name: string): boolean {
     const operators = this.getOperators();
-    const filtered = operators.filter(o => o.NamaOperator.toLowerCase() !== name.trim().toLowerCase());
+    const filtered = operators.filter(o => o.NamaOperator.trim().toLowerCase() !== name.trim().toLowerCase());
     if (operators.length === filtered.length) return false;
     localStorage.setItem(OPERATOR_KEY, JSON.stringify(filtered));
     return true;
@@ -383,29 +441,61 @@ export class DatabaseService {
     
     localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
     return true;
-  }
-
-  /**
-   * Batch Upload / Sync simulation
+  }  /**
+   * Batch Upload / Sync to Spreadsheet
    */
-  public syncPendingRecords(): Promise<{ successCount: number; failedCount: number }> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const records = this.getRecords();
-        let successCount = 0;
-        
+  public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
+    const config = this.getCloudConfig();
+    const records = this.getRecords();
+    const pending = records.filter(r => r.SyncStatus === "PENDING");
+    
+    if (pending.length === 0) {
+      return { successCount: 0, failedCount: 0 };
+    }
+
+    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+      // Simulate/fallback sync locally if actual cloud API is not configured
+      const updated = records.map(r => {
+        if (r.SyncStatus === "PENDING") {
+          return { ...r, SyncStatus: "SYNCED" as const };
+        }
+        return r;
+      });
+      localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
+      return { successCount: pending.length, failedCount: 0 };
+    }
+
+    try {
+      const response = await fetch(config.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify({
+          action: "sync_batch",
+          records: pending
+        })
+      });
+      
+      const data = await response.json();
+      if (data && data.success) {
+        const pendingIds = new Set(pending.map(p => p.ID));
         const updated = records.map(r => {
-          if (r.SyncStatus === "PENDING") {
-            successCount++;
+          if (pendingIds.has(r.ID)) {
             return { ...r, SyncStatus: "SYNCED" as const };
           }
           return r;
         });
-
         localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
-        resolve({ successCount, failedCount: 0 });
-      }, 1500); // realistic network sync delay
-    });
+        return { successCount: pending.length, failedCount: 0 };
+      } else {
+        return { successCount: 0, failedCount: pending.length, error: data.error || "Tanggapan web app bernilai sukses false." };
+      }
+    } catch (err: any) {
+      console.error("Gagal melakukan sinkronisasi cloud", err);
+      return { successCount: 0, failedCount: pending.length, error: err.toString() };
+    }
   }
 
   /**
@@ -417,6 +507,13 @@ export class DatabaseService {
   }
 
   /**
+   * Clear all records to empty slate (without triggering mock data recreation)
+   */
+  public clearAllRecords() {
+    localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
+  }
+
+  /**
    * Return Google Apps Script Code
    */
   public getAppsScriptCode(): string {
@@ -425,7 +522,7 @@ export class DatabaseService {
     const fotoFolderId = config.fotoFolderId || "FOTO_FOLDER_ID_GOOGLE_DRIVE_ANDA";
 
     return `/**
- * Google Apps Script API endpoint untuk J&T Pickup Ecommerce Scanner
+ * Google Apps Script API endpoint untuk J&T Pickup Ecommerce Scanner Pro
  * Pasang script ini di Google Apps Script yang terhubung ke:
  * 1. Spreadsheet "Pickup Ecommerce Scanner J&T"
  * 2. Folder Google Drive bernama "FOTO RESI"
@@ -447,10 +544,12 @@ function doPost(e) {
       return handleAddSeller(payload.sellerName);
     } else if (action === "add_operator") {
       return handleAddOperator(payload.operatorName);
+    } else if (action === "add_outlet") {
+      return handleAddOutlet(payload.outletName);
     } else if (action === "get_masters") {
       return handleGetMasters();
     } else if (action === "sync_masters") {
-      return handleSyncMasters(payload.sellers, payload.operators);
+      return handleSyncMasters(payload.sellers, payload.operators, payload.outlets);
     }
     
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
@@ -473,6 +572,8 @@ function handleSyncBatch(records) {
     let sheetName = "Data Resi J&T Pasir Jaha Balaraja"; 
     if (r.Outlet && r.Outlet.indexOf("Jayanti") !== -1) {
       sheetName = "Data Resi J&T Jayanti";
+    } else if (r.Outlet && r.Outlet.indexOf("Cikupa Mas") !== -1) {
+      sheetName = "Data Resi J&T Cikupa Mas";
     }
     
     const sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
@@ -519,6 +620,13 @@ function handleSyncBatch(records) {
     newlyScanned++;
   }
   
+  // Update real-time summary dashboard sheet
+  try {
+    updateDashboardSheet(ss);
+  } catch (dashErr) {
+    Logger.log("Gagal memperbarui sheet dashboard: " + dashErr.toString());
+  }
+  
   return ContentService.createTextOutput(JSON.stringify({ success: true, added: newlyScanned }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -536,10 +644,10 @@ function handleAddSeller(name) {
   
   if (!exists) {
     sheet.appendRow([name.trim()]);
-    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Seller ditambahkan ke sheet" }))
+    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Seller ditambahkan" }))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Seller sudah ada di sheet" }))
+  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Seller sudah ada" }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -556,10 +664,30 @@ function handleAddOperator(name) {
   
   if (!exists) {
     sheet.appendRow([name.trim()]);
-    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Operator ditambahkan ke sheet" }))
+    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Operator ditambahkan" }))
       .setMimeType(ContentService.MimeType.JSON);
   }
-  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Operator sudah ada di sheet" }))
+  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Operator sudah ada" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleAddOutlet(name) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName("Daftar Outlet") || ss.getSheetByName("Outlet List") || ss.insertSheet("Daftar Outlet");
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["Nama Outlet"]);
+    sheet.getRange(1, 1).setFontWeight("bold").setBackground("#f1f5f9");
+  }
+  
+  const data = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 1).getValues();
+  const exists = data.some(row => row[0].toString().toLowerCase() === name.trim().toLowerCase());
+  
+  if (!exists) {
+    sheet.appendRow([name.trim()]);
+    return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Outlet ditambahkan" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Outlet sudah ada" }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -579,13 +707,24 @@ function handleGetMasters() {
   if (opSheet && opSheet.getLastRow() > 1) {
     operators = opSheet.getRange(2, 1, opSheet.getLastRow() - 1, 1).getValues().map(r => r[0].toString());
   }
+
+  // Get Outlets
+  const outletSheet = ss.getSheetByName("Daftar Outlet") || ss.getSheetByName("Outlet List");
+  let outlets = [];
+  if (outletSheet && outletSheet.getLastRow() > 1) {
+    outlets = outletSheet.getRange(2, 1, outletSheet.getLastRow() - 1, 1).getValues().map(r => r[0].toString());
+  }
   
-  return ContentService.createTextOutput(JSON.stringify({ success: true, sellers: sellers, operators: operators }))
+  return ContentService.createTextOutput(JSON.stringify({ success: true, sellers: sellers, operators: operators, outlets: outlets }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function handleSyncMasters(sellers, operators) {
+function handleSyncMasters(sellers, operators, outlets) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  
+  sellers = sellers || [];
+  operators = operators || [];
+  outlets = outlets || [];
   
   // Clean list and write new ones
   const sellerSheet = ss.getSheetByName("Seller List") || ss.getSheetByName("Daftar Seller") || ss.insertSheet("Seller List");
@@ -609,7 +748,30 @@ function handleSyncMasters(sellers, operators) {
       opSheet.appendRow([val]);
     }
   }
+
+  const outletSheet = ss.getSheetByName("Daftar Outlet") || ss.getSheetByName("Outlet List") || ss.insertSheet("Daftar Outlet");
+  outletSheet.clear();
+  outletSheet.appendRow(["Nama Outlet"]);
+  outletSheet.getRange(1, 1).setFontWeight("bold").setBackground("#f1f5f9");
+  if (outlets && outlets.length > 0) {
+    for (let i = 0; i < outlets.length; i++) {
+      const val = outlets[i].toString().trim();
+      if (val) {
+        outletSheet.appendRow([val]);
+      }
+    }
+  } else {
+    // default fallbacks if empty
+    outletSheet.appendRow(["J&T Pasir Jaha Balaraja"]);
+    outletSheet.appendRow(["J&T Jayanti"]);
+    outletSheet.appendRow(["J&T Cikupa Mas"]);
+  }
   
+  // Re-generate dashboard
+  try {
+    updateDashboardSheet(ss);
+  } catch(e) {}
+
   return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Berhasil disinkronkan ke Spreadsheet!" }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -633,6 +795,108 @@ function updateRowStatus(sheet, resi, status) {
 }
 
 // ==========================================
+// AUTO GENERATE REAL-TIME DASHBOARD DATA OUTLET & SELLER
+// ==========================================
+function updateDashboardSheet(ss) {
+  const dashboard = ss.getSheetByName("Dashboard") || ss.insertSheet("Dashboard");
+  dashboard.clear();
+  
+  // Style Dashboard
+  dashboard.appendRow(["RINGKASAN REKAP DATA PICKUP - J&T EXPRESS"]);
+  dashboard.getRange("A1").setFontSize(14).setFontWeight("bold").setFontColor("#b91c1c");
+  dashboard.getRange("A2").setValue("Diperbarui secara real-time: " + Utilities.formatDate(new Date(), "GMT+7", "dd-MM-yyyy HH:mm:ss"));
+  dashboard.getRange("A2").setFontSize(9).setFontItalic(true).setFontColor("#4b5563");
+  dashboard.appendRow([]); // Spacing
+
+  const sheets = ss.getSheets();
+  const outletCounts = {};
+  const sellerCounts = {};
+  let totalScanned = 0;
+  let totalCancelled = 0;
+  
+  for (let i = 0; i < sheets.length; i++) {
+    const sName = sheets[i].getName();
+    if (sName.indexOf("Data Resi J&T") === 0 || sName.indexOf("Data Resi") === 0) {
+      const lastRow = sheets[i].getLastRow();
+      if (lastRow > 1) {
+        const data = sheets[i].getRange(2, 1, lastRow - 1, 9).getValues();
+        for (let j = 0; j < data.length; j++) {
+          const row = data[j];
+          const outlet = row[4] ? row[4].toString().trim() : \"\";
+          const seller = row[5] ? row[5].toString().trim() : \"\";
+          const status = row[7] ? row[7].toString().trim() : \"\";
+          
+          if (outlet) outletCounts[outlet] = (outletCounts[outlet] || 0) + 1;
+          if (seller) sellerCounts[seller] = (sellerCounts[seller] || 0) + 1;
+          
+          if (status === \"CANCELLED\") {
+            totalCancelled++;
+          } else {
+            totalScanned++;
+          }
+        }
+      }
+    }
+  }
+
+  // Section 1: Dashboard Cards
+  dashboard.getRange("D4:E4").merge().setValue("METRIK UTAMA").setFontWeight("bold").setBackground("#fee2e2").setFontColor("#b91c1c").setHorizontalAlignment("center");
+  dashboard.getRange("D5").setValue("Total Paket Berhasil (EXITO)");
+  dashboard.getRange("E5").setValue(totalScanned).setFontWeight("bold").setFontColor("#16a34a");
+  dashboard.getRange("D6").setValue("Total Paket Dibatalkan");
+  dashboard.getRange("E6").setValue(totalCancelled).setFontWeight("bold").setFontColor("#dc2626");
+  dashboard.getRange("D7").setValue("Total Pickup Diproses");
+  dashboard.getRange("E7").setValue(totalScanned + totalCancelled).setFontWeight("bold").setFontColor("#111827");
+  dashboard.getRange("D4:E7").setBorder(true, true, true, true, true, true, "#d1d5db", SpreadsheetApp.BorderStyle.SOLID);
+
+  // Section 2: Outlet summary table
+  dashboard.getRange("A4:B4").merge().setValue("VOLUME PER OUTLET").setFontWeight("bold").setBackground("#f3f4f6").setHorizontalAlignment("center");
+  dashboard.getRange("A5").setValue("Nama Outlet").setFontWeight("bold");
+  dashboard.getRange("B5").setValue("Jumlah Paket").setFontWeight("bold");
+  
+  let currentLine = 6;
+  const outletsList = Object.keys(outletCounts).sort();
+  for (let k = 0; k < outletsList.length; k++) {
+    dashboard.getRange(currentLine, 1).setValue(outletsList[k]);
+    dashboard.getRange(currentLine, 2).setValue(outletCounts[outletsList[k]]);
+    currentLine++;
+  }
+  if (outletsList.length === 0) {
+    dashboard.getRange(currentLine, 1).setValue("(Belum ada data)");
+    dashboard.getRange(currentLine, 2).setValue(0);
+    currentLine++;
+  }
+  dashboard.getRange(4, 1, currentLine - 4, 2).setBorder(true, true, true, true, true, true, "#d1d5db", SpreadsheetApp.BorderStyle.SOLID);
+
+  // Section 3: Seller summary table
+  const sellerStartRow = currentLine + 2;
+  dashboard.getRange(sellerStartRow, 1, 1, 2).merge().setValue("VOLUME PER SELLER").setFontWeight("bold").setBackground("#f3f4f6").setHorizontalAlignment("center");
+  dashboard.getRange(sellerStartRow + 1, 1).setValue("Nama Seller").setFontWeight("bold");
+  dashboard.getRange(sellerStartRow + 1, 2).setValue("Jumlah Paket").setFontWeight("bold");
+  
+  let sellerRow = sellerStartRow + 2;
+  const sellersList = Object.keys(sellerCounts).sort((a,b) => sellerCounts[b] - sellerCounts[a]);
+  for (let k = 0; k < sellersList.length; k++) {
+    dashboard.getRange(sellerRow, 1).setValue(sellersList[k]);
+    dashboard.getRange(sellerRow, 2).setValue(sellerCounts[sellersList[k]]);
+    sellerRow++;
+  }
+  if (sellersList.length === 0) {
+    dashboard.getRange(sellerRow, 1).setValue("(Belum ada data)");
+    dashboard.getRange(sellerRow, 2).setValue(0);
+    sellerRow++;
+  }
+  dashboard.getRange(sellerStartRow, 1, sellerRow - sellerStartRow, 2).setBorder(true, true, true, true, true, true, "#d1d5db", SpreadsheetApp.BorderStyle.SOLID);
+  
+  // Format formatting
+  dashboard.getRange("A1:E100").setFontFamily("Arial");
+  dashboard.autoResizeColumn(1);
+  dashboard.autoResizeColumn(2);
+  dashboard.autoResizeColumn(4);
+  dashboard.autoResizeColumn(5);
+}
+
+// ==========================================
 // AKSES MENU INISIALISASI DI SPREADSHEET
 // ==========================================
 
@@ -644,7 +908,7 @@ function onOpen() {
       .addItem("Inisialisasi Sheet & Header Otomatis", "setupSheetHeaders")
       .addToUi();
   } catch (e) {
-    // Mengabaikan error jika dijalankan di luar konteks UI Spreadsheet
+    // Mengabaikan error di luar konteks UI
   }
 }
 
@@ -662,12 +926,20 @@ function setupSheetHeaders() {
       headers: ["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"] 
     },
     { 
+      name: "Data Resi J&T Cikupa Mas", 
+      headers: ["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"] 
+    },
+    { 
       name: "Seller List", 
       headers: ["Nama Seller"] 
     },
     { 
       name: "Data Operator", 
       headers: ["Nama Operator"] 
+    },
+    { 
+      name: "Daftar Outlet", 
+      headers: ["Nama Outlet"] 
     }
   ];
   
@@ -681,16 +953,38 @@ function setupSheetHeaders() {
       sheet = ss.insertSheet(target.name);
     }
     
-    // PEMBUATAN HEADER OTOMATIS HANYA BERLAKU DI AWAL SETUP (jika baris masih kosong/getLastRow === 0)
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(target.headers);
       sheet.getRange(1, 1, 1, target.headers.length).setFontWeight("bold").setBackground("#f1f5f9");
-      resultMsg += "✓ " + target.name + " (Berhasil di-setup dengan Header)\\n";
+      
+      // Auto populate template values for metadata to help user start
+      if (target.name === "Daftar Outlet") {
+        sheet.appendRow(["J&T Pasir Jaha Balaraja"]);
+        sheet.appendRow(["J&T Jayanti"]);
+        sheet.appendRow(["J&T Cikupa Mas"]);
+      } else if (target.name === "Seller List") {
+        sheet.appendRow(["Skincare A"]);
+        sheet.appendRow(["Fashion B"]);
+        sheet.appendRow(["Elektronik C"]);
+        sheet.appendRow(["Hijab Trend"]);
+      } else if (target.name === "Data Operator") {
+        sheet.appendRow(["FITRI FAJRIA"]);
+        sheet.appendRow(["M. HARI YANTO"]);
+        sheet.appendRow(["M. DANANG"]);
+      }
+      
+      resultMsg += "✓ " + target.name + " (Berhasil di-setup dengan Header & Template)\\n";
     } else {
       resultMsg += "• " + target.name + " (Sudah berisi data - Dilewati)\\n";
     }
   }
   
+  // Setup Dashboard
+  try {
+    updateDashboardSheet(ss);
+    resultMsg += "✓ Dashboard (Berhasil di-generate)\\n";
+  } catch (dashE) {}
+
   try {
     SpreadsheetApp.getUi().alert("Inisialisasi Selesai!\\n\\n" + resultMsg + "\\nLangkah ini aman dijalankan dan hanya menulis header bila sheet masih kosong.");
   } catch (e) {
@@ -699,8 +993,7 @@ function setupSheetHeaders() {
   
   return { success: true, message: resultMsg };
 }
-\`;
-  }`;
+`;
   }
 }
 

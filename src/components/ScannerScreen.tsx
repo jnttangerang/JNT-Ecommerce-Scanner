@@ -60,6 +60,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Manual code input helper (for testing/mobile fallbacks)
   const [manualResi, setManualResi] = useState("");
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Clarity confirmation modal ("Validasi Foto")
   const [pendingValidation, setPendingValidation] = useState<{
@@ -233,9 +234,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     
     // Quick validation format
     if (!clean.match(/^JX\d{10,12}$/i) && !clean.match(/^\d{10,13}$/)) {
-      if (!confirm("Format resi biasanya diawali dengan 'JX' diikuti 10 digit angka (contoh: JX9530937001). Tetap scan resi ini?")) {
-        return;
-      }
+      // Proceed immediately to avoid sandboxed iframe dialog freeze
     }
 
     handleBarcodeScanned(clean);
@@ -250,11 +249,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Clear data safely for testing
   const handleClearTodayRecords = () => {
-    if (confirm("Apakah anda yakin ingin mereset basis data lokal? Seluruh rekap hari ini akan dihapus.")) {
-      dbService.resetDatabase();
-      loadRecords();
-      setLatestResi("");
+    if (!showResetConfirm) {
+      setShowResetConfirm(true);
+      setTimeout(() => setShowResetConfirm(false), 5000); // Auto expire in 5 seconds
+      return;
     }
+    dbService.resetDatabase();
+    loadRecords();
+    setLatestResi("");
+    setShowResetConfirm(false);
   };
 
   return (
@@ -524,11 +527,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   <button
                     type="button"
                     onClick={handleClearTodayRecords}
-                    className="text-[10px] font-bold text-slate-500 hover:text-red-405 hover:bg-red-950/20 px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-all cursor-pointer"
+                    className={`text-[10px] font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-all cursor-pointer ${
+                      showResetConfirm
+                        ? "bg-red-600 text-white font-extrabold animate-pulse shadow-sm"
+                        : "text-slate-500 hover:text-red-600 hover:bg-slate-100"
+                    }`}
                     title="Bersihkan basis data harian"
                   >
                     <Trash2 className="h-3 w-3" />
-                    <span>RESET LOCAL DB</span>
+                    <span>{showResetConfirm ? "YAKIN? KLIK LAGI UNTUK RESET" : "RESET LOCAL DB"}</span>
                   </button>
                 </div>
               </div>

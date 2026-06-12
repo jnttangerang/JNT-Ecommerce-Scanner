@@ -54,10 +54,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setOperators(ops);
     setSellers(sels);
 
-    // Hydrate from previous localStorage, otherwise fallback to index 0
-    setSelectedOutlet(savedOutlet || outs[0]?.NamaOutlet || "");
-    setSelectedSeller(savedSeller || sels[0]?.NamaSeller || "");
-    setSelectedOperator(savedOperator || ops[0]?.NamaOperator || "");
+    // Hydrate from previous localStorage, otherwise default to empty string "" for the "--- Pilih ---" placeholder
+    setSelectedOutlet(savedOutlet || "");
+    setSelectedSeller(savedSeller || "");
+    setSelectedOperator(savedOperator || "");
   }, [savedOutlet, savedSeller, savedOperator]);
 
   const handleCreateSeller = (e: React.FormEvent) => {
@@ -120,9 +120,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         
         <div className="text-center mb-6">
           <p className="text-red-650 text-[10px] font-bold tracking-widest uppercase mb-1">J&T Express Ecommerce Gateway</p>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">BATCH LOGIN PICKUP</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">LOGIN</h2>
           <p className="text-xs text-slate-500 mt-1.5">
-            Konfigurasi metadata penjemputan paket untuk pelacakan bebas duplikat.
+            Konfigurasi Sistem integrasi Ecommerce J&T.
           </p>
         </div>
 

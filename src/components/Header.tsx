@@ -68,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
                 E-COMM
               </span>
             </h1>
-            <p className="text-[11px] text-slate-500 font-medium">Tangerang Barat • Pasir Jaha</p>
+            <p className="text-[11px] text-slate-500 font-medium">Tangerang Barat •</p>
           </div>
         </div>
 
@@ -76,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center space-x-3">
           {/* Real-time Clock (Desktop-friendly) */}
           <div className="hidden md:flex flex-col items-end mr-2 font-mono text-xs text-slate-500">
-            <span className="text-slate-400 text-[10px] font-bold">LOCAL TIME</span>
+            <span className="text-slate-400 text-[10px] font-bold">TIME</span>
             <span className="font-semibold text-slate-700">{currentTime}</span>
           </div>
 
