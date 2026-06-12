@@ -21,6 +21,7 @@ import {
 import { ScanRecord, StatusType } from "../types";
 import { dbService, createMockResiPhoto } from "../utils/db";
 import { audioService } from "../utils/audio";
+import { BrowserMultiFormatReader } from "@zxing/library";
 
 interface ScannerProps {
   config: {
@@ -33,6 +34,7 @@ interface ScannerProps {
   pendingCount: number;
   triggerSync: () => void;
   isSyncing: boolean;
+  onRecordAdded?: () => void;
 }
 
 export const ScannerScreen: React.FC<ScannerProps> = ({
@@ -41,7 +43,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   isOffline,
   pendingCount,
   triggerSync,
-  isSyncing
+  isSyncing,
+  onRecordAdded
 }) => {
   // Lists
   const [scannedRecords, setScannedRecords] = useState<ScanRecord[]>([]);
@@ -50,6 +53,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Live video feed
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  const isScanningLocked = useRef(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState("");
 
@@ -103,6 +108,18 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.play();
+
+          // Initialize local ZXing Browser Reader to start reading from the feed
+          const reader = new BrowserMultiFormatReader();
+          codeReaderRef.current = reader;
+          reader.decodeFromStream(stream, videoRef.current, (result, err) => {
+            if (result && !isScanningLocked.current) {
+              const resiText = result.getText().trim();
+              if (resiText) {
+                handleBarcodeScanned(resiText);
+              }
+            }
+          });
         }
         setCameraActive(true);
       } else {
@@ -116,6 +133,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   };
 
   const stopCamera = () => {
+    if (codeReaderRef.current) {
+      codeReaderRef.current.reset();
+      codeReaderRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -166,16 +187,25 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const rawCode = scannedResi.trim().toUpperCase();
     if (!rawCode) return;
 
+    if (isScanningLocked.current) return;
+
     setDuplicateWarning(null);
 
     // 1. Antiduplicate Validation
     if (dbService.isDuplicate(rawCode)) {
       audioService.playError();
       setDuplicateWarning(rawCode);
+      isScanningLocked.current = true;
       
-      // Auto dismiss warning after 3 seconds
+      // Auto dismiss warning after 4 seconds
       setTimeout(() => {
-        setDuplicateWarning(prev => prev === rawCode ? null : prev);
+        setDuplicateWarning(prev => {
+          if (prev === rawCode) {
+            isScanningLocked.current = false;
+            return null;
+          }
+          return prev;
+        });
       }, 4000);
       return;
     }
@@ -187,6 +217,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     // 3. Initiate visibility verification ("Validasi Foto")
     // Operator must confirm the picture looks clear before it is inserted
+    isScanningLocked.current = true;
     setPendingValidation({
       resi: rawCode,
       photoURL: photoData
@@ -202,6 +233,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       audioService.playError();
       alert("❌ RESI TIDAK JELAS\n\nSilakan posisikan ulang paket dan scan kembali!");
       setPendingValidation(null);
+      isScanningLocked.current = false;
       return;
     }
 
@@ -220,12 +252,16 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (result.success && result.record) {
       setLatestResi(result.record.Resi);
       loadRecords();
+      if (onRecordAdded) {
+        onRecordAdded();
+      }
     } else {
       alert(`Gagal menyimpan: ${result.error}`);
     }
 
     setPendingValidation(null);
     setManualResi("");
+    isScanningLocked.current = false;
   };
 
   const handleManualSubmit = (e: React.FormEvent) => {
@@ -238,13 +274,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }
 
     handleBarcodeScanned(clean);
-  };
-
-  // Simulates a quick automatic camera scan with random valid tracking code
-  const handleQuickMockScan = () => {
-    const rand = Math.floor(9530937000 + Math.random() * 200000);
-    const mockCode = `JX${rand}`;
-    handleBarcodeScanned(mockCode);
   };
 
   // Clear data safely for testing
@@ -416,7 +445,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     Paket ini telah terdaftar dalam database pickup hari ini. Total scan tidak bertambah demi mencegah double input.
                   </p>
                   <button
-                    onClick={() => setDuplicateWarning(null)}
+                    onClick={() => {
+                      setDuplicateWarning(null);
+                      isScanningLocked.current = false;
+                    }}
                     className="bg-zinc-100 hover:bg-white text-zinc-900 font-bold text-xs px-4 py-2 rounded-lg transition-all"
                   >
                     TUTUP PERINGATAN
@@ -517,20 +549,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <div className="flex items-center space-x-2">
                   <button
                     type="button"
-                    onClick={handleQuickMockScan}
-                    className="text-[10px] font-bold text-slate-400 bg-slate-900 hover:bg-slate-850 hover:text-slate-200 border border-slate-800 px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-all cursor-pointer"
-                  >
-                    <Sparkles className="h-3 w-3 text-amber-500 animate-pulse" />
-                    <span>MOCK AUTO SCAN SELLER</span>
-                  </button>
-                  
-                  <button
-                    type="button"
                     onClick={handleClearTodayRecords}
                     className={`text-[10px] font-bold px-3 py-1.5 rounded-lg flex items-center space-x-1 transition-all cursor-pointer ${
                       showResetConfirm
                         ? "bg-red-600 text-white font-extrabold animate-pulse shadow-sm"
-                        : "text-slate-500 hover:text-red-600 hover:bg-slate-100"
+                        : "text-slate-500 hover:text-red-600 hover:bg-slate-100/50"
                     }`}
                     title="Bersihkan basis data harian"
                   >

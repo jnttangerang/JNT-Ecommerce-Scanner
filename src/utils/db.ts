@@ -401,9 +401,8 @@ export class DatabaseService {
     // Compute photo URL or fallback dummy generator
     const photo = data.photoURL || createMockResiPhoto(resi, data.seller);
     
-    // Determine sync state depending on active network/offline setting
-    const isOffline = this.getOfflinePreference();
-    const syncStatus = isOffline ? "PENDING" : "SYNCED";
+    // Determine sync state - always start as PENDING so that the queue picks it up to upload to the server
+    const syncStatus = "PENDING";
 
     const newRecord: ScanRecord = {
       ID: String(records.length + 5001),
@@ -502,8 +501,7 @@ export class DatabaseService {
    * Clear active log database (for setup & testing)
    */
   public resetDatabase() {
-    localStorage.removeItem(RECORDS_KEY);
-    localStorage.removeItem(SELLER_KEY);
+    localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
   }
 
   /**

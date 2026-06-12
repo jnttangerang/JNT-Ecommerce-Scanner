@@ -14,7 +14,26 @@ import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, X, Bell, RefreshCw } from "lucide-react";
 
 export default function App() {
-  const [currentView, setView] = useState<AppView>("WELCOME");
+  const [currentView, setView] = useState<AppView>(() => {
+    const savedView = localStorage.getItem("jt_current_view") as AppView;
+    if (savedView === "SCANNER") {
+      const savedOut = localStorage.getItem("jt_saved_outlet") || "";
+      const savedSel = localStorage.getItem("jt_saved_seller") || "";
+      const savedOp = localStorage.getItem("jt_saved_operator") || "";
+      if (savedOut && savedSel && savedOp) {
+        return "SCANNER";
+      }
+    }
+    if (savedView === "OWNER_DASHBOARD" && localStorage.getItem("jt_owner_authenticated") === "true") {
+      return "OWNER_DASHBOARD";
+    }
+    return "WELCOME";
+  });
+
+  const changeView = (view: AppView) => {
+    setView(view);
+    localStorage.setItem("jt_current_view", view);
+  };
 
   // Selection state
   const [selectedOutlet, setSelectedOutlet] = useState("");
@@ -65,6 +84,11 @@ export default function App() {
     const records = dbService.getRecords();
     const pending = records.filter((r) => r.SyncStatus === "PENDING").length;
     setPendingCount(pending);
+
+    // Automatically trigger upload if in online mode and records are pending
+    if (!isOffline && pending > 0 && !isSyncing) {
+      silentSyncPending();
+    }
   };
 
   // Handles manual batch upload trigger ("Upload Sekarang")
@@ -121,7 +145,7 @@ export default function App() {
     localStorage.setItem("jt_saved_seller", config.seller);
     localStorage.setItem("jt_saved_operator", config.operator);
 
-    setView("SCANNER");
+    changeView("SCANNER");
     updatePendingCount();
   };
 
@@ -158,7 +182,7 @@ export default function App() {
       <Header
         currentView={currentView}
         setView={(view) => {
-          setView(view);
+          changeView(view);
           updatePendingCount();
         }}
         isOffline={isOffline}
@@ -238,11 +262,12 @@ export default function App() {
                   seller: selectedSeller,
                   operator: selectedOperator
                 }}
-                onBack={() => setView("WELCOME")}
+                onBack={() => changeView("WELCOME")}
                 isOffline={isOffline}
                 pendingCount={pendingCount}
                 triggerSync={triggerSync}
                 isSyncing={isSyncing}
+                onRecordAdded={updatePendingCount}
               />
             )}
 
