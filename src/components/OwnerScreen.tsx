@@ -31,7 +31,9 @@ import {
   Copy,
   Check,
   Cloud,
-  Github
+  Github,
+  RefreshCw,
+  LogOut
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator } from "../types";
 import { dbService } from "../utils/db";
@@ -42,7 +44,9 @@ interface OwnerDashboardProps {
 
 export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) => {
   // Passcode gate state
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return sessionStorage.getItem("jt_owner_authenticated") === "true";
+  });
   const [passcode, setPasscode] = useState("");
   const [passError, setPassError] = useState("");
 
@@ -103,6 +107,11 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwError, setPwError] = useState("");
   const [pwSuccess, setPwSuccess] = useState(false);
+
+  // Master Lists Cloud Sync States
+  const [isPullingMasters, setIsPullingMasters] = useState(false);
+  const [isPushingMasters, setIsPushingMasters] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Initialize data on mount / update
   useEffect(() => {
@@ -166,6 +175,95 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     setOperators(dbService.getOperators());
   };
 
+  const handlePullMasters = async () => {
+    if (!cloudConfig.appsScriptUrl) {
+      setSyncFeedback({ type: "error", message: "Gagal: URL Google Apps Script belum dikonfigurasi di tab Integrasi!" });
+      return;
+    }
+    setIsPullingMasters(true);
+    setSyncFeedback(null);
+    try {
+      const response = await fetch(cloudConfig.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify({ action: "get_masters" })
+      });
+      const data = await response.json();
+      if (data && data.success) {
+        // Map raw strings to objects
+        const fetchedSellers = (data.sellers || []).map((name: string) => ({ NamaSeller: name.trim() })).filter((x: any) => x.NamaSeller);
+        const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
+
+        if (fetchedSellers.length === 0 && fetchedOperators.length === 0) {
+          setSyncFeedback({ type: "error", message: "Data kosong di Spreadsheet. Pastikan Spreadsheet Anda sudah berisi data Seller dan Operator." });
+        } else {
+          // Save to local storage
+          localStorage.setItem("jt_pickup_operators", JSON.stringify(fetchedOperators));
+          localStorage.setItem("jt_pickup_sellers", JSON.stringify(fetchedSellers));
+          
+          setSellers(fetchedSellers);
+          setOperators(fetchedOperators);
+          
+          setSyncFeedback({ 
+            type: "success", 
+            message: `Berhasil menarik ${fetchedSellers.length} Seller dan ${fetchedOperators.length} Operator dari Spreadsheet!` 
+          });
+          onStatusChanged(); // Notify parrent of refresh if needed
+        }
+      } else {
+        setSyncFeedback({ type: "error", message: `Gagal menarik data: ${data.error || "Respon sukses bernilai false."}` });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncFeedback({ 
+        type: "error", 
+        message: "Sambungan gagal. Pastikan URL Apps Script benar, dideploy sebagai Web App (Anyone), dan internet aktif." 
+      });
+    } finally {
+      setIsPullingMasters(false);
+    }
+  };
+
+  const handlePushMasters = async () => {
+    if (!cloudConfig.appsScriptUrl) {
+      setSyncFeedback({ type: "error", message: "Gagal: URL Google Apps Script belum dikonfigurasi di tab Integrasi!" });
+      return;
+    }
+    setIsPushingMasters(true);
+    setSyncFeedback(null);
+    try {
+      const response = await fetch(cloudConfig.appsScriptUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify({
+          action: "sync_masters",
+          sellers: sellers.map(s => s.NamaSeller),
+          operators: operators.map(o => o.NamaOperator)
+        })
+      });
+      const data = await response.json();
+      if (data && data.success) {
+        setSyncFeedback({ type: "success", message: "Berhasil mengunggah & menyinkronkan daftar Seller dan Operator ke Spreadsheet!" });
+      } else {
+        setSyncFeedback({ type: "error", message: `Gagal mengirim data: ${data.error || "Respon sukses bernilai false."}` });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setSyncFeedback({ 
+        type: "error", 
+        message: "Gagal mengirim data. Pastikan Apps Script Anda mendukung action 'sync_masters' (salin ulang dari tab Integrasi)." 
+      });
+    } finally {
+      setIsPushingMasters(false);
+    }
+  };
+
   const handleSaveCloudConfigField = (field: string, value: string) => {
     dbService.saveCloudConfig({ [field]: value });
     setCloudConfig(dbService.getCloudConfig());
@@ -202,147 +300,226 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
 
   const renderMastersTab = () => {
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+      <div className="space-y-6 animate-in fade-in duration-300">
         
-        {/* Operator List Card */}
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-            <div>
-              <h4 className="font-bold text-slate-900 flex items-center text-sm">
-                <Users className="h-4 w-4 text-slate-500 mr-2" />
-                PENGELOLA KARYAWAN / OPERATOR J&T
-              </h4>
-              <p className="text-[10px] text-slate-400">Total terdaftar: {operators.length} Operator</p>
-            </div>
-          </div>
-
-          {/* Form Tambah Operator */}
-          <form onSubmit={handleAddOperatorAndSave} className="flex gap-2 mb-4">
-            <input
-              type="text"
-              value={newOperator}
-              onChange={(e) => {
-                setNewOperator(e.target.value);
-                setOperatorError("");
-              }}
-              placeholder="Masukkan nama operator baru..."
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-xs focus:outline-none focus:border-red-600 font-semibold"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-black text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer text-xs flex items-center space-x-1"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Tambah</span>
-            </button>
-          </form>
-
-          {operatorError && (
-            <p className="text-[10px] text-red-600 font-bold mb-3">{operatorError}</p>
-          )}
-
-          {/* List Table */}
-          <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[300px] overflow-y-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
-                  <th className="p-3">Nama Operator</th>
-                  <th className="p-3 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {operators.map((op) => (
-                  <tr key={op.NamaOperator} className="hover:bg-slate-50/50">
-                    <td className="p-3 font-semibold text-slate-800">{op.NamaOperator}</td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => handleDeleteOperator(op.NamaOperator)}
-                        className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
-                        title="Hapus Operator"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {/* Unified Cloud Sync Banner */}
+        <div className="bg-slate-900 text-white rounded-3xl p-5 border border-slate-800 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1 flex-grow">
+            <h4 className="font-bold flex items-center text-xs tracking-wider text-red-500 uppercase">
+              <Cloud className="h-4 w-4 mr-2 animate-pulse text-red-500" />
+              SINKRONISASI MASTER CLOUD (GOOGLE SPREADSHEET)
+            </h4>
+            <p className="text-[11px] text-slate-300 leading-normal">
+              Tombol ini mensinkronisasikan daftar <strong>Operator J&T</strong> dan <strong>Seller Drop-Off</strong> antara aplikasi web ini dan Google Sheets secara real-time.
+            </p>
+            {syncFeedback && (
+              <div className={`mt-2 p-2.5 rounded-xl border text-[11px] font-bold flex items-center space-x-2 ${
+                syncFeedback.type === "success" 
+                  ? "bg-emerald-950/20 border-emerald-800 text-emerald-400" 
+                  : "bg-red-950/20 border-red-900 text-red-400"
+              }`}>
+                <span>{syncFeedback.type === "success" ? "✓" : "⚠"}</span>
+                <span>{syncFeedback.message}</span>
+              </div>
+            )}
           </div>
           
-          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
-            * Operator baru akan disinkronasikan ke sheet <span className="font-mono text-slate-600">Data Operator</span> melalui fungsi Apps Script API.
-          </p>
+          <div className="flex gap-2 w-full md:w-auto shrink-0">
+            <button
+              onClick={handlePullMasters}
+              disabled={isPullingMasters || isPushingMasters}
+              className="flex-1 md:flex-none uppercase tracking-wider text-[10px] font-extrabold bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-3 rounded-xl flex items-center justify-center space-x-1.5 border border-slate-700 transition cursor-pointer disabled:opacity-50"
+              title="Unduh data operator & seller terbaru dari Google Sheets"
+            >
+              {isPullingMasters ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-450" />
+              ) : (
+                <Download className="h-3.5 w-3.5 text-blue-400" />
+              )}
+              <span>Tarik Dari Cloud</span>
+            </button>
+            
+            <button
+              onClick={handlePushMasters}
+              disabled={isPullingMasters || isPushingMasters}
+              className="flex-1 md:flex-none uppercase tracking-wider text-[10px] font-extrabold bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-xl flex items-center justify-center space-x-1.5 shadow-sm transition cursor-pointer disabled:opacity-50"
+              title="Unggah dan simpan daftar operator & seller lokal Anda saat ini ke Google Sheets"
+            >
+              {isPushingMasters ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-red-200" />
+              ) : (
+                <Cloud className="h-3.5 w-3.5 text-white" />
+              )}
+              <span>Kirim ke Cloud</span>
+            </button>
+          </div>
         </div>
 
-        {/* Seller List Card */}
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          {/* Operator List Card */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between min-h-[460px]">
             <div>
-              <h4 className="font-bold text-slate-900 flex items-center text-sm">
-                <Store className="h-4 w-4 text-slate-500 mr-2" />
-                DAFTAR SELLER ECOMMERCE (DROP-OFF)
-              </h4>
-              <p className="text-[10px] text-slate-400">Total terdaftar: {sellers.length} Seller</p>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div>
+                  <h4 className="font-bold text-slate-900 flex items-center text-sm">
+                    <Users className="h-4 w-4 text-slate-500 mr-2" />
+                    PENGELOLA KARYAWAN / OPERATOR J&T
+                  </h4>
+                  <p className="text-[10px] text-slate-400">Total terdaftar: {operators.length} Operator</p>
+                </div>
+              </div>
+
+              {/* Form Tambah Operator */}
+              <form onSubmit={handleAddOperatorAndSave} className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={newOperator}
+                  onChange={(e) => {
+                    setNewOperator(e.target.value);
+                    setOperatorError("");
+                  }}
+                  placeholder="Masukkan nama operator baru..."
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-xs focus:outline-none focus:border-red-650 font-semibold"
+                />
+                <button
+                  type="submit"
+                  className="bg-slate-900 hover:bg-black text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer text-xs flex items-center space-x-1 border border-slate-900 transition"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Tambah</span>
+                </button>
+              </form>
+
+              {operatorError && (
+                <p className="text-[10px] text-red-600 font-bold mb-3">{operatorError}</p>
+              )}
+
+              {/* List Table */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[200px] overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                      <th className="p-3">Nama Operator</th>
+                      <th className="p-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {operators.map((op) => (
+                      <tr key={op.NamaOperator} className="hover:bg-slate-50/50">
+                        <td className="p-3 font-semibold text-slate-800">{op.NamaOperator}</td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => handleDeleteOperator(op.NamaOperator)}
+                            className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                            title="Hapus Operator"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+              <button
+                onClick={handlePushMasters}
+                disabled={isPushingMasters || isPullingMasters}
+                className="w-full bg-slate-900 hover:bg-black text-white font-extrabold py-2.5 rounded-xl cursor-pointer text-xs flex items-center justify-center space-x-1 border border-slate-900 transition shadow-sm disabled:opacity-50 hover:shadow-md"
+              >
+                <Cloud className="h-3.5 w-3.5 text-red-500 mr-1" />
+                <span>Simpan Karyawan ke Cloud</span>
+              </button>
+              <p className="text-[10px] text-slate-400 leading-normal italic">
+                * Operator baru/terhapus akan otomatis disinkronkan ke Spreadsheet saat Anda menekan tombol simpan atau tombol kirim di atas.
+              </p>
             </div>
           </div>
 
-          {/* Form Tambah Seller */}
-          <form onSubmit={handleAddSellerAndSave} className="flex gap-2 mb-4">
-            <input
-              type="text"
-              value={newSeller}
-              onChange={(e) => {
-                setNewSeller(e.target.value);
-                setSellerError("");
-              }}
-              placeholder="Masukkan nama seller baru..."
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-xs focus:outline-none focus:border-red-600 font-semibold"
-            />
-            <button
-              type="submit"
-              className="bg-slate-900 hover:bg-black text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer text-xs flex items-center space-x-1"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Tambah</span>
-            </button>
-          </form>
+          {/* Seller List Card */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between min-h-[460px]">
+            <div>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div>
+                  <h4 className="font-bold text-slate-900 flex items-center text-sm">
+                    <Store className="h-4 w-4 text-slate-500 mr-2" />
+                    DAFTAR SELLER ECOMMERCE (DROP-OFF)
+                  </h4>
+                  <p className="text-[10px] text-slate-400 font-medium">Total terdaftar: {sellers.length} Seller</p>
+                </div>
+              </div>
 
-          {sellerError && (
-            <p className="text-[10px] text-red-650 font-bold mb-3">{sellerError}</p>
-          )}
+              {/* Form Tambah Seller */}
+              <form onSubmit={handleAddSellerAndSave} className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={newSeller}
+                  onChange={(e) => {
+                    setNewSeller(e.target.value);
+                    setSellerError("");
+                  }}
+                  placeholder="Masukkan nama seller baru..."
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-800 text-xs focus:outline-none focus:border-red-650 font-semibold"
+                />
+                <button
+                  type="submit"
+                  className="bg-slate-900 hover:bg-black text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer text-xs flex items-center space-x-1 border border-slate-900 transition"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Tambah</span>
+                </button>
+              </form>
 
-          {/* List Table */}
-          <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[300px] overflow-y-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
-                  <th className="p-3">Nama Seller</th>
-                  <th className="p-3 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {sellers.map((s) => (
-                  <tr key={s.NamaSeller} className="hover:bg-slate-50/50">
-                    <td className="p-3 font-semibold text-slate-800">{s.NamaSeller}</td>
-                    <td className="p-3 text-right">
-                      <button
-                        onClick={() => handleDeleteSeller(s.NamaSeller)}
-                        className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
-                        title="Hapus Seller"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              {sellerError && (
+                <p className="text-[10px] text-red-650 font-bold mb-3">{sellerError}</p>
+              )}
+
+              {/* List Table */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[200px] overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold">
+                      <th className="p-3">Nama Seller</th>
+                      <th className="p-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {sellers.map((s) => (
+                      <tr key={s.NamaSeller} className="hover:bg-slate-50/50">
+                        <td className="p-3 font-semibold text-slate-800">{s.NamaSeller}</td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => handleDeleteSeller(s.NamaSeller)}
+                            className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                            title="Hapus Seller"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+              <button
+                onClick={handlePushMasters}
+                disabled={isPushingMasters || isPullingMasters}
+                className="w-full bg-slate-900 hover:bg-black text-white font-extrabold py-2.5 rounded-xl cursor-pointer text-xs flex items-center justify-center space-x-1 border border-slate-900 transition shadow-sm disabled:opacity-50 hover:shadow-md"
+              >
+                <Cloud className="h-3.5 w-3.5 text-red-500 mr-1" />
+                <span>Simpan Seller ke Cloud</span>
+              </button>
+              <p className="text-[10px] text-slate-400 leading-normal italic">
+                * Klik "Simpan Seller ke Cloud" setelah menambah/menghapus seller untuk mensinkronkannya ke Google Sheets.
+              </p>
+            </div>
           </div>
-
-          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
-            * Seller baru akan disinkronasikan ke sheet <span className="font-mono text-slate-600">Daftar Seller</span> secara otomatis saat disinkronkan.
-          </p>
-        </div>
 
         {/* Ganti Kata Sandi Owner Card */}
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
@@ -414,6 +591,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
           </p>
         </div>
 
+      </div>
       </div>
     );
   };
@@ -869,10 +1047,17 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     // Accept standard default passcode or saved custom password
     if (passcode.trim() === savedPassword || passcode.trim() === "balaraja") {
       setIsAuthenticated(true);
+      sessionStorage.setItem("jt_owner_authenticated", "true");
       setPasscode("");
     } else {
       setPassError("Kata sandi salah. Gunakan default: 'jntowner' atau sandi khusus Anda.");
     }
+  };
+
+  // Handle logout
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    sessionStorage.removeItem("jt_owner_authenticated");
   };
 
   // Update Owner Password Callback
@@ -1061,54 +1246,64 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-6 space-y-6" id="owner-dashboard-workspace">
       
-      {/* Navigation Tabs for Owner Workspace */}
-      <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-1 select-none w-full max-w-2xl">
-        <button
-          onClick={() => setActiveTab("RECAP")}
-          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
-            activeTab === "RECAP"
-              ? "bg-white text-slate-900 shadow-sm font-extrabold"
-              : "text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          <BarChart3 className="h-3.5 w-3.5 text-red-650" />
-          <span className="truncate">Monitoring & Resi</span>
-        </button>
+      {/* Navigation Tabs & Logout Row for Owner Workspace */}
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-1 select-none w-full max-w-2xl">
+          <button
+            onClick={() => setActiveTab("RECAP")}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              activeTab === "RECAP"
+                ? "bg-white text-slate-900 shadow-sm font-extrabold"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <BarChart3 className="h-3.5 w-3.5 text-red-650" />
+            <span className="truncate">Monitoring & Resi</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("MASTERS")}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              activeTab === "MASTERS"
+                ? "bg-white text-slate-900 shadow-sm font-extrabold"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <Users className="h-3.5 w-3.5 text-red-650" />
+            <span className="truncate">Data Master</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("INTEGRATION")}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              activeTab === "INTEGRATION"
+                ? "bg-white text-slate-900 shadow-sm font-extrabold"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <Cloud className="h-3.5 w-3.5 text-red-650" />
+            <span className="truncate">Integrasi Cloud</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("DEPLOYMENT")}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              activeTab === "DEPLOYMENT"
+                ? "bg-white text-slate-900 shadow-sm font-extrabold"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <Settings className="h-3.5 w-3.5" />
+            <span className="truncate">Deployment</span>
+          </button>
+        </div>
 
         <button
-          onClick={() => setActiveTab("MASTERS")}
-          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
-            activeTab === "MASTERS"
-              ? "bg-white text-slate-900 shadow-sm font-extrabold"
-              : "text-slate-500 hover:text-slate-800"
-          }`}
+          onClick={handleLogout}
+          className="bg-slate-100 hover:bg-red-50 text-slate-650 hover:text-red-600 border border-slate-200 hover:border-red-200 transition-all font-bold px-4 py-2.5 rounded-2xl text-xs flex items-center justify-center space-x-2 cursor-pointer shadow-sm md:w-auto"
         >
-          <Users className="h-3.5 w-3.5 text-red-650" />
-          <span className="truncate">Data Master</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("INTEGRATION")}
-          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
-            activeTab === "INTEGRATION"
-              ? "bg-white text-slate-900 shadow-sm font-extrabold"
-              : "text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          <Cloud className="h-3.5 w-3.5 text-red-650" />
-          <span className="truncate">Integrasi Cloud</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab("DEPLOYMENT")}
-          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
-            activeTab === "DEPLOYMENT"
-              ? "bg-white text-slate-900 shadow-sm font-extrabold"
-              : "text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          <Settings className="h-3.5 w-3.5" />
-          <span className="truncate">Deployment</span>
+          <LogOut className="h-3.5 w-3.5" />
+          <span>Keluar Dashboard</span>
         </button>
       </div>
 

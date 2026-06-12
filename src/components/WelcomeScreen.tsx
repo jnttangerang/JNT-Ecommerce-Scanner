@@ -55,11 +55,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setSellers(sels);
 
     // Hydrate from previous localStorage, otherwise fallback to index 0
-    // FIX: Hanya pakai data yang tersimpan, jika tidak ada biarkan kosong ("")
-    // agar memicu teks placeholder default dropdown
-    setSelectedOutlet(savedOutlet || "");
-    setSelectedSeller(savedSeller || "");
-    setSelectedOperator(savedOperator || "");
+    setSelectedOutlet(savedOutlet || outs[0]?.NamaOutlet || "");
+    setSelectedSeller(savedSeller || sels[0]?.NamaSeller || "");
+    setSelectedOperator(savedOperator || ops[0]?.NamaOperator || "");
   }, [savedOutlet, savedSeller, savedOperator]);
 
   const handleCreateSeller = (e: React.FormEvent) => {
@@ -122,9 +120,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         
         <div className="text-center mb-6">
           <p className="text-red-650 text-[10px] font-bold tracking-widest uppercase mb-1">J&T Express Ecommerce Gateway</p>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">LOGIN</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">BATCH LOGIN PICKUP</h2>
           <p className="text-xs text-slate-500 mt-1.5">
-            Sistem Scanner E-COMMERCE J&T Terintegrasi.
+            Konfigurasi metadata penjemputan paket untuk pelacakan bebas duplikat.
           </p>
         </div>
 
@@ -140,7 +138,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               value={selectedOutlet}
               onChange={(e) => setSelectedOutlet(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm focus:outline-none focus:border-red-600 focus:bg-white transition-all font-medium appearance-none"
-              id="outlet-dropdown">
+              id="outlet-dropdown"
+            >
               <option value="" disabled>--- Pilih Outlet J&T ---</option>
               {outlets.map((o) => (
                 <option key={o.NamaOutlet} value={o.NamaOutlet}>
@@ -249,7 +248,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             id="start-scanning-button"
           >
             <Play className="h-4 w-4 fill-current" />
-            <span>MULAI SCAN</span>
+            <span>MULAI SCAN SEKARANG</span>
           </button>
         </div>
       </div>

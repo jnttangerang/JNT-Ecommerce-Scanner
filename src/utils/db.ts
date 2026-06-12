@@ -151,7 +151,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     // Shipping info
     ctx.fillStyle = "#333333";
     ctx.font = "normal 11px monospace";
-    ctx.fillText("LAYANAN: EZ", 135, 32);
+    ctx.fillText("LAYANAN: EZ (REGULER)", 135, 32);
     ctx.fillText("E-COMMERCE PICKUP", 135, 47);
 
     ctx.strokeStyle = "#333";
@@ -166,7 +166,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText(`PENGIRIM: ${seller}`, 20, 80);
     ctx.font = "normal 11px sans-serif";
-    ctx.fillText("PENERIMA: BUDI (JAKARTA)", 20, 98);
+    ctx.fillText("PENERIMA: Bpk. Joko Widodo (JAKARTA)", 20, 98);
     
     // Mock Barcode bars
     ctx.fillStyle = "#000000";
