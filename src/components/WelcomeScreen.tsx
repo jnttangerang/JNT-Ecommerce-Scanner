@@ -55,9 +55,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setSellers(sels);
 
     // Hydrate from previous localStorage, otherwise fallback to index 0
-    setSelectedOutlet(savedOutlet || outs[0]?.NamaOutlet || "");
-    setSelectedSeller(savedSeller || sels[0]?.NamaSeller || "");
-    setSelectedOperator(savedOperator || ops[0]?.NamaOperator || "");
+// FIX: Hanya pakai data yang tersimpan, jika tidak ada biarkan kosong ("")
+    // agar memicu teks placeholder default dropdown
+    setSelectedOutlet(savedOutlet || "");
+    setSelectedSeller(savedSeller || "");
+    setSelectedOperator(savedOperator || "");
   }, [savedOutlet, savedSeller, savedOperator]);
 
   const handleCreateSeller = (e: React.FormEvent) => {
@@ -134,7 +136,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               <Home className="h-3.5 w-3.5 mr-1 text-red-600" />
               Outlet J&T
             </label>
-            <option value="" disabled>--- Pilih Outlet J&T ---</option>
             <select
               value={selectedOutlet}
               onChange={(e) => setSelectedOutlet(e.target.value)}
@@ -248,7 +249,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             id="start-scanning-button"
           >
             <Play className="h-4 w-4 fill-current" />
-            <span>MULAI SCAN SEKARANG</span>
+            <span>MULAI SCAN</span>
           </button>
         </div>
       </div>
