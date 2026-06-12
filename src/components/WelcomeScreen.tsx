@@ -55,9 +55,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setSellers(sels);
 
     // Hydrate from previous localStorage, otherwise fallback to index 0
-    setSelectedOutlet(savedOutlet || outs[0]?.NamaOutlet || "");
-    setSelectedSeller(savedSeller || sels[0]?.NamaSeller || "");
-    setSelectedOperator(savedOperator || ops[0]?.NamaOperator || "");
+    // FIX: Hanya pakai data yang tersimpan, jika tidak ada biarkan kosong ("")
+    // agar memicu teks placeholder default dropdown
+    setSelectedOutlet(savedOutlet || "");
+    setSelectedSeller(savedSeller || "");
+    setSelectedOperator(savedOperator || "");
   }, [savedOutlet, savedSeller, savedOperator]);
 
   const handleCreateSeller = (e: React.FormEvent) => {
