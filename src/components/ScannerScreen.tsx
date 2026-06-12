@@ -138,7 +138,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
     } catch (err: any) {
       console.warn("Camera permission denied or unavailable, using sandbox placeholder:", err);
-      setCameraPermissionError("Akses kamera ditolak. Gunakan simulator foto otomatis.");
+      setCameraPermissionError("Akses kamera ditolak.");
       setCameraActive(false);
     }
   };

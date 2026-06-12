@@ -1258,7 +1258,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
       localStorage.setItem("jt_owner_authenticated", "true");
       setPasscode("");
     } else {
-      setPassError("Kata sandi salah. Gunakan default: 'jntowner' atau sandi khusus Anda.");
+      setPassError("Kata sandi salah!");
     }
   };
 
@@ -1435,7 +1435,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                 type="password"
                 value={passcode}
                 onChange={(e) => setPasscode(e.target.value)}
-                placeholder="Masukkan Sandi Owner"
+                placeholder="Masukkan Passcode"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-slate-800 text-sm focus:outline-none focus:border-red-600 tracking-wider text-center"
                 id="owner-passcode-input"
                 autoFocus
@@ -1449,12 +1449,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
               className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3.5 px-4 rounded-xl transition-all cursor-pointer text-xs uppercase font-bold tracking-wider"
               id="owner-submit-login"
             >
-              MASUK KE DASHBOARD MONITORING
+              LOGIN
             </button>
           </form>
 
           <div className="mt-6 pt-4 border-t border-slate-100 text-[10px] text-slate-400 font-mono">
-            Sandi Bawaan: <span className="text-slate-650 font-bold">jntowner</span> (dapat diubah melalui menu Data Master)
+            J&T <span className="text-slate-650 font-bold">Tangerang Barat</span> @2026
           </div>
         </div>
       </div>
@@ -1714,7 +1714,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                     <span className="font-black text-white text-lg tracking-widest bg-slate-950 px-4 py-2 border border-red-900 rounded-md">
                       ❌ ORDER CANCELLED
                     </span>
-                    <p className="text-[10px] text-slate-405">Paket ini ditolak pembeli</p>
+                    <p className="text-[10px] text-slate-405">Paket ini dibatalkan pembeli</p>
                   </div>
                 )}
               </div>
