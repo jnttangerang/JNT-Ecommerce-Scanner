@@ -151,7 +151,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     // Shipping info
     ctx.fillStyle = "#333333";
     ctx.font = "normal 11px monospace";
-    ctx.fillText("LAYANAN: EZ (REGULER)", 135, 32);
+    ctx.fillText("LAYANAN: EZ", 135, 32);
     ctx.fillText("E-COMMERCE PICKUP", 135, 47);
 
     ctx.strokeStyle = "#333";
@@ -166,7 +166,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText(`PENGIRIM: ${seller}`, 20, 80);
     ctx.font = "normal 11px sans-serif";
-    ctx.fillText("PENERIMA: Bpk. Joko Widodo (JAKARTA)", 20, 98);
+    ctx.fillText("PENERIMA: BUDI (JAKARTA)", 20, 98);
     
     // Mock Barcode bars
     ctx.fillStyle = "#000000";
@@ -449,6 +449,8 @@ function doPost(e) {
       return handleAddOperator(payload.operatorName);
     } else if (action === "get_masters") {
       return handleGetMasters();
+    } else if (action === "sync_masters") {
+      return handleSyncMasters(payload.sellers, payload.operators);
     }
     
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
@@ -579,6 +581,36 @@ function handleGetMasters() {
   }
   
   return ContentService.createTextOutput(JSON.stringify({ success: true, sellers: sellers, operators: operators }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleSyncMasters(sellers, operators) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  
+  // Clean list and write new ones
+  const sellerSheet = ss.getSheetByName("Seller List") || ss.getSheetByName("Daftar Seller") || ss.insertSheet("Seller List");
+  sellerSheet.clear();
+  sellerSheet.appendRow(["Nama Seller"]);
+  sellerSheet.getRange(1, 1).setFontWeight("bold").setBackground("#f1f5f9");
+  for (let i = 0; i < sellers.length; i++) {
+    const val = sellers[i].toString().trim();
+    if (val) {
+      sellerSheet.appendRow([val]);
+    }
+  }
+  
+  const opSheet = ss.getSheetByName("Operator List") || ss.getSheetByName("Daftar Operator") || ss.getSheetByName("Data Operator") || ss.insertSheet("Data Operator");
+  opSheet.clear();
+  opSheet.appendRow(["Nama Operator"]);
+  opSheet.getRange(1, 1).setFontWeight("bold").setBackground("#f1f5f9");
+  for (let i = 0; i < operators.length; i++) {
+    const val = operators[i].toString().trim();
+    if (val) {
+      opSheet.appendRow([val]);
+    }
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Berhasil disinkronkan ke Spreadsheet!" }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
