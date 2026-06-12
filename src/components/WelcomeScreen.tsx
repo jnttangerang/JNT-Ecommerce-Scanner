@@ -120,9 +120,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         
         <div className="text-center mb-6">
           <p className="text-red-650 text-[10px] font-bold tracking-widest uppercase mb-1">J&T Express Ecommerce Gateway</p>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">BATCH LOGIN PICKUP</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">LOGIN</h2>
           <p className="text-xs text-slate-500 mt-1.5">
-            Konfigurasi metadata penjemputan paket untuk pelacakan bebas duplikat.
+            Sistem Scanner E-COMMERCE J&T Terintegrasi.
           </p>
         </div>
 
@@ -134,12 +134,12 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               <Home className="h-3.5 w-3.5 mr-1 text-red-600" />
               Outlet J&T
             </label>
+            <option value="" disabled>--- Pilih Outlet J&T ---</option>
             <select
               value={selectedOutlet}
               onChange={(e) => setSelectedOutlet(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm focus:outline-none focus:border-red-600 focus:bg-white transition-all font-medium appearance-none"
-              id="outlet-dropdown"
-            >
+              id="outlet-dropdown">
               <option value="" disabled>--- Pilih Outlet J&T ---</option>
               {outlets.map((o) => (
                 <option key={o.NamaOutlet} value={o.NamaOutlet}>
