@@ -67,6 +67,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
 
+  // Ref to bypass stale closure on camera callbacks
+  const handleBarcodeScannedRef = useRef<((scannedResi: string) => void) | null>(null);
+
+  // Keep callback ref updated with the latest states/props on every render
+  useEffect(() => {
+    handleBarcodeScannedRef.current = handleBarcodeScanned;
+  });
+
   // Manual code input helper (for testing/mobile fallbacks)
   const [manualResi, setManualResi] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -127,7 +135,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             if (result && !isScanningLocked.current) {
               const resiText = result.getText().trim();
               if (resiText) {
-                handleBarcodeScanned(resiText);
+                if (handleBarcodeScannedRef.current) {
+                  handleBarcodeScannedRef.current(resiText);
+                }
               }
             }
           });
@@ -158,7 +168,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   /**
    * Captures the exact frame from the HTML5 Video stream
    */
-  const captureFrame = (): string => {
+  const captureFrame = (scannedResi?: string): string => {
     if (videoRef.current && cameraActive) {
       try {
         const canvas = document.createElement("canvas");
@@ -187,7 +197,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
     }
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
-    const simulatedBarcode = manualResi.trim().toUpperCase() || `JX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+    const simulatedBarcode = scannedResi || manualResi.trim().toUpperCase() || `JX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
     return createMockResiPhoto(simulatedBarcode, config.seller);
   };
 
@@ -223,7 +233,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     // 2. Capture corresponding photo from webcam frame
     setIsCapturing(true);
-    const photoData = captureFrame();
+    const photoData = captureFrame(rawCode);
     setIsCapturing(false);
 
     // 3. Initiate visibility verification ("Validasi Foto")

@@ -151,7 +151,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     // Shipping info
     ctx.fillStyle = "#333333";
     ctx.font = "normal 11px monospace";
-    ctx.fillText("LAYANAN: EZ (REGULER)", 135, 32);
+    ctx.fillText("LAYANAN: EZ", 135, 32);
     ctx.fillText("E-COMMERCE PICKUP", 135, 47);
 
     ctx.strokeStyle = "#333";
@@ -166,7 +166,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
     ctx.font = "bold 12px sans-serif";
     ctx.fillText(`PENGIRIM: ${seller}`, 20, 80);
     ctx.font = "normal 11px sans-serif";
-    ctx.fillText("PENERIMA: BUDI (JAKARTA)", 20, 98);
+    ctx.fillText("PENERIMA: BUDI (JAKARTA))", 20, 98);
     
     // Mock Barcode bars
     ctx.fillStyle = "#000000";
@@ -196,6 +196,8 @@ export function createMockResiPhoto(resi: string, seller: string): string {
 }
 
 export class DatabaseService {
+  private isSyncingInProgress = false;
+
   // Initialize lists
   public getOutlets(): Outlet[] {
     const raw = localStorage.getItem(OUTLET_KEY);
@@ -463,56 +465,67 @@ export class DatabaseService {
    * Batch Upload / Sync to Spreadsheet
    */
   public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
-    const config = this.getCloudConfig();
-    const records = this.getRecords();
-    const pending = records.filter(r => r.SyncStatus === "PENDING");
-    
-    if (pending.length === 0) {
+    if (this.isSyncingInProgress) {
+      console.log("Sinkronisasi sedang berlangsung. Permintaan diabaikan untuk mencegah duplikat.");
       return { successCount: 0, failedCount: 0 };
     }
 
-    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
-      // Simulate/fallback sync locally if actual cloud API is not configured
-      const updated = records.map(r => {
-        if (r.SyncStatus === "PENDING") {
-          return { ...r, SyncStatus: "SYNCED" as const };
-        }
-        return r;
-      });
-      localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
-      return { successCount: pending.length, failedCount: 0 };
-    }
+    this.isSyncingInProgress = true;
 
     try {
-      const response = await fetch(config.appsScriptUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8"
-        },
-        body: JSON.stringify({
-          action: "sync_batch",
-          records: pending
-        })
-      });
+      const config = this.getCloudConfig();
+      const records = this.getRecords();
+      const pending = records.filter(r => r.SyncStatus === "PENDING");
       
-      const data = await response.json();
-      if (data && data.success) {
-        const pendingIds = new Set(pending.map(p => p.ID));
+      if (pending.length === 0) {
+        return { successCount: 0, failedCount: 0 };
+      }
+
+      if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+        // Simulate/fallback sync locally if actual cloud API is not configured
         const updated = records.map(r => {
-          if (pendingIds.has(r.ID)) {
+          if (r.SyncStatus === "PENDING") {
             return { ...r, SyncStatus: "SYNCED" as const };
           }
           return r;
         });
         localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
         return { successCount: pending.length, failedCount: 0 };
-      } else {
-        return { successCount: 0, failedCount: pending.length, error: data.error || "Tanggapan web app bernilai sukses false." };
       }
-    } catch (err: any) {
-      console.error("Gagal melakukan sinkronisasi cloud", err);
-      return { successCount: 0, failedCount: pending.length, error: err.toString() };
+
+      try {
+        const response = await fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify({
+            action: "sync_batch",
+            records: pending
+          })
+        });
+        
+        const data = await response.json();
+        if (data && data.success) {
+          const pendingIds = new Set(pending.map(p => p.ID));
+          const updated = records.map(r => {
+            if (pendingIds.has(r.ID)) {
+              return { ...r, SyncStatus: "SYNCED" as const };
+            }
+            return r;
+          });
+          localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
+          return { successCount: pending.length, failedCount: 0 };
+        } else {
+          return { successCount: 0, failedCount: pending.length, error: data.error || "Tanggapan web app bernilai sukses false." };
+        }
+      } catch (err: any) {
+        console.error("Gagal melakukan sinkronisasi cloud", err);
+        return { successCount: 0, failedCount: pending.length, error: err.toString() };
+      }
+    } finally {
+      this.isSyncingInProgress = false;
     }
   }
 
