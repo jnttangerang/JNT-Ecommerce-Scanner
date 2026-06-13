@@ -231,8 +231,191 @@ export function getDirectDriveImageUrl(url: string | undefined): string {
   return url;
 }
 
+// ==========================================
+// IndexedDB setup & Helper Functions
+// ==========================================
+const IDB_NAME = "JnTScannerDB";
+const IDB_VERSION = 1;
+const STORE_NAME = "records";
+
+function openIndexedDB(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !window.indexedDB) {
+      resolve(null);
+      return;
+    }
+    try {
+      const request = window.indexedDB.open(IDB_NAME, IDB_VERSION);
+      request.onerror = (e) => {
+        console.warn("IndexedDB failed to open:", e);
+        resolve(null);
+      };
+      request.onsuccess = (e) => {
+        resolve((e.target as IDBOpenDBRequest).result);
+      };
+      request.onupgradeneeded = (e) => {
+        const db = (e.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: "ID" });
+        }
+      };
+    } catch (err) {
+      console.warn("IndexedDB open exception:", err);
+      resolve(null);
+    }
+  });
+}
+
+function saveRecordsToIDB(records: ScanRecord[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) {
+        resolve(false);
+        return;
+      }
+      try {
+        const transaction = db.transaction([STORE_NAME], "readwrite");
+        const store = transaction.objectStore(STORE_NAME);
+        
+        // Clear old records first to prevent synchronization discrepancies
+        store.clear();
+        
+        // Put all records
+        records.forEach((r) => {
+          store.put(r);
+        });
+        
+        transaction.oncomplete = () => resolve(true);
+        transaction.onerror = (e) => {
+          console.warn("IndexedDB transaction write error:", e);
+          resolve(false);
+        };
+      } catch (err) {
+        console.warn("Error saving to IndexedDB:", err);
+        resolve(false);
+      }
+    });
+  });
+}
+
+function getAllRecordsFromIDB(): Promise<ScanRecord[] | null> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) {
+        resolve(null);
+        return;
+      }
+      try {
+        const transaction = db.transaction([STORE_NAME], "readonly");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+        request.onsuccess = () => {
+          resolve(request.result as ScanRecord[]);
+        };
+        request.onerror = () => {
+          resolve(null);
+        };
+      } catch (err) {
+        console.warn("Error getting all from IndexedDB:", err);
+        resolve(null);
+      }
+    });
+  });
+}
+
 export class DatabaseService {
   private isSyncingInProgress = false;
+  private recordsCache: ScanRecord[] = [];
+
+  constructor() {
+    // 1. Synchronously pre-load in-memory cache from localStorage or mock generators so UI gets instant content
+    const raw = localStorage.getItem(RECORDS_KEY);
+    if (!raw) {
+      const config = this.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
+      if (hasAppsScript) {
+        localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
+        this.recordsCache = [];
+      } else {
+        const hist = generateHistoricalData();
+        localStorage.setItem(RECORDS_KEY, JSON.stringify(hist));
+        this.recordsCache = hist;
+      }
+    } else {
+      try {
+        this.recordsCache = JSON.parse(raw);
+      } catch (err) {
+        console.warn("LocalStorage corrupted, generating fresh list", err);
+        this.recordsCache = generateHistoricalData();
+      }
+    }
+
+    // 2. Asynchronously bootstrap IndexedDB: read the full un-truncated objects (with full Base64 photos) if they exist
+    openIndexedDB().then((db) => {
+      if (db) {
+        getAllRecordsFromIDB().then((idbRecords) => {
+          if (idbRecords && idbRecords.length > 0) {
+            // Merge in-memory cache with full photos from IndexedDB
+            const idbMap = new Map(idbRecords.map(r => [r.ID, r]));
+            this.recordsCache = this.recordsCache.map(r => {
+              const idbRec = idbMap.get(r.ID);
+              if (idbRec) {
+                return idbRec; // Restore rich, un-compressed photo
+              }
+              return r;
+            });
+            // Ensure any scans that were fully purged from localStorage are restored
+            const cacheIds = new Set(this.recordsCache.map(r => r.ID));
+            const missing = idbRecords.filter(r => !cacheIds.has(r.ID));
+            if (missing.length > 0) {
+              this.recordsCache = [...this.recordsCache, ...missing].sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
+            }
+          } else {
+            // First time bootstrap: register in-memory historical list onto IndexedDB
+            saveRecordsToIDB(this.recordsCache);
+          }
+        });
+      }
+    });
+  }
+
+  // Internal helper to persist cache to IndexedDB and LocalStorage (with size-throttled safe fallback)
+  private saveRecords(records: ScanRecord[]) {
+    this.recordsCache = records;
+    
+    // 1. Asynchronously write all to IndexedDB (unlimited size limit & avoids blocking UI thread)
+    saveRecordsToIDB(records);
+
+    // 2. Keep localStorage size strictly under 500KB to completely avoid the 5MB QuotaExceededError.
+    // We only keep full base64 images inside the 5 most recent scans. For the older files, we keep all
+    // metadata and set a small placeholder string (the full images are loaded & restored from the in-memory cache/IndexedDB)
+    const trimmedRecords = records.map((r, index) => {
+      if (r.PhotoURL && r.PhotoURL.startsWith("data:image") && index >= 5) {
+        return {
+          ...r,
+          PhotoURL: `idb_hybrid_stored_asset`
+        };
+      }
+      return r;
+    });
+
+    try {
+      localStorage.setItem(RECORDS_KEY, JSON.stringify(trimmedRecords));
+    } catch (err) {
+      console.warn("LocalStorage fallback write failed (even with compression, continuing with in-memory & IndexedDB state):", err);
+      try {
+        const fullyTrimmed = records.map(r => {
+          if (r.PhotoURL && r.PhotoURL.startsWith("data:image")) {
+            return { ...r, PhotoURL: "idb_image" };
+          }
+          return r;
+        });
+        localStorage.setItem(RECORDS_KEY, JSON.stringify(fullyTrimmed));
+      } catch (e) {
+        console.error("Critical: Could not write to localStorage at all", e);
+      }
+    }
+  }
 
   // Initialize lists
   public getOutlets(): Outlet[] {
@@ -393,19 +576,7 @@ export class DatabaseService {
 
   // Get active scanned records
   public getRecords(): ScanRecord[] {
-    const raw = localStorage.getItem(RECORDS_KEY);
-    if (!raw) {
-      const config = this.getCloudConfig();
-      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
-      if (hasAppsScript) {
-        localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
-        return [];
-      }
-      const hist = generateHistoricalData();
-      localStorage.setItem(RECORDS_KEY, JSON.stringify(hist));
-      return hist;
-    }
-    return JSON.parse(raw);
+    return this.recordsCache;
   }
 
   // Check if ticket barcode already exists
@@ -441,7 +612,7 @@ export class DatabaseService {
       return { success: false, error: "RESI DUPLIKAT" };
     }
 
-    const records = this.getRecords();
+    const records = [ ...this.getRecords() ];
     
     // Auto generate date & time based on local timezone
     const now = new Date();
@@ -476,7 +647,7 @@ export class DatabaseService {
     };
 
     records.unshift(newRecord);
-    localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+    this.saveRecords(records);
 
     return { success: true, record: newRecord };
   }
@@ -485,19 +656,21 @@ export class DatabaseService {
    * Updates package status (e.g. from SCANNED to CANCELLED)
    */
   public updateRecordStatus(resi: string, status: "SCANNED" | "CANCELLED"): boolean {
-    const records = this.getRecords();
+    const records = [ ...this.getRecords() ];
     const index = records.findIndex(r => r.Resi === resi);
     if (index === -1) return false;
 
-    records[index].Status = status;
+    records[index] = { ...records[index], Status: status };
     // When changed, trigger marked as pending check if offline
     if (this.getOfflinePreference()) {
-      records[index].SyncStatus = "PENDING";
+      records[index] = { ...records[index], SyncStatus: "PENDING" };
     }
     
-    localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+    this.saveRecords(records);
     return true;
-  }  /**
+  }
+
+  /**
    * Batch Upload / Sync to Spreadsheet
    */
   public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
@@ -525,7 +698,7 @@ export class DatabaseService {
           }
           return r;
         });
-        localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
+        this.saveRecords(updated);
         return { successCount: pending.length, failedCount: 0 };
       }
 
@@ -551,7 +724,7 @@ export class DatabaseService {
             }
             return r;
           });
-          localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
+          this.saveRecords(updated);
           return { successCount: pending.length, failedCount: 0 };
         } else {
           return { successCount: 0, failedCount: pending.length, error: data.error || "Tanggapan web app bernilai sukses false." };
@@ -663,7 +836,7 @@ export class DatabaseService {
       }
 
       if (data && data.success) {
-        localStorage.setItem(RECORDS_KEY, JSON.stringify(data.records || []));
+        this.saveRecords(data.records || []);
         return { success: true };
       }
       return { success: false, error: "Gagal menarik data resi." };
@@ -677,14 +850,14 @@ export class DatabaseService {
    * Clear active log database (for setup & testing)
    */
   public resetDatabase() {
-    localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
+    this.saveRecords([]);
   }
 
   /**
    * Clear all records to empty slate (without triggering mock data recreation)
    */
   public clearAllRecords() {
-    localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
+    this.saveRecords([]);
   }
 
   /**

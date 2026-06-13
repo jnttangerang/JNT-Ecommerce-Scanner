@@ -172,8 +172,26 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (videoRef.current && cameraActive) {
       try {
         const canvas = document.createElement("canvas");
-        canvas.width = videoRef.current.videoWidth || 640;
-        canvas.height = videoRef.current.videoHeight || 480;
+        const maxDim = 640;
+        let originalWidth = videoRef.current.videoWidth || 640;
+        let originalHeight = videoRef.current.videoHeight || 480;
+        let targetWidth = originalWidth;
+        let targetHeight = originalHeight;
+
+        // Scale down while maintaining original aspect ratio
+        if (originalWidth > maxDim || originalHeight > maxDim) {
+          if (originalWidth > originalHeight) {
+            targetHeight = Math.round((originalHeight * maxDim) / originalWidth);
+            targetWidth = maxDim;
+          } else {
+            targetWidth = Math.round((originalWidth * maxDim) / originalHeight);
+            targetHeight = maxDim;
+          }
+        }
+
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
@@ -190,7 +208,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           ctx.font = "bold 11px monospace";
           ctx.fillText(`J&T REC: ${new Date().toLocaleTimeString()} | ${config.outlet}`, 18, canvas.height - 18);
 
-          return canvas.toDataURL("image/jpeg", 0.7); // compress to JPG
+          return canvas.toDataURL("image/jpeg", 0.7); // compress to JPG with 70% quality
         }
       } catch (err) {
         console.error("Failed to capture stream frame", err);
