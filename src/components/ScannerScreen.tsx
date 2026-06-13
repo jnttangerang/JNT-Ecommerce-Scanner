@@ -16,12 +16,18 @@ import {
   Smartphone,
   Eye,
   Trash2,
-  Volume2
+  Volume2,
+  Zap,
+  ZapOff,
+  ZoomIn,
+  ZoomOut,
+  Info,
+  HelpCircle
 } from "lucide-react";
 import { ScanRecord, StatusType } from "../types";
 import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
 import { audioService } from "../utils/audio";
-import { BrowserMultiFormatReader } from "@zxing/library";
+import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } from "@zxing/library";
 
 interface ScannerProps {
   config: {
@@ -89,6 +95,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [activeRetakeResi, setActiveRetakeResi] = useState<string | null>(null);
   const [retakeTasks, setRetakeTasks] = useState<ScanRecord[]>([]);
 
+  // Flashlight and Zoom states for hardware optimization on mobile devices
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchActive, setTorchActive] = useState(false);
+  const [zoomSupported, setZoomSupported] = useState(false);
+  const [zoomValue, setZoomValue] = useState(1);
+  const [zoomRange, setZoomRange] = useState({ min: 1, max: 3 });
+
   // Lock barcode scanning when in retake mode to prevent auto-decodes of other barcodes
   useEffect(() => {
     if (activeRetakeResi) {
@@ -131,23 +144,71 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setRetakeTasks(pendingTasks);
   };
 
-  // Camera stream activation
+  // Camera stream activation with high-definition settings and performance tuning
   const startCamera = async () => {
     setCameraPermissionError("");
+    setTorchSupported(false);
+    setTorchActive(false);
+    setZoomSupported(false);
+    
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        // Request deep-focus high-definition (720p/1080p ideal) stream layout so barcode lines are thin and crisp
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
+          video: { 
+            facingMode: "environment", 
+            width: { ideal: 1280 }, 
+            height: { ideal: 720 },
+            aspectRatio: { ideal: 1.7777777778 },
+            frameRate: { ideal: 30, min: 20 }
+          },
           audio: false
         });
+        
         streamRef.current = stream;
+        
+        // Check for device camera capabilities (Flash/Torch and Digital Zoom)
+        const track = stream.getVideoTracks()[0];
+        if (track) {
+          try {
+            const capabilities = track.getCapabilities() as any;
+            if (capabilities) {
+              if (capabilities.torch) {
+                setTorchSupported(true);
+              }
+              if (capabilities.zoom) {
+                setZoomSupported(true);
+                setZoomRange({
+                  min: capabilities.zoom.min || 1,
+                  max: Math.min(capabilities.zoom.max || 5, 4) // restrict to 4x to prevent low-res crop grain
+                });
+                setZoomValue((track.getSettings() as any).zoom || 1);
+              }
+            }
+          } catch (e) {
+            console.warn("Could not query device track capabilities:", e);
+          }
+        }
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.play();
 
-          // Initialize local ZXing Browser Reader to start reading from the feed
-          const reader = new BrowserMultiFormatReader();
+          // Initialize local ZXing Browser Reader equipped with TRY_HARDER and optimized formats targeting shipping barcodes
+          const hints = new Map();
+          hints.set(DecodeHintType.TRY_HARDER, true);
+          const formats = [
+            BarcodeFormat.CODE_128,
+            BarcodeFormat.CODE_39,
+            BarcodeFormat.QR_CODE,
+            BarcodeFormat.ITF,
+            BarcodeFormat.EAN_13
+          ];
+          hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
+          
+          const reader = new BrowserMultiFormatReader(hints);
           codeReaderRef.current = reader;
+          
           reader.decodeFromStream(stream, videoRef.current, (result, err) => {
             if (result && !isScanningLocked.current) {
               const resiText = result.getText().trim();
@@ -165,7 +226,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
     } catch (err: any) {
       console.warn("Camera permission denied or unavailable, using sandbox placeholder:", err);
-      setCameraPermissionError("Akses kamera ditolak.");
+      setCameraPermissionError("Akses kamera ditolak atau tidak tersedia.");
       setCameraActive(false);
     }
   };
@@ -180,6 +241,42 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       streamRef.current = null;
     }
     setCameraActive(false);
+    setTorchActive(false);
+    setTorchSupported(false);
+    setZoomSupported(false);
+  };
+
+  // Toggle mobile/device camera flashlight (torch)
+  const toggleTorch = async () => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (track) {
+      try {
+        const nextState = !torchActive;
+        await track.applyConstraints({
+          advanced: [{ torch: nextState }]
+        } as any);
+        setTorchActive(nextState);
+      } catch (err) {
+        console.warn("Failed to toggle flashlight/torch constraint:", err);
+      }
+    }
+  };
+
+  // Handle active digital zoom adjustment via slider
+  const handleZoomChange = async (val: number) => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (track) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ zoom: val }]
+        } as any);
+        setZoomValue(val);
+      } catch (err) {
+        console.warn("Failed to set camera zoom constraint:", err);
+      }
+    }
   };
 
   /**
@@ -672,6 +769,61 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Camera Zoom & Light Tuners */}
+            {cameraActive && (
+              <div className="bg-slate-900 px-4 py-3 border-b-2 border-slate-950 flex flex-col md:flex-row md:items-center justify-between gap-3 text-slate-200">
+                {/* Flashlight button */}
+                {torchSupported ? (
+                  <button
+                    type="button"
+                    onClick={toggleTorch}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center space-x-2 transition-all cursor-pointer border ${
+                      torchActive 
+                        ? "bg-amber-500 text-slate-950 border-amber-600 shadow-md animate-pulse" 
+                        : "bg-slate-950 text-amber-500 border-amber-500/20 hover:border-amber-500/50"
+                    }`}
+                  >
+                    {torchActive ? <ZapOff className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
+                    <span>{torchActive ? "Matikan Lampu Flash" : "Nyalakan Lampu Flash"}</span>
+                  </button>
+                ) : (
+                  <div className="text-[10px] text-slate-500 font-mono flex items-center space-x-1.5 py-1.5">
+                    <ZapOff className="h-3.5 w-3.5 text-slate-600" />
+                    <span>Lampu Kilat tidak didukung pada browser ini</span>
+                  </div>
+                )}
+
+                {/* Zoom control slider if supported by hardware */}
+                {zoomSupported && (
+                  <div className="flex items-center space-x-3 flex-1 md:max-w-xs bg-slate-950/40 p-2 rounded-xl border border-slate-800/60">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center shrink-0">
+                      Zoom: {zoomValue.toFixed(1)}x
+                    </span>
+                    <input
+                      type="range"
+                      min={zoomRange.min}
+                      max={zoomRange.max}
+                      step="0.1"
+                      value={zoomValue}
+                      onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
+                      className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-500"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Helpful Scan Troubleshooting Tips */}
+            <div className="px-4 py-3 bg-slate-900 border-b border-slate-950 text-slate-305 text-[10px] flex items-start space-x-2">
+              <Info className="h-4 w-4 text-blue-400 mt-0.5 shrink-0" />
+              <div className="leading-relaxed space-y-0.5">
+                <span className="font-extrabold text-slate-205 tracking-wide block text-[10px]">TIPS MEMPERCEPAT SCAN DETEKSI:</span>
+                <p>1. Dekatkan kamera ke barcode (~10-15 cm) lalu jauhkan perlahan sampai fokus otomatis mengunci.</p>
+                <p>2. Jika ruangan redup, klik tombol <span className="text-amber-400 font-semibold uppercase">"Nyalakan Lampu Flash"</span> di atas.</p>
+                <p>3. Posisikan barcode searah garis horizontal merah agar kamera lebih mudah mendeteksi garis.</p>
+              </div>
             </div>
 
             {/* Simulated Live Audio Check & Input Barcode interface */}
