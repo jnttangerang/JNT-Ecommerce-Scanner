@@ -36,7 +36,7 @@ import {
   LogOut
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
-import { dbService } from "../utils/db";
+import { dbService, getDirectDriveImageUrl } from "../utils/db";
 
 interface OwnerDashboardProps {
   onStatusChanged: () => void;
@@ -1697,7 +1697,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
               {/* Photo component */}
               <div className="relative w-full max-w-lg aspect-video flex items-center justify-center bg-black rounded-lg overflow-hidden border border-slate-800">
                 <img
-                  src={activeReviewRecord.PhotoURL}
+                  src={getDirectDriveImageUrl(activeReviewRecord.PhotoURL)}
                   alt={`Receipt image for ${activeReviewRecord.Resi}`}
                   className="w-full h-full object-contain"
                   referrerPolicy="no-referrer"

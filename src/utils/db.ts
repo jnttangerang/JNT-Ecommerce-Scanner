@@ -195,6 +195,40 @@ export function createMockResiPhoto(resi: string, seller: string): string {
   return canvas.toDataURL("image/jpeg", 0.75);
 }
 
+/**
+ * Converts a Google Drive share link into a direct web-embeddable viewable image URL.
+ * Supports standard share links /file/d/FILE_ID/view and query param format id=FILE_ID
+ */
+export function getDirectDriveImageUrl(url: string | undefined): string {
+  if (!url) return "";
+  if (url.startsWith("data:image")) {
+    return url;
+  }
+  
+  // Extract file ID from google drive sharing url
+  // Match standard '/file/d/FILE_ID/view...' or query param '?id=FILE_ID'
+  const driveRegex = /\/file\/d\/([a-zA-Z0-9_-]+)/;
+  const idRegex = /[?&]id=([a-zA-Z0-9_-]+)/;
+  
+  let fileId = "";
+  let match = url.match(driveRegex);
+  if (match && match[1]) {
+    fileId = match[1];
+  } else {
+    match = url.match(idRegex);
+    if (match && match[1]) {
+      fileId = match[1];
+    }
+  }
+  
+  if (fileId) {
+    // lh3.googleusercontent.com/d/FILE_ID is ultra-fast, has CDN caching and bypassing standard drive redirect page
+    return `https://lh3.googleusercontent.com/d/${fileId}`;
+  }
+  
+  return url;
+}
+
 export class DatabaseService {
   private isSyncingInProgress = false;
 

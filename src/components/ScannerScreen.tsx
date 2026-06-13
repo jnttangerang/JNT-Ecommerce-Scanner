@@ -19,7 +19,7 @@ import {
   Volume2
 } from "lucide-react";
 import { ScanRecord, StatusType } from "../types";
-import { dbService, createMockResiPhoto } from "../utils/db";
+import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
 import { audioService } from "../utils/audio";
 import { BrowserMultiFormatReader } from "@zxing/library";
 
@@ -669,7 +669,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       <div className="relative h-11 w-11 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 shrink-0">
                         {r.PhotoURL ? (
                           <img
-                            src={r.PhotoURL}
+                            src={getDirectDriveImageUrl(r.PhotoURL)}
                             alt="Receipt thumbed"
                             className="h-full w-full object-cover"
                             referrerPolicy="no-referrer"
