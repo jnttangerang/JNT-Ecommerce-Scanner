@@ -684,7 +684,23 @@ export class DatabaseService {
     try {
       const config = this.getCloudConfig();
       const records = this.getRecords();
-      const pending = records.filter(r => r.SyncStatus === "PENDING");
+      
+      // Explicitly destructure and cleanly map each pending record with strictly bound metadata to avoid any reference leakage
+      const pending = records
+        .filter(r => r.SyncStatus === "PENDING")
+        .map(r => ({
+          ID: String(r.ID),
+          Tanggal: String(r.Tanggal),
+          Jam: String(r.Jam),
+          Resi: String(r.Resi),
+          Outlet: String(r.Outlet),
+          Seller: String(r.Seller),
+          Operator: String(r.Operator),
+          Status: r.Status,
+          PhotoURL: r.PhotoURL ? String(r.PhotoURL) : "",
+          SyncStatus: r.SyncStatus,
+          ScanTimestamp: Number(r.ScanTimestamp)
+        }));
       
       if (pending.length === 0) {
         return { successCount: 0, failedCount: 0 };
