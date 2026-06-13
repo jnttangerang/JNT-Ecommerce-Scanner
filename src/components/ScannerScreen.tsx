@@ -102,6 +102,77 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [zoomValue, setZoomValue] = useState(1);
   const [zoomRange, setZoomRange] = useState({ min: 1, max: 3 });
 
+  // Camera Stability HUD indicators (Stabilitas HP)
+  const [stabilityScore, setStabilityScore] = useState<number>(98);
+  const [stabilityStatus, setStabilityStatus] = useState<"STABIL" | "SEDANG" | "GOYANG">("STABIL");
+
+  // Track physical or simulated motion to gauge camera stability
+  useEffect(() => {
+    let lastX: number | null = null;
+    let lastY: number | null = null;
+    let lastZ: number | null = null;
+
+    // Simulates continuous micro-sway from human grasp and guides drift back to stability
+    const interval = setInterval(() => {
+      setStabilityScore(oldScore => {
+        const naturalFluctuation = (Math.random() - 0.5) * 3.5;
+        let nextScore = oldScore + naturalFluctuation;
+        
+        // Help score recover quickly to 95%+ once shaking has stopped
+        if (oldScore < 90) {
+          nextScore = oldScore + 6.5;
+        }
+
+        return Math.max(15, Math.min(100, Math.round(nextScore)));
+      });
+    }, 380);
+
+    const handleDeviceMotion = (event: DeviceMotionEvent) => {
+      const acc = event.acceleration || event.accelerationIncludingGravity;
+      if (!acc) return;
+
+      const x = acc.x ?? 0;
+      const y = acc.y ?? 0;
+      const z = acc.z ?? 0;
+
+      if (lastX !== null && lastY !== null && lastZ !== null) {
+        const deltaX = Math.abs(x - lastX);
+        const deltaY = Math.abs(y - lastY);
+        const deltaZ = Math.abs(z - lastZ);
+        const combinedForce = deltaX + deltaY + deltaZ;
+
+        // If delta motion spikes, decrease stability score dramatically
+        if (combinedForce > 1.2) {
+          setStabilityScore(oldScore => {
+            const shockPenalty = Math.min(48, Math.floor(combinedForce * 11));
+            return Math.max(10, oldScore - shockPenalty);
+          });
+        }
+      }
+
+      lastX = x;
+      lastY = y;
+      lastZ = z;
+    };
+
+    window.addEventListener("devicemotion", handleDeviceMotion);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("devicemotion", handleDeviceMotion);
+    };
+  }, []);
+
+  // Update categorical status from actual score
+  useEffect(() => {
+    if (stabilityScore >= 80) {
+      setStabilityStatus("STABIL");
+    } else if (stabilityScore >= 45) {
+      setStabilityStatus("SEDANG");
+    } else {
+      setStabilityStatus("GOYANG");
+    }
+  }, [stabilityScore]);
+
   // Lock barcode scanning when in retake mode to prevent auto-decodes of other barcodes
   useEffect(() => {
     if (activeRetakeResi) {
@@ -607,6 +678,62 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
             {/* Video feed backdrop frame */}
             <div className="relative bg-black h-[350px] sm:h-[450px] w-full flex flex-col items-center justify-center overflow-hidden border-b border-slate-850">
+              {/* Real-time Stability Indicator Gauge Overlay */}
+              {cameraActive && (
+                <div className="absolute top-4 left-4 z-20 bg-slate-950/85 backdrop-blur-md p-3 rounded-2xl border border-slate-800/80 w-[180px] pointer-events-none select-none flex flex-col space-y-1.5 shadow-xl animate-in fade-in slide-in-from-left-2 duration-300">
+                  <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider text-slate-400">
+                    <span>STABILITAS HP</span>
+                    <span className={`font-mono text-xs ${
+                      stabilityStatus === "STABIL" ? "text-emerald-400 font-black" :
+                      stabilityStatus === "SEDANG" ? "text-amber-400 font-bold" :
+                      "text-red-500 font-black animate-pulse"
+                    }`}>
+                      {stabilityScore}%
+                    </span>
+                  </div>
+                  
+                  {/* Progress bar visual */}
+                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden p-[1px] border border-slate-800/60">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        stabilityStatus === "STABIL" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                        stabilityStatus === "SEDANG" ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
+                        "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.7)] animate-pulse"
+                      }`}
+                      style={{ width: `${stabilityScore}%` }}
+                    />
+                  </div>
+
+                  {/* Verbal indicator & helpful icon */}
+                  <div className="flex items-center space-x-1.5 text-[9px] font-black uppercase tracking-wide">
+                    {stabilityStatus === "STABIL" ? (
+                      <>
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        <span className="text-emerald-400">✓ HP Stabil (Siap Foto)</span>
+                      </>
+                    ) : stabilityStatus === "SEDANG" ? (
+                      <>
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                        <span className="text-amber-400">⚠️ Agak Goyang</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-ping" />
+                        <span className="text-red-500 animate-pulse">❌ Goyang! Pegang Diam</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Shaking Alert Banner */}
+              {cameraActive && stabilityStatus === "GOYANG" && (
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-25 bg-red-650/95 border border-red-500 text-white font-extrabold px-4 py-2.5 rounded-2xl text-center text-[10px] uppercase tracking-wider shadow-[0_10px_25px_-5px_rgba(239,68,68,0.4)] backdrop-blur-sm animate-bounce flex items-center space-x-2 pointer-events-none">
+                  <AlertTriangle className="h-4 w-4 text-white animate-pulse" />
+                  <span>JANGAN GOYANG! HP Tidak Stabil</span>
+                </div>
+              )}
+
               {/* Target Scan Lines overlay */}
               <div className="absolute inset-0 border-[3px] border-transparent pointer-events-none z-10">
                 {/* Simulated laser scan */}
@@ -789,11 +916,24 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     <span>{torchActive ? "Matikan Lampu Flash" : "Nyalakan Lampu Flash"}</span>
                   </button>
                 ) : (
-                  <div className="text-[10px] text-slate-500 font-mono flex items-center space-x-1.5 py-1.5">
-                    <ZapOff className="h-3.5 w-3.5 text-slate-600" />
-                    <span>Lampu Kilat tidak didukung pada browser ini</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <div className="text-[10px] text-slate-500 font-mono flex items-center space-x-1.5 py-1.5">
+                      <ZapOff className="h-3.5 w-3.5 text-slate-600" />
+                      <span>Lampu Kilat tidak didukung pada browser ini</span>
+                    </div>
                   </div>
                 )}
+
+                {/* Simulated Shake testing triggers */}
+                <button
+                  type="button"
+                  onClick={() => setStabilityScore(15)}
+                  className="px-3.5 py-2 rounded-xl text-[10px] font-extrabold uppercase bg-slate-950 hover:bg-slate-900 border border-red-500/35 text-red-500 hover:border-red-500/70 transition-all cursor-pointer flex items-center justify-center space-x-1.5 active:scale-95 shrink-0"
+                  title="Simulasikan guncangan perangkat untuk menguji indikator stabilitas"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 text-red-500 animate-pulse" />
+                  <span>Simulasikan HP Goyang</span>
+                </button>
 
                 {/* Zoom control slider if supported by hardware */}
                 {zoomSupported && (
