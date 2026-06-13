@@ -65,6 +65,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  const imageCodeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
   const isScanningLocked = useRef(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState("");
@@ -352,12 +353,58 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }, 150); // 150ms ensures extreme reactivity of ~7 frames processed per second
   };
 
+  // Apply a unified constraints block to prevent hardware features from overriding each other
+  const applyCameraConstraints = async (overrides: { torch?: boolean; zoom?: number; focusMode?: string } = {}) => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (!track) return;
+
+    try {
+      const capabilities = track.getCapabilities() as any;
+      if (!capabilities) return;
+
+      const targetTorch = overrides.hasOwnProperty("torch") ? overrides.torch : torchActive;
+      const targetZoom = overrides.hasOwnProperty("zoom") ? overrides.zoom : zoomValue;
+      const targetFocusMode = overrides.hasOwnProperty("focusMode") ? overrides.focusMode : focusModeValue;
+
+      const advancedConstraint: any = {};
+
+      if (capabilities.torch && targetTorch !== undefined) {
+        advancedConstraint.torch = targetTorch;
+      }
+
+      if (capabilities.zoom && targetZoom !== undefined) {
+        const minZ = capabilities.zoom.min || 1;
+        const maxZ = Math.min(capabilities.zoom.max || 5, 4);
+        advancedConstraint.zoom = Math.max(minZ, Math.min(maxZ, targetZoom));
+      }
+
+      if (capabilities.focusMode && targetFocusMode !== undefined) {
+        const modes = capabilities.focusMode as string[];
+        if (modes.includes(targetFocusMode)) {
+          advancedConstraint.focusMode = targetFocusMode;
+        }
+      }
+
+      // Apply safe unified constraint update
+      if (Object.keys(advancedConstraint).length > 0) {
+        await track.applyConstraints({
+          advanced: [advancedConstraint]
+        } as any);
+        console.log("Applied constraints successfully:", advancedConstraint);
+      }
+    } catch (err) {
+      console.warn("Failed to apply camera constraints block:", err);
+    }
+  };
+
   // Camera stream activation with high-definition settings and performance tuning
   const startCamera = async () => {
     setCameraPermissionError("");
     setTorchSupported(false);
     setTorchActive(false);
     setZoomSupported(false);
+    setFocusSupported(false);
     
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -377,6 +424,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         
         // Check for device camera capabilities (Flash/Torch, Digital Zoom, and Autofocus mode)
         const track = stream.getVideoTracks()[0];
+        let initialFocus = "auto";
         if (track) {
           try {
             const capabilities = track.getCapabilities() as any;
@@ -393,19 +441,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 setZoomValue((track.getSettings() as any).zoom || 1);
               }
 
-              // Detect focus capabilities and set continuous autofocus by default
+              // Detect focus capabilities
               if (capabilities.focusMode) {
                 setFocusSupported(true);
                 const modes = capabilities.focusMode as string[];
                 if (modes.includes("continuous")) {
-                  await track.applyConstraints({
-                    advanced: [{ focusMode: "continuous" }]
-                  } as any);
+                  initialFocus = "continuous";
                   setFocusModeValue("continuous");
                 } else if (modes.includes("auto")) {
-                  await track.applyConstraints({
-                    advanced: [{ focusMode: "auto" }]
-                  } as any);
+                  initialFocus = "auto";
                   setFocusModeValue("auto");
                 }
               }
@@ -431,13 +475,22 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           ];
           hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
           
-          const reader = new BrowserMultiFormatReader(hints);
-          codeReaderRef.current = reader;
+          // Instantiate separate reader for elements and images to prevent state collisions/locks on WebView
+          const mainReader = new BrowserMultiFormatReader(hints);
+          codeReaderRef.current = mainReader;
           
-          // Trigger the high contrast horizontal crop process alongside
-          startAdvancedScanLoop(reader);
+          const imageReader = new BrowserMultiFormatReader(hints);
+          imageCodeReaderRef.current = imageReader;
           
-          reader.decodeFromStream(stream, videoRef.current, (result, err) => {
+          // Apply initial parameters safely using our unified function
+          setTimeout(async () => {
+            await applyCameraConstraints({ focusMode: initialFocus, zoom: 1, torch: false });
+          }, 300);
+
+          // Trigger the high contrast horizontal crop process alongside using the isolated imageReader
+          startAdvancedScanLoop(imageReader);
+          
+          mainReader.decodeFromStream(stream, videoRef.current, (result, err) => {
             if (result && !isScanningLocked.current) {
               const resiText = result.getText().trim();
               if (resiText) {
@@ -468,6 +521,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       codeReaderRef.current.reset();
       codeReaderRef.current = null;
     }
+    if (imageCodeReaderRef.current) {
+      imageCodeReaderRef.current.reset();
+      imageCodeReaderRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -488,18 +545,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Toggle mobile/device camera flashlight (torch)
   const toggleTorch = async () => {
     if (!streamRef.current) return;
-    const track = streamRef.current.getVideoTracks()[0];
-    if (track) {
-      try {
-        const nextState = !torchActive;
-        await track.applyConstraints({
-          advanced: [{ torch: nextState }]
-        } as any);
-        setTorchActive(nextState);
-      } catch (err) {
-        console.warn("Failed to toggle flashlight/torch constraint:", err);
-      }
-    }
+    const nextState = !torchActive;
+    setTorchActive(nextState);
+    await applyCameraConstraints({ torch: nextState });
   };
 
   // Trigger manual lens/refocus cycle when tap-to-focus triggers
@@ -511,31 +559,28 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         const capabilities = track.getCapabilities() as any;
         if (capabilities && capabilities.focusMode) {
           const modes = capabilities.focusMode as string[];
-          // Switch to single-shot briefly to seek sharp edges, then back to continuous focus
           if (modes.includes("single-shot")) {
-            await track.applyConstraints({
-              advanced: [{ focusMode: "single-shot" }]
-            } as any);
             setFocusModeValue("single-shot");
+            await applyCameraConstraints({ focusMode: "single-shot" });
             
             // Revert back block to keep continuous autofocus active
             setTimeout(async () => {
               if (streamRef.current) {
-                const refreshedTrack = streamRef.current.getVideoTracks()[0];
-                if (refreshedTrack && modes.includes("continuous")) {
-                  await refreshedTrack.applyConstraints({
-                    advanced: [{ focusMode: "continuous" }]
-                  } as any);
+                if (modes.includes("continuous")) {
                   setFocusModeValue("continuous");
+                  await applyCameraConstraints({ focusMode: "continuous" });
+                } else if (modes.includes("auto")) {
+                  setFocusModeValue("auto");
+                  await applyCameraConstraints({ focusMode: "auto" });
                 }
               }
             }, 1100);
           } else if (modes.includes("continuous")) {
-            // Apply continuous focus to re-engage physical motors
-            await track.applyConstraints({
-              advanced: [{ focusMode: "continuous" }]
-            } as any);
             setFocusModeValue("continuous");
+            await applyCameraConstraints({ focusMode: "continuous" });
+          } else if (modes.includes("auto")) {
+            setFocusModeValue("auto");
+            await applyCameraConstraints({ focusMode: "auto" });
           }
         }
       } catch (err) {
@@ -575,18 +620,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Handle active digital zoom adjustment via slider
   const handleZoomChange = async (val: number) => {
-    if (!streamRef.current) return;
-    const track = streamRef.current.getVideoTracks()[0];
-    if (track) {
-      try {
-        await track.applyConstraints({
-          advanced: [{ zoom: val }]
-        } as any);
-        setZoomValue(val);
-      } catch (err) {
-        console.warn("Failed to set camera zoom constraint:", err);
-      }
-    }
+    setZoomValue(val);
+    await applyCameraConstraints({ zoom: val });
   };
 
   /**
