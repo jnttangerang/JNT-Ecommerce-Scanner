@@ -85,6 +85,19 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     photoURL: string;
   } | null>(null);
 
+  // Retake photo states
+  const [activeRetakeResi, setActiveRetakeResi] = useState<string | null>(null);
+  const [retakeTasks, setRetakeTasks] = useState<ScanRecord[]>([]);
+
+  // Lock barcode scanning when in retake mode to prevent auto-decodes of other barcodes
+  useEffect(() => {
+    if (activeRetakeResi) {
+      isScanningLocked.current = true;
+    } else {
+      isScanningLocked.current = false;
+    }
+  }, [activeRetakeResi]);
+
   // Hydrate initial scanned rows
   useEffect(() => {
     loadRecords();
@@ -112,6 +125,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     
     setScannedRecords(all.slice(0, 20)); // Limit display to 20
     setTotalToday(filteredToday.length);
+
+    // Get pending retake tasks specifically for this operator
+    const pendingTasks = all.filter(r => r.RetakeStatus === "PENDING" && r.Operator === config.operator);
+    setRetakeTasks(pendingTasks);
   };
 
   // Camera stream activation
@@ -303,6 +320,38 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     isScanningLocked.current = false;
   };
 
+  const handleOpenRetakeModal = (resi: string) => {
+    setActiveRetakeResi(resi);
+  };
+
+  const handleCaptureRetake = () => {
+    if (!activeRetakeResi) return;
+
+    setIsCapturing(true);
+    // Grab frame from webcam stream with timestamp overlay
+    const photoData = captureFrame(activeRetakeResi);
+    
+    // Save to DB
+    const success = dbService.submitRetake(activeRetakeResi, photoData);
+    setIsCapturing(false);
+
+    if (success) {
+      audioService.playSuccess();
+      alert(`✅ FOTO ULANG BERHASIL\n\nResi ${activeRetakeResi} telah diperbarui dengan foto yang jelas!`);
+      setActiveRetakeResi(null);
+      loadRecords();
+      if (onRecordAdded) {
+        onRecordAdded(); // triggers update in parent counts
+      }
+    } else {
+      alert("Gagal memperbarui foto ulang.");
+    }
+  };
+
+  const handleCancelRetake = () => {
+    setActiveRetakeResi(null);
+  };
+
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = manualResi.trim().toUpperCase();
@@ -405,6 +454,44 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         
         {/* Left Side: Camera Barcode Scanner Viewport */}
         <div className="lg:col-span-7 space-y-4">
+          
+          {/* Real-time Retake Task Notification */}
+          {retakeTasks.length > 0 && (
+            <div className="bg-amber-950/80 border border-amber-500/40 rounded-2xl p-4 space-y-3 shadow-md animate-in slide-in-from-top-4 duration-300">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2 text-amber-400 font-bold text-xs tracking-wider uppercase">
+                  <AlertTriangle className="h-4 w-4 animate-bounce text-amber-500" />
+                  <span>⚠️ PERMINTAAN FOTO ULANG ({retakeTasks.length})</span>
+                </div>
+                <span className="bg-amber-500 text-slate-950 font-black text-[9px] px-2 py-0.5 rounded-full uppercase">
+                  PENTING
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-250 leading-relaxed">
+                Lakukan foto ulang karena foto lama dinyatakan buram atau tidak terbaca oleh Owner. Silakan klik "Foto Ulang" di bawah untuk memotret ulang resi tersebut.
+              </p>
+              
+              <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                {retakeTasks.map(task => (
+                  <div key={task.Resi} className="bg-slate-950/60 border border-amber-500/10 rounded-xl p-3 flex items-center justify-between">
+                    <div className="text-xs">
+                      <span className="font-mono font-bold text-slate-100 block">{task.Resi}</span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">Seller: {task.Seller} • {task.Jam}</span>
+                    </div>
+                    
+                    <button
+                      onClick={() => handleOpenRetakeModal(task.Resi)}
+                      className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold text-[11px] px-3       py-1.5 rounded-lg flex items-center space-x-1 uppercase transition-all active:scale-95 cursor-pointer border-none"
+                    >
+                      <Camera className="h-3.5 w-3.5" />
+                      <span>Foto Ulang</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-sm flex flex-col">
             
             {/* Viewport Header */}
@@ -543,6 +630,44 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       id="validate-clear-button"
                     >
                       ✓ JELAS (SIMPAN)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Active Special Retake Overlay */}
+              {activeRetakeResi && (
+                <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-[1.5px] flex flex-col justify-between p-4 z-30 border-4 border-amber-500 animate-in fade-in duration-200">
+                  <div className="bg-amber-950 border border-amber-600/50 p-3 rounded-xl text-center shadow-lg text-slate-100">
+                    <span className="text-[9px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded font-black uppercase tracking-wider inline-block mb-1 pt-[2px]">
+                      MODE FOTO ULANG AKTIF
+                    </span>
+                    <h5 className="font-bold text-xs">Posisikan ulang paket resi:</h5>
+                    <p className="font-mono text-amber-400 font-extrabold text-sm mb-1">{activeRetakeResi}</p>
+                    <p className="text-[9px] text-slate-350 font-medium">Bujurkan resi di kotak bidik tengah agar terang dan tajam!</p>
+                  </div>
+
+                  {/* Highlighting retake brackets */}
+                  <div className="border-4 border-dashed border-amber-500/80 rounded-2xl w-4/5 aspect-video mx-auto flex items-center justify-center bg-transparent pointer-events-none">
+                    <div className="bg-amber-950/80 text-amber-400 border border-amber-500/30 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider">
+                      Target Area Foto Baru
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <button
+                      onClick={handleCaptureRetake}
+                      className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-3.5 px-4 rounded-xl flex items-center justify-center space-x-2 text-xs uppercase tracking-wider shadow-xl transition-all active:scale-95 cursor-pointer border-none"
+                    >
+                      <Camera className="h-4 w-4" />
+                      <span>Selesaikan & Foto Baru</span>
+                    </button>
+                    
+                    <button
+                      onClick={handleCancelRetake}
+                      className="w-full bg-slate-950/90 hover:bg-zinc-900 border border-slate-800 text-slate-300 font-bold py-2.5 px-3 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer text-center outline-none"
+                    >
+                      Batal (Kembali)
                     </button>
                   </div>
                 </div>

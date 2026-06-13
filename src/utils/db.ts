@@ -671,6 +671,43 @@ export class DatabaseService {
   }
 
   /**
+   * Request a retake for a specific package photo (requested by Owner)
+   */
+  public requestRetake(resi: string): boolean {
+    const records = [ ...this.getRecords() ];
+    const index = records.findIndex(r => r.Resi === resi);
+    if (index === -1) return false;
+
+    records[index] = { 
+      ...records[index], 
+      RetakeStatus: "PENDING",
+      Status: "SCANNED" // default to SCANNED when retaking
+    };
+    
+    this.saveRecords(records);
+    return true;
+  }
+
+  /**
+   * Submit a retake photo from the Operator
+   */
+  public submitRetake(resi: string, newPhotoURL: string): boolean {
+    const records = [ ...this.getRecords() ];
+    const index = records.findIndex(r => r.Resi === resi);
+    if (index === -1) return false;
+
+    records[index] = { 
+      ...records[index], 
+      PhotoURL: newPhotoURL,
+      RetakeStatus: "RETAKEN",
+      SyncStatus: "PENDING" // Mark as PENDING so that the new clear photo is uploaded during sync
+    };
+    
+    this.saveRecords(records);
+    return true;
+  }
+
+  /**
    * Batch Upload / Sync to Spreadsheet
    */
   public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
@@ -699,7 +736,8 @@ export class DatabaseService {
           Status: r.Status,
           PhotoURL: r.PhotoURL ? String(r.PhotoURL) : "",
           SyncStatus: r.SyncStatus,
-          ScanTimestamp: Number(r.ScanTimestamp)
+          ScanTimestamp: Number(r.ScanTimestamp),
+          RetakeStatus: r.RetakeStatus
         }));
       
       if (pending.length === 0) {

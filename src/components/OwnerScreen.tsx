@@ -13,7 +13,8 @@ import {
   ChevronRight, 
   Ban, 
   CheckCircle2, 
-  BarChart3, 
+  Camera,
+  BarChart3,  
   Layers, 
   Download,
   Terminal,
@@ -1355,6 +1356,15 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     }
   };
 
+  // Request a retake for blurry package image
+  const handleRequestRetake = (targetResi: string) => {
+    const success = dbService.requestRetake(targetResi);
+    if (success) {
+      loadData();
+      onStatusChanged();
+    }
+  };
+
   // Reviews indices navigation centered at middle-bottom
   const handlePrevReview = () => {
     setReviewIndex((prev) => (prev > 0 ? prev - 1 : filteredRecords.length - 1));
@@ -1776,6 +1786,40 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                 )}
               </div>
 
+              {/* Request Retake Action */}
+              <div className="space-y-2">
+                {activeReviewRecord.RetakeStatus === "PENDING" ? (
+                  <div className="w-full bg-amber-50 border border-amber-200 text-amber-700 text-center font-bold py-3 px-4 rounded-xl text-[11px] uppercase tracking-wider flex items-center justify-center space-x-2">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                    <span>⚠️ Menunggu Foto Ulang Operator</span>
+                  </div>
+                ) : activeReviewRecord.RetakeStatus === "RETAKEN" ? (
+                  <div className="space-y-2">
+                    <div className="w-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-center font-bold py-3 px-4 rounded-xl text-[11px] uppercase tracking-wider flex items-center justify-center space-x-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                      <span>📸 Foto Baru Berhasil Di-upload</span>
+                    </div>
+                    <button
+                      onClick={() => handleRequestRetake(activeReviewRecord.Resi)}
+                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold py-2 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 text-[10px] uppercase tracking-wider cursor-pointer"
+                      id="request-retake-again-button"
+                    >
+                      <Camera className="h-3.5 w-3.5 text-slate-500" />
+                      <span>Minta Foto Ulang Lagi (Buram)</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRequestRetake(activeReviewRecord.Resi)}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer"
+                    id="request-retake-button"
+                  >
+                    <Camera className="h-4 w-4" />
+                    <span className="text-xs uppercase tracking-wider font-bold">Minta Foto Ulang (Buram)</span>
+                  </button>
+                )}
+              </div>
+
               {/* Index indicator */}
               <div className="text-center font-mono text-xs text-slate-440 font-bold">
                 Gambar <span className="text-slate-800 font-extrabold">{reviewIndex + 1}</span> dari <span className="text-slate-800 font-extrabold">{filteredRecords.length}</span> items
@@ -1927,7 +1971,17 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                       )}
                     </td>
                     <td className="p-3.5 font-bold font-mono text-slate-800 tracking-wider text-[12px]">
-                      {r.Resi}
+                      <div>{r.Resi}</div>
+                      {r.RetakeStatus === "PENDING" && (
+                        <span className="inline-block bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-extrabold px-1.5 py-0.5 mt-1 rounded uppercase tracking-wider">
+                          ⚠️ Butuh Foto Ulang
+                        </span>
+                      )}
+                      {r.RetakeStatus === "RETAKEN" && (
+                        <span className="inline-block bg-sky-50 text-sky-700 border border-sky-250 text-[9px] font-extrabold px-1.5 py-0.5 mt-1 rounded uppercase tracking-wider">
+                          📸 Foto Ter-update
+                        </span>
+                      )}
                     </td>
                     <td className="p-3.5 font-mono text-[11px] text-slate-655">
                       {r.Tanggal} <span className="text-slate-400">{r.Jam}</span>

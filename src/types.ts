@@ -17,6 +17,7 @@ export interface ScanRecord {
   PhotoURL: string; // Base64 data-uri or simulated URL
   SyncStatus: "PENDING" | "SYNCED";
   ScanTimestamp: number; // for sorting
+  RetakeStatus?: "PENDING" | "RETAKEN";
 }
 
 export interface Seller {

@@ -206,16 +206,15 @@ export default function App() {
     updatePendingCount();
   };
 
-  // Owner marked order as cancelled -> inform operators immediately!
+  // Owner marked order as cancelled or requested retake -> inform operators immediately!
   const handleOwnerUpdatedStatus = () => {
     const allRecords = dbService.getRecords();
-    // Seek for latest cancelled orders to construct a beautiful push notification list
+    
+    // Check for cancelled records
     const cancelledRecords = allRecords.filter(r => r.Status === "CANCELLED");
     if (cancelledRecords.length > 0) {
       const topCancelled = cancelledRecords[0];
-      
-      // Avoid duplicate notification IDs
-      const id = `${topCancelled.Resi}-${topCancelled.ScanTimestamp}`;
+      const id = `${topCancelled.Resi}-cancelled`;
       if (!notifications.some(n => n.id === id)) {
         const time = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
         const newNotif = {
@@ -226,6 +225,23 @@ export default function App() {
         setNotifications(prev => [newNotif, ...prev].slice(0, 5)); // cap at 5 notifications
       }
     }
+
+    // Check for retake requests
+    const retakeRequests = allRecords.filter(r => r.RetakeStatus === "PENDING");
+    if (retakeRequests.length > 0) {
+      const topRetake = retakeRequests[0];
+      const id = `${topRetake.Resi}-retake`;
+      if (!notifications.some(n => n.id === id)) {
+        const time = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+        const newNotif = {
+          id,
+          message: `Butuh Foto Ulang: Resi *${topRetake.Resi}* (Seller: ${topRetake.Seller}) ditandai BURAM oleh Owner! Harap foto ulang paket tersebut.`,
+          timestamp: time
+        };
+        setNotifications(prev => [newNotif, ...prev].slice(0, 5));
+      }
+    }
+
     updatePendingCount();
   };
 
