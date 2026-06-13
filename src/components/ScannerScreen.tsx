@@ -28,7 +28,7 @@ import {
 import { ScanRecord, StatusType } from "../types";
 import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
 import { audioService } from "../utils/audio";
-import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } from "@zxing/library";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
 interface ScannerProps {
   config: {
@@ -62,10 +62,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [totalToday, setTotalToday] = useState(0);
 
   // Live video feed
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
-  const imageCodeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const isScanningLocked = useRef(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState("");
@@ -218,8 +215,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const loadRecords = () => {
     const all = dbService.getRecords();
     
-    // Filter records exclusively for the currently logged-in operator
-    const operatorRecords = all.filter(r => r.Operator === config.operator);
+    // Filter records exclusively for the currently logged-in operator (robust trimmed, case-insensitive match)
+    const operatorRecords = all.filter(r => 
+      r.Operator && r.Operator.trim().toLowerCase() === config.operator.trim().toLowerCase()
+    );
     
     // Filter down to today's records specifically for this operator
     const todayStr = new Date().toISOString().split("T")[0];
@@ -229,168 +228,83 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setTotalToday(filteredToday.length);
 
     // Get pending retake tasks specifically for this operator
-    const pendingTasks = all.filter(r => r.RetakeStatus === "PENDING" && r.Operator === config.operator);
+    const pendingTasks = all.filter(r => 
+      r.RetakeStatus === "PENDING" && 
+      r.Operator && r.Operator.trim().toLowerCase() === config.operator.trim().toLowerCase()
+    );
     setRetakeTasks(pendingTasks);
   };
 
-  // Start advanced background scanner utilizing horizontal crop-bounding and dynamic contrast binarization
-  const startAdvancedScanLoop = (reader: BrowserMultiFormatReader) => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
+  // Set up high contrast visual sensor feed only when visual debug monitor is active
+  const debugIntervalRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (showDebugFeed && cameraActive) {
+      debugIntervalRef.current = setInterval(() => {
+        const videoEl = document.querySelector("#html5-qr-code-element video") as HTMLVideoElement | null;
+        if (!videoEl || !debugCanvasRef.current || videoEl.readyState < 2) return;
+        
+        const canvas = debugCanvasRef.current;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const w = videoEl.videoWidth || 640;
+        const h = videoEl.videoHeight || 480;
+        
+        // Focus on the same central 35% bounding box
+        const cropX = Math.round(w * 0.075);
+        const cropY = Math.round(h * 0.325);
+        const cropW = Math.round(w * 0.85);
+        const cropH = Math.round(h * 0.35);
+
+        canvas.width = 160;
+        canvas.height = 68;
+
+        ctx.drawImage(videoEl, cropX, cropY, cropW, cropH, 0, 0, 160, 68);
+
+        // Apply real-time visual binarization filter (simulating J&T High Contrast Sensor)
+        try {
+          const imgData = ctx.getImageData(0, 0, 160, 68);
+          const d = imgData.data;
+          let minVal = 255;
+          let maxVal = 0;
+          for (let i = 0; i < d.length; i += 16) {
+            const gray = (d[i] + d[i+1] + d[i+2]) / 3;
+            if (gray < minVal) minVal = gray;
+            if (gray > maxVal) maxVal = gray;
+          }
+          const threshold = minVal + (maxVal - minVal) * 0.45;
+          for (let i = 0; i < d.length; i += 4) {
+            const gray = (d[i] + d[i+1] + d[i+2]) / 3;
+            const b = gray < threshold ? 0 : 255;
+            d[i] = b;
+            d[i+1] = b;
+            d[i+2] = b;
+          }
+          ctx.putImageData(imgData, 0, 0);
+        } catch (_) {}
+      }, 150);
+    } else {
+      if (debugIntervalRef.current) {
+        clearInterval(debugIntervalRef.current);
+        debugIntervalRef.current = null;
+      }
     }
 
-    // Single offscreen canvas to avoid garbage collection spikes and keep processing instant
-    const scanCanvas = document.createElement("canvas");
-    const scanCtx = scanCanvas.getContext("2d", { willReadFrequently: true });
-
-    let isDecoding = false;
-    let isProcessing = false;
-
-    scanIntervalRef.current = setInterval(async () => {
-      if (!videoRef.current || isScanningLocked.current || isProcessing || isDecoding) return;
-      if (videoRef.current.readyState < 2) return; // HAVE_CURRENT_DATA or higher is required
-
-      const videoWidth = videoRef.current.videoWidth || 1280;
-      const videoHeight = videoRef.current.videoHeight || 720;
-      if (videoWidth <= 0 || videoHeight <= 0) return;
-
-      isProcessing = true;
-
-      try {
-        // Target specifically the J&T barcode area guided inside the red brackets
-        const cropX = Math.round(videoWidth * 0.125); 
-        const cropY = Math.round(videoHeight * 0.225);
-        const cropWidth = Math.round(videoWidth * 0.75);
-        const cropHeight = Math.round(videoHeight * 0.55);
-
-        if (scanCtx) {
-          // Match size 1:1 with video crop coordinates to avoid blur/distortion
-          if (scanCanvas.width !== cropWidth) {
-            scanCanvas.width = cropWidth;
-          }
-          if (scanCanvas.height !== cropHeight) {
-            scanCanvas.height = cropHeight;
-          }
-
-          // Draw raw pixel-perfect frame crop
-          scanCtx.drawImage(
-            videoRef.current,
-            cropX, cropY, cropWidth, cropHeight,
-            0, 0, cropWidth, cropHeight
-          );
-
-          isDecoding = true;
-
-          // Pass 1: Try decoding from the raw, high-resolution original image (optimal for 99% of targets)
-          (reader as any).decodeFromCanvas(scanCanvas)
-            .then((result: any) => {
-              if (result && !isScanningLocked.current) {
-                const resiText = result.getText().trim();
-                if (resiText) {
-                  if (handleBarcodeScannedRef.current) {
-                    handleBarcodeScannedRef.current(resiText);
-                  }
-                }
-              }
-              // Draw raw feed on monitor
-              if (debugCanvasRef.current) {
-                const dCanvas = debugCanvasRef.current;
-                if (dCanvas.width !== cropWidth) dCanvas.width = cropWidth;
-                if (dCanvas.height !== cropHeight) dCanvas.height = cropHeight;
-                const dCtx = dCanvas.getContext("2d");
-                if (dCtx) {
-                  dCtx.drawImage(scanCanvas, 0, 0);
-                }
-              }
-              isDecoding = false;
-              isProcessing = false;
-            })
-            .catch(() => {
-              // Pass 2 Fallback: Apply digital contrast enhancement/adaptive thresholding
-              try {
-                const imgData = scanCtx.getImageData(0, 0, cropWidth, cropHeight);
-                const data = imgData.data;
-
-                let minVal = 255;
-                let maxVal = 0;
-
-                // Subsampling to find dynamic range bounds
-                const step = Math.max(4, Math.floor(data.length / 10000)) * 4;
-                for (let i = 0; i < data.length; i += step) {
-                  const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                  if (gray < minVal) minVal = gray;
-                  if (gray > maxVal) maxVal = gray;
-                }
-
-                const dynamicRange = maxVal - minVal;
-                if (dynamicRange > 15) {
-                  const thresholdValue = minVal + (dynamicRange * 0.45);
-
-                  for (let i = 0; i < data.length; i += 4) {
-                    const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                    const binarizedVal = gray < thresholdValue ? 0 : 255;
-                    data[i] = binarizedVal;
-                    data[i + 1] = binarizedVal;
-                    data[i + 2] = binarizedVal;
-                  }
-                  scanCtx.putImageData(imgData, 0, 0);
-
-                  // Decode binarized frame
-                  (reader as any).decodeFromCanvas(scanCanvas)
-                    .then((result: any) => {
-                      if (result && !isScanningLocked.current) {
-                        const resiText = result.getText().trim();
-                        if (resiText) {
-                          if (handleBarcodeScannedRef.current) {
-                            handleBarcodeScannedRef.current(resiText);
-                          }
-                        }
-                      }
-                      isDecoding = false;
-                      isProcessing = false;
-                    })
-                    .catch(() => {
-                      isDecoding = false;
-                      isProcessing = false;
-                    });
-                } else {
-                  isDecoding = false;
-                  isProcessing = false;
-                }
-
-                // Draw status to visible debug canvas
-                if (debugCanvasRef.current) {
-                  const dCanvas = debugCanvasRef.current;
-                  if (dCanvas.width !== cropWidth) dCanvas.width = cropWidth;
-                  if (dCanvas.height !== cropHeight) dCanvas.height = cropHeight;
-                  const dCtx = dCanvas.getContext("2d");
-                  if (dCtx) {
-                    dCtx.drawImage(scanCanvas, 0, 0);
-                  }
-                }
-              } catch (bErr) {
-                isDecoding = false;
-                isProcessing = false;
-              }
-            });
-        } else {
-          isProcessing = false;
-        }
-      } catch (loopErr) {
-        console.warn("Advanced scan loop iteration warning:", loopErr);
-        isDecoding = false;
-        isProcessing = false;
+    return () => {
+      if (debugIntervalRef.current) {
+        clearInterval(debugIntervalRef.current);
       }
-    }, 150); // 150ms ensures extreme reactivity of ~7 frames processed per second
-  };
+    };
+  }, [showDebugFeed, cameraActive]);
 
   // Apply a unified constraints block to prevent hardware features from overriding each other
   const applyCameraConstraints = async (overrides: { torch?: boolean; zoom?: number; focusMode?: string } = {}) => {
-    if (!streamRef.current) return;
-    const track = streamRef.current.getVideoTracks()[0];
-    if (!track) return;
-
+    if (!html5QrCodeRef.current) return;
     try {
+      const track = html5QrCodeRef.current.getRunningTrack();
+      if (!track) return;
+
       const capabilities = track.getCapabilities() as any;
       if (!capabilities) return;
 
@@ -429,7 +343,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }
   };
 
-  // Camera stream activation with high-definition settings and performance tuning
+  // Camera stream activation under html5-qrcode
   const startCamera = async () => {
     setCameraPermissionError("");
     setTorchSupported(false);
@@ -438,127 +352,111 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setFocusSupported(false);
     
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        // Request deep-focus high-definition (720p/1080p ideal) stream layout so barcode lines are thin and crisp
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            facingMode: "environment", 
-            width: { ideal: 1280 }, 
-            height: { ideal: 720 },
-            aspectRatio: { ideal: 1.7777777778 },
-            frameRate: { ideal: 30, min: 20 }
-          },
-          audio: false
-        });
-        
-        streamRef.current = stream;
-        
-        // Check for device camera capabilities (Flash/Torch, Digital Zoom, and Autofocus mode)
-        const track = stream.getVideoTracks()[0];
-        let initialFocus = "auto";
-        if (track) {
-          try {
-            const capabilities = track.getCapabilities() as any;
-            if (capabilities) {
-              if (capabilities.torch) {
-                setTorchSupported(true);
-              }
-              if (capabilities.zoom) {
-                setZoomSupported(true);
-                setZoomRange({
-                  min: capabilities.zoom.min || 1,
-                  max: Math.min(capabilities.zoom.max || 5, 4) // restrict to 4x to prevent low-res crop grain
-                });
-                setZoomValue((track.getSettings() as any).zoom || 1);
-              }
+      if (html5QrCodeRef.current) {
+        try {
+          await html5QrCodeRef.current.stop();
+        } catch (_) {}
+        html5QrCodeRef.current = null;
+      }
 
-              // Detect focus capabilities
-              if (capabilities.focusMode) {
-                setFocusSupported(true);
-                const modes = capabilities.focusMode as string[];
-                if (modes.includes("continuous")) {
-                  initialFocus = "continuous";
-                  setFocusModeValue("continuous");
-                } else if (modes.includes("auto")) {
-                  initialFocus = "auto";
-                  setFocusModeValue("auto");
-                }
+      // Instantiate html5-qrcode on our container element ID
+      const html5QrCode = new Html5Qrcode("html5-qr-code-element");
+      html5QrCodeRef.current = html5QrCode;
+
+      // Configurations fully optimized for Code 128 shipping resi (horizontal scan area, fps 20-30, environment camera)
+      const scanConfig = {
+        fps: 25, // 25 frames per second for high-speed realtime scanning
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          // Precise horizontal scanning box layout centered on the middle segment
+          const width = Math.min(650, Math.floor(viewfinderWidth * 0.85));
+          const height = Math.min(220, Math.floor(viewfinderHeight * 0.35));
+          return { width, height };
+        },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.ITF,
+          Html5QrcodeSupportedFormats.EAN_13
+        ],
+        aspectRatio: 1.7777777778, // High-definition widescreen layout
+      };
+
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        scanConfig,
+        (decodedText) => {
+          if (!isScanningLocked.current) {
+            if (handleBarcodeScannedRef.current) {
+              handleBarcodeScannedRef.current(decodedText);
+            }
+          }
+        },
+        () => {
+          // Silent callback during scan intervals to prevent console cluttering
+        }
+      );
+
+      // Fetch running track to configure capabilities
+      try {
+        const track = html5QrCode.getRunningTrack();
+        if (track) {
+          const capabilities = track.getCapabilities() as any;
+          if (capabilities) {
+            if (capabilities.torch) {
+              setTorchSupported(true);
+            }
+            if (capabilities.zoom) {
+              setZoomSupported(true);
+              setZoomRange({
+                min: capabilities.zoom.min || 1,
+                max: Math.min(capabilities.zoom.max || 5, 4)
+              });
+              setZoomValue((track.getSettings() as any).zoom || 1);
+            }
+            if (capabilities.focusMode) {
+              setFocusSupported(true);
+              const modes = capabilities.focusMode as string[];
+              if (modes.includes("continuous")) {
+                setFocusModeValue("continuous");
+                try {
+                  await track.applyConstraints({
+                    advanced: [{ focusMode: "continuous" }]
+                  } as any);
+                } catch (_) {}
+              } else if (modes.includes("auto")) {
+                setFocusModeValue("auto");
+                try {
+                  await track.applyConstraints({
+                    advanced: [{ focusMode: "auto" }]
+                  } as any);
+                } catch (_) {}
               }
             }
-          } catch (e) {
-            console.warn("Could not query device track capabilities:", e);
           }
         }
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-
-          // Initialize local ZXing Browser Reader equipped with TRY_HARDER and optimized formats targeting shipping barcodes
-          const hints = new Map();
-          hints.set(DecodeHintType.TRY_HARDER, true);
-          const formats = [
-            BarcodeFormat.CODE_128,
-            BarcodeFormat.CODE_39,
-            BarcodeFormat.QR_CODE,
-            BarcodeFormat.ITF,
-            BarcodeFormat.EAN_13
-          ];
-          hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
-          
-          // Instantiate separate reader for elements and images to prevent state collisions/locks on WebView
-          const mainReader = new BrowserMultiFormatReader(hints);
-          codeReaderRef.current = mainReader;
-          
-          const imageReader = new BrowserMultiFormatReader(hints);
-          imageCodeReaderRef.current = imageReader;
-          
-          // Apply initial parameters safely using our unified function
-          setTimeout(async () => {
-            await applyCameraConstraints({ focusMode: initialFocus, zoom: 1, torch: false });
-          }, 300);
-
-          // Trigger the high contrast horizontal crop process alongside using the isolated imageReader
-          startAdvancedScanLoop(imageReader);
-          
-          mainReader.decodeFromStream(stream, videoRef.current, (result, err) => {
-            if (result && !isScanningLocked.current) {
-              const resiText = result.getText().trim();
-              if (resiText) {
-                if (handleBarcodeScannedRef.current) {
-                  handleBarcodeScannedRef.current(resiText);
-                }
-              }
-            }
-          });
-        }
-        setCameraActive(true);
-      } else {
-        setCameraPermissionError("Kamera tidak didukung di browser ini.");
+      } catch (capError) {
+        console.warn("Could not retrieve camera track capabilities:", capError);
       }
+
+      setCameraActive(true);
     } catch (err: any) {
-      console.warn("Camera permission denied or unavailable, using sandbox placeholder:", err);
+      console.warn("Camera failed to start under html5-qrcode:", err);
       setCameraPermissionError("Akses kamera ditolak atau tidak tersedia.");
       setCameraActive(false);
     }
   };
 
-  const stopCamera = () => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
+  const stopCamera = async () => {
+    if (debugIntervalRef.current) {
+      clearInterval(debugIntervalRef.current);
+      debugIntervalRef.current = null;
     }
-    if (codeReaderRef.current) {
-      codeReaderRef.current.reset();
-      codeReaderRef.current = null;
-    }
-    if (imageCodeReaderRef.current) {
-      imageCodeReaderRef.current.reset();
-      imageCodeReaderRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
+    if (html5QrCodeRef.current) {
+      try {
+        await html5QrCodeRef.current.stop();
+      } catch (_) {}
+      html5QrCodeRef.current = null;
     }
     if (focusTimeoutRef.current) {
       clearTimeout(focusTimeoutRef.current);
@@ -573,58 +471,79 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setZoomSupported(false);
   };
 
-  // Toggle mobile/device camera flashlight (torch)
   const toggleTorch = async () => {
-    if (!streamRef.current) return;
-    const nextState = !torchActive;
-    setTorchActive(nextState);
-    await applyCameraConstraints({ torch: nextState });
+    if (!html5QrCodeRef.current) return;
+    try {
+      const track = html5QrCodeRef.current.getRunningTrack();
+      if (track) {
+        const capabilities = track.getCapabilities() as any;
+        if (capabilities && capabilities.torch) {
+          const nextState = !torchActive;
+          await track.applyConstraints({
+            advanced: [{ torch: nextState }]
+          } as any);
+          setTorchActive(nextState);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to toggle flashlight/torch constraint:", err);
+    }
   };
 
-  // Trigger manual lens/refocus cycle when tap-to-focus triggers
   const triggerManualFocus = async () => {
-    if (!streamRef.current) return;
-    const track = streamRef.current.getVideoTracks()[0];
-    if (track) {
-      try {
+    if (!html5QrCodeRef.current) return;
+    try {
+      const track = html5QrCodeRef.current.getRunningTrack();
+      if (track) {
         const capabilities = track.getCapabilities() as any;
         if (capabilities && capabilities.focusMode) {
           const modes = capabilities.focusMode as string[];
           if (modes.includes("single-shot")) {
             setFocusModeValue("single-shot");
-            await applyCameraConstraints({ focusMode: "single-shot" });
+            await track.applyConstraints({
+              advanced: [{ focusMode: "single-shot" }]
+            } as any);
             
-            // Revert back block to keep continuous autofocus active
             setTimeout(async () => {
-              if (streamRef.current) {
-                if (modes.includes("continuous")) {
-                  setFocusModeValue("continuous");
-                  await applyCameraConstraints({ focusMode: "continuous" });
-                } else if (modes.includes("auto")) {
-                  setFocusModeValue("auto");
-                  await applyCameraConstraints({ focusMode: "auto" });
+              if (html5QrCodeRef.current) {
+                const refreshedTrack = html5QrCodeRef.current.getRunningTrack();
+                if (refreshedTrack) {
+                  if (modes.includes("continuous")) {
+                    setFocusModeValue("continuous");
+                    await refreshedTrack.applyConstraints({
+                      advanced: [{ focusMode: "continuous" }]
+                    } as any);
+                  } else if (modes.includes("auto")) {
+                    setFocusModeValue("auto");
+                    await refreshedTrack.applyConstraints({
+                      advanced: [{ focusMode: "auto" }]
+                    } as any);
+                  }
                 }
               }
             }, 1100);
           } else if (modes.includes("continuous")) {
             setFocusModeValue("continuous");
-            await applyCameraConstraints({ focusMode: "continuous" });
+            await track.applyConstraints({
+              advanced: [{ focusMode: "continuous" }]
+            } as any);
           } else if (modes.includes("auto")) {
             setFocusModeValue("auto");
-            await applyCameraConstraints({ focusMode: "auto" });
+            await track.applyConstraints({
+              advanced: [{ focusMode: "auto" }]
+            } as any);
           }
         }
-      } catch (err) {
-        console.warn("Failed to set manual focus constraint adjustment:", err);
       }
+    } catch (err) {
+      console.warn("Failed to set manual focus constraint adjustment:", err);
     }
   };
 
-  // Process tap position on video feed container and trigger focusing logic
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!cameraActive) return;
 
-    // Reject click if clicking on the bottom-right binarization sensor overlay
+    // Reject click if clicking on UI overlay controls
     const targetElement = e.target as HTMLElement;
     if (targetElement.closest(".pointer-events-auto") || targetElement.closest("button")) {
       return;
@@ -649,22 +568,38 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }, 1500);
   };
 
-  // Handle active digital zoom adjustment via slider
   const handleZoomChange = async (val: number) => {
     setZoomValue(val);
-    await applyCameraConstraints({ zoom: val });
+    if (!html5QrCodeRef.current) return;
+    try {
+      const track = html5QrCodeRef.current.getRunningTrack();
+      if (track) {
+        const capabilities = track.getCapabilities() as any;
+        if (capabilities && capabilities.zoom) {
+          const minZ = capabilities.zoom.min || 1;
+          const maxZ = Math.min(capabilities.zoom.max || 5, 4);
+          const clampedVal = Math.max(minZ, Math.min(maxZ, val));
+          await track.applyConstraints({
+            advanced: [{ zoom: clampedVal }]
+          } as any);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to set camera zoom constraint:", err);
+    }
   };
 
   /**
    * Captures the exact frame from the HTML5 Video stream
    */
   const captureFrame = (scannedResi?: string): string => {
-    if (videoRef.current && cameraActive) {
+    const videoEl = document.querySelector("#html5-qr-code-element video") as HTMLVideoElement | null;
+    if (videoEl && cameraActive) {
       try {
         const canvas = document.createElement("canvas");
         const maxDim = 640;
-        let originalWidth = videoRef.current.videoWidth || 640;
-        let originalHeight = videoRef.current.videoHeight || 480;
+        let originalWidth = videoEl.videoWidth || 640;
+        let originalHeight = videoEl.videoHeight || 480;
         let targetWidth = originalWidth;
         let targetHeight = originalHeight;
 
@@ -684,7 +619,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
           
           // Draw subtle Red Crosshair or overlays on photo for proof
           ctx.strokeStyle = "rgba(255, 0, 0, 0.4)";
@@ -1092,12 +1027,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 </div>
               </div>
 
-              {/* Real camera video tag */}
-              <video
-                ref={videoRef}
-                playsInline
-                muted
-                className={`w-full h-full object-cover select-none ${cameraActive ? "block" : "hidden"}`}
+              {/* Real camera html5-qrcode element */}
+              <div
+                id="html5-qr-code-element"
+                className={`w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 ${cameraActive ? "block" : "hidden"}`}
               />
 
               {/* High Contrast Scanner real-time binary monitor */}
