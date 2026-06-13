@@ -526,15 +526,36 @@ export class DatabaseService {
     }
 
     try {
-      const response = await fetch(config.appsScriptUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8"
-        },
-        body: JSON.stringify({ action: "get_masters" })
-      });
-      const data = await response.json();
+      let data: any = null;
+      
+      // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
+      try {
+        const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_masters`;
+        const response = await fetch(getUrl, {
+          method: "GET",
+          mode: "cors"
+        });
+        const resJson = await response.json();
+        if (resJson && resJson.success) {
+          data = resJson;
+        }
+      } catch (getErr) {
+        console.warn("GET pullMasters failed, trying POST fallback", getErr);
+      }
+
+      if (!data) {
+        // Fallback to original POST method if GET is not supported by the deployed Apps Script
+        const response = await fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify({ action: "get_masters" })
+        });
+        data = await response.json();
+      }
+
       if (data && data.success) {
         const fetchedSellers = (data.sellers || []).map((name: string) => ({ NamaSeller: name.trim() })).filter((x: any) => x.NamaSeller);
         const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
@@ -562,15 +583,36 @@ export class DatabaseService {
     }
 
     try {
-      const response = await fetch(config.appsScriptUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8"
-        },
-        body: JSON.stringify({ action: "get_records" })
-      });
-      const data = await response.json();
+      let data: any = null;
+
+      // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
+      try {
+        const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_records`;
+        const response = await fetch(getUrl, {
+          method: "GET",
+          mode: "cors"
+        });
+        const resJson = await response.json();
+        if (resJson && resJson.success) {
+          data = resJson;
+        }
+      } catch (getErr) {
+        console.warn("GET pullRecords failed, trying POST fallback", getErr);
+      }
+
+      if (!data) {
+        // Fallback to original POST method if GET is not supported by the deployed Apps Script
+        const response = await fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+          },
+          body: JSON.stringify({ action: "get_records" })
+        });
+        data = await response.json();
+      }
+
       if (data && data.success) {
         localStorage.setItem(RECORDS_KEY, JSON.stringify(data.records || []));
         return { success: true };
@@ -615,6 +657,22 @@ export class DatabaseService {
 
 const SPREADSHEET_ID = "${spreadsheetId}";
 const FOTO_FOLDER_ID = "${fotoFolderId}";
+
+function doGet(e) {
+  try {
+    const action = e.parameter.action;
+    if (action === "get_masters") {
+      return handleGetMasters();
+    } else if (action === "get_records") {
+      return handleGetRecords();
+    }
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
 
 function doPost(e) {
   try {

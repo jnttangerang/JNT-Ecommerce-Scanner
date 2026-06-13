@@ -46,7 +46,13 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState("");
   const [isPulling, setIsPulling] = useState(false);
-  const [isCloudDataFresh, setIsCloudDataFresh] = useState(false);
+  const [isCloudDataFresh, setIsCloudDataFresh] = useState<boolean>(() => {
+    return localStorage.getItem("jt_is_cloud_data_fresh") === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("jt_is_cloud_data_fresh", String(isCloudDataFresh));
+  }, [isCloudDataFresh]);
 
   // Push notification state for "Order Cancelled" updates
   const [notifications, setNotifications] = useState<{ id: string; message: string; timestamp: string }[]>([]);
