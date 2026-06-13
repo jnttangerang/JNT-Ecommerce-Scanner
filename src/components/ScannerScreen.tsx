@@ -22,7 +22,8 @@ import {
   ZoomIn,
   ZoomOut,
   Info,
-  HelpCircle
+  HelpCircle,
+  Target
 } from "lucide-react";
 import { ScanRecord, StatusType } from "../types";
 import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
@@ -101,6 +102,18 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [zoomSupported, setZoomSupported] = useState(false);
   const [zoomValue, setZoomValue] = useState(1);
   const [zoomRange, setZoomRange] = useState({ min: 1, max: 3 });
+
+  // Continuous auto-focus & manual Tap-to-Focus states
+  const [focusSupported, setFocusSupported] = useState(false);
+  const [focusModeValue, setFocusModeValue] = useState<string>("auto");
+  const [tapFocusPos, setTapFocusPos] = useState<{ x: number; y: number } | null>(null);
+  const [isRefocusing, setIsRefocusing] = useState(false);
+  const focusTimeoutRef = useRef<any>(null);
+
+  // Background interval and Canvas Reference for high-contrast auto-binarized decoding
+  const scanIntervalRef = useRef<any>(null);
+  const debugCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [showDebugFeed, setShowDebugFeed] = useState(false);
 
   // Camera Stability HUD indicators (Stabilitas HP)
   const [stabilityScore, setStabilityScore] = useState<number>(98);
@@ -203,16 +216,140 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   const loadRecords = () => {
     const all = dbService.getRecords();
-    // Filter down to today's records for this operator / outlet
-    const todayStr = new Date().toISOString().split("T")[0];
-    const filteredToday = all.filter(r => r.Tanggal === todayStr);
     
-    setScannedRecords(all.slice(0, 20)); // Limit display to 20
+    // Filter records exclusively for the currently logged-in operator
+    const operatorRecords = all.filter(r => r.Operator === config.operator);
+    
+    // Filter down to today's records specifically for this operator
+    const todayStr = new Date().toISOString().split("T")[0];
+    const filteredToday = operatorRecords.filter(r => r.Tanggal === todayStr);
+    
+    setScannedRecords(operatorRecords.slice(0, 20)); // Limit display to 20 for this operator
     setTotalToday(filteredToday.length);
 
     // Get pending retake tasks specifically for this operator
     const pendingTasks = all.filter(r => r.RetakeStatus === "PENDING" && r.Operator === config.operator);
     setRetakeTasks(pendingTasks);
+  };
+
+  // Start advanced background scanner utilizing horizontal crop-bounding and dynamic contrast binarization
+  const startAdvancedScanLoop = (reader: BrowserMultiFormatReader) => {
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+    }
+
+    // Single offscreen canvas to avoid garbage collection spikes and keep processing instant
+    const scanCanvas = document.createElement("canvas");
+    scanCanvas.width = 600;
+    scanCanvas.height = 300;
+    const scanCtx = scanCanvas.getContext("2d", { willReadFrequently: true });
+
+    // Single offscreen image to pass standard type-safe HTMLImageElement to ZXing
+    const scanImg = new Image();
+    let isDecoding = false;
+
+    // Listen for image load which triggers binarized frame decoding
+    scanImg.onload = async () => {
+      try {
+        const result = await reader.decodeFromImageElement(scanImg);
+        if (result && !isScanningLocked.current) {
+          const resiText = result.getText().trim();
+          if (resiText) {
+            if (handleBarcodeScannedRef.current) {
+              handleBarcodeScannedRef.current(resiText);
+            }
+          }
+        }
+      } catch (decodeErr) {
+        // No barcode matched in this frame - perfectly typical and silent
+      } finally {
+        isDecoding = false;
+      }
+    };
+
+    scanImg.onerror = () => {
+      isDecoding = false;
+    };
+
+    let isProcessing = false;
+
+    scanIntervalRef.current = setInterval(async () => {
+      if (!videoRef.current || isScanningLocked.current || isProcessing || isDecoding) return;
+      if (videoRef.current.readyState < 2) return; // HAVE_CURRENT_DATA or higher is required
+
+      const videoWidth = videoRef.current.videoWidth || 640;
+      const videoHeight = videoRef.current.videoHeight || 480;
+      if (videoWidth <= 0 || videoHeight <= 0) return;
+
+      isProcessing = true;
+
+      try {
+        // Target specifically the J&T barcode area guided inside the red brackets
+        const cropX = Math.round(videoWidth * 0.15); // slightly wider for long J&T barcodes
+        const cropY = Math.round(videoHeight * 0.25);
+        const cropWidth = Math.round(videoWidth * 0.70);
+        const cropHeight = Math.round(videoHeight * 0.50);
+
+        if (scanCtx) {
+          // Draw the horizontal crop region
+          scanCtx.drawImage(
+            videoRef.current,
+            cropX, cropY, cropWidth, cropHeight,
+            0, 0, 600, 300
+          );
+
+          // Get image pixel data to boost contrast
+          const imgData = scanCtx.getImageData(0, 0, 600, 300);
+          const data = imgData.data;
+
+          let minVal = 255;
+          let maxVal = 0;
+
+          // Quick subsampling of pixel blocks to determine low/high dynamic range bounds
+          for (let i = 0; i < data.length; i += 48) {
+            const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            if (gray < minVal) minVal = gray;
+            if (gray > maxVal) maxVal = gray;
+          }
+
+          const dynamicRange = maxVal - minVal;
+          if (dynamicRange > 18) {
+            // Apply binarization. Standard 45% midpoint is mathematically selected to avoid merging close barcode lines 
+            // under poor environment conditions
+            const thresholdValue = minVal + (dynamicRange * 0.45);
+
+            for (let i = 0; i < data.length; i += 4) {
+              const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+              const binarizedVal = gray < thresholdValue ? 0 : 255;
+              data[i] = binarizedVal;
+              data[i + 1] = binarizedVal;
+              data[i + 2] = binarizedVal;
+            }
+            scanCtx.putImageData(imgData, 0, 0);
+          }
+
+          // Render live feedback frame to visible debugger monitor if active
+          if (debugCanvasRef.current) {
+            const dCanvas = debugCanvasRef.current;
+            if (dCanvas.width !== 600) dCanvas.width = 600;
+            if (dCanvas.height !== 300) dCanvas.height = 300;
+            const dCtx = dCanvas.getContext("2d");
+            if (dCtx) {
+              dCtx.drawImage(scanCanvas, 0, 0);
+            }
+          }
+
+          // Trigger image load & decoding chain
+          isDecoding = true;
+          scanImg.src = scanCanvas.toDataURL("image/jpeg", 0.85);
+        }
+      } catch (loopErr) {
+        console.warn("Advanced scan loop iteration warning:", loopErr);
+        isDecoding = false;
+      } finally {
+        isProcessing = false;
+      }
+    }, 150); // 150ms ensures extreme reactivity of ~7 frames processed per second
   };
 
   // Camera stream activation with high-definition settings and performance tuning
@@ -238,7 +375,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         
         streamRef.current = stream;
         
-        // Check for device camera capabilities (Flash/Torch and Digital Zoom)
+        // Check for device camera capabilities (Flash/Torch, Digital Zoom, and Autofocus mode)
         const track = stream.getVideoTracks()[0];
         if (track) {
           try {
@@ -254,6 +391,23 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   max: Math.min(capabilities.zoom.max || 5, 4) // restrict to 4x to prevent low-res crop grain
                 });
                 setZoomValue((track.getSettings() as any).zoom || 1);
+              }
+
+              // Detect focus capabilities and set continuous autofocus by default
+              if (capabilities.focusMode) {
+                setFocusSupported(true);
+                const modes = capabilities.focusMode as string[];
+                if (modes.includes("continuous")) {
+                  await track.applyConstraints({
+                    advanced: [{ focusMode: "continuous" }]
+                  } as any);
+                  setFocusModeValue("continuous");
+                } else if (modes.includes("auto")) {
+                  await track.applyConstraints({
+                    advanced: [{ focusMode: "auto" }]
+                  } as any);
+                  setFocusModeValue("auto");
+                }
               }
             }
           } catch (e) {
@@ -280,6 +434,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           const reader = new BrowserMultiFormatReader(hints);
           codeReaderRef.current = reader;
           
+          // Trigger the high contrast horizontal crop process alongside
+          startAdvancedScanLoop(reader);
+          
           reader.decodeFromStream(stream, videoRef.current, (result, err) => {
             if (result && !isScanningLocked.current) {
               const resiText = result.getText().trim();
@@ -303,6 +460,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   };
 
   const stopCamera = () => {
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+      scanIntervalRef.current = null;
+    }
     if (codeReaderRef.current) {
       codeReaderRef.current.reset();
       codeReaderRef.current = null;
@@ -311,6 +472,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    if (focusTimeoutRef.current) {
+      clearTimeout(focusTimeoutRef.current);
+      focusTimeoutRef.current = null;
+    }
+    setTapFocusPos(null);
+    setIsRefocusing(false);
+    setFocusSupported(false);
     setCameraActive(false);
     setTorchActive(false);
     setTorchSupported(false);
@@ -332,6 +500,77 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         console.warn("Failed to toggle flashlight/torch constraint:", err);
       }
     }
+  };
+
+  // Trigger manual lens/refocus cycle when tap-to-focus triggers
+  const triggerManualFocus = async () => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (track) {
+      try {
+        const capabilities = track.getCapabilities() as any;
+        if (capabilities && capabilities.focusMode) {
+          const modes = capabilities.focusMode as string[];
+          // Switch to single-shot briefly to seek sharp edges, then back to continuous focus
+          if (modes.includes("single-shot")) {
+            await track.applyConstraints({
+              advanced: [{ focusMode: "single-shot" }]
+            } as any);
+            setFocusModeValue("single-shot");
+            
+            // Revert back block to keep continuous autofocus active
+            setTimeout(async () => {
+              if (streamRef.current) {
+                const refreshedTrack = streamRef.current.getVideoTracks()[0];
+                if (refreshedTrack && modes.includes("continuous")) {
+                  await refreshedTrack.applyConstraints({
+                    advanced: [{ focusMode: "continuous" }]
+                  } as any);
+                  setFocusModeValue("continuous");
+                }
+              }
+            }, 1100);
+          } else if (modes.includes("continuous")) {
+            // Apply continuous focus to re-engage physical motors
+            await track.applyConstraints({
+              advanced: [{ focusMode: "continuous" }]
+            } as any);
+            setFocusModeValue("continuous");
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to set manual focus constraint adjustment:", err);
+      }
+    }
+  };
+
+  // Process tap position on video feed container and trigger focusing logic
+  const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cameraActive) return;
+
+    // Reject click if clicking on the bottom-right binarization sensor overlay
+    const targetElement = e.target as HTMLElement;
+    if (targetElement.closest(".pointer-events-auto") || targetElement.closest("button")) {
+      return;
+    }
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (focusTimeoutRef.current) {
+      clearTimeout(focusTimeoutRef.current);
+    }
+
+    setTapFocusPos({ x, y });
+    setIsRefocusing(true);
+
+    triggerManualFocus();
+
+    focusTimeoutRef.current = setTimeout(() => {
+      setTapFocusPos(null);
+      setIsRefocusing(false);
+    }, 1500);
   };
 
   // Handle active digital zoom adjustment via slider
@@ -611,7 +850,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             <span className="text-3xl font-black text-red-600 font-mono tracking-tight" id="total-scan-ticker">
               {totalToday}
             </span>
-            <span className="text-[10px] text-slate-500 block font-medium">paket hari ini</span>
+            <span className="text-[10px] text-slate-500 block font-medium">paket Anda hari ini</span>
           </div>
           <CheckCircle className="h-10 w-10 text-red-600/20" />
         </div>
@@ -668,16 +907,54 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <Camera className="h-3.5 w-3.5 mr-2 text-red-500" />
                 FOTO & SCAN BARCODE
               </span>
-              <div className="flex items-center space-x-1.5">
-                <span className={`h-2 w-2 rounded-full ${cameraActive ? "bg-green-500 animate-ping" : "bg-slate-700"}`} />
-                <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
-                  {cameraActive ? "Kamera Aktif" : "Kamera Mati"}
-                </span>
+              <div className="flex items-center space-x-2.5">
+                {cameraActive && focusSupported && (
+                  <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider flex items-center space-x-1 select-none">
+                    <Target className="h-2.5 w-2.5 animate-[spin_4s_linear_infinite]" />
+                    <span>Auto-Focus Aktif</span>
+                  </span>
+                )}
+                <div className="flex items-center space-x-1.5">
+                  <span className={`h-2 w-2 rounded-full ${cameraActive ? "bg-green-500 animate-ping" : "bg-slate-700"}`} />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase font-mono">
+                    {cameraActive ? "Kamera Aktif" : "Kamera Mati"}
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* Video feed backdrop frame */}
-            <div className="relative bg-black h-[350px] sm:h-[450px] w-full flex flex-col items-center justify-center overflow-hidden border-b border-slate-850">
+            <div 
+              onClick={handleContainerClick}
+              className="relative bg-black h-[350px] sm:h-[450px] w-full flex flex-col items-center justify-center overflow-hidden border-b border-slate-850 cursor-crosshair select-none"
+            >
+              {/* Dynamic Lens Focus Target Sight (Tap-to-Focus Indicator) */}
+              {cameraActive && tapFocusPos && (
+                <div 
+                  className="absolute pointer-events-none z-30"
+                  style={{ 
+                    left: tapFocusPos.x - 28, 
+                    top: tapFocusPos.y - 28,
+                    width: 56,
+                    height: 56
+                  }}
+                >
+                  {/* Outer animated bracket ring */}
+                  <div className="absolute inset-0 border-2 border-yellow-400 rounded-lg animate-[ping_1.2s_ease-out_infinite]" />
+                  <div className="absolute inset-0 border border-yellow-400 rounded-lg animate-[pulse_0.4s_infinite]" />
+                  {/* Crosshairs */}
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-0.5 h-1.5 bg-yellow-400" />
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0.5 h-1.5 bg-yellow-400" />
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 h-0.5 w-1.5 bg-yellow-400" />
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 h-0.5 w-1.5 bg-yellow-400" />
+                  
+                  {/* Focusing Sub-label popup */}
+                  <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[8px] font-black text-yellow-400 tracking-widest uppercase bg-slate-950/80 px-1 py-0.5 rounded shadow whitespace-nowrap">
+                    {isRefocusing ? "MENFOKUS..." : "OK"}
+                  </span>
+                </div>
+              )}
+
               {/* Real-time Stability Indicator Gauge Overlay */}
               {cameraActive && (
                 <div className="absolute top-4 left-4 z-20 bg-slate-950/85 backdrop-blur-md p-3 rounded-2xl border border-slate-800/80 w-[180px] pointer-events-none select-none flex flex-col space-y-1.5 shadow-xl animate-in fade-in slide-in-from-left-2 duration-300">
@@ -695,7 +972,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   {/* Progress bar visual */}
                   <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden p-[1px] border border-slate-800/60">
                     <div 
-                      className={`h-full rounded-full transition-all duration-300 ${
+                      className={`h-full rounded-full transition-all duration-305 ${
                         stabilityStatus === "STABIL" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
                         stabilityStatus === "SEDANG" ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
                         "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.7)] animate-pulse"
@@ -756,6 +1033,42 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 muted
                 className={`w-full h-full object-cover select-none ${cameraActive ? "block" : "hidden"}`}
               />
+
+              {/* High Contrast Scanner real-time binary monitor */}
+              {cameraActive && (
+                <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end space-y-1.5 pointer-events-auto">
+                  {showDebugFeed && (
+                    <div className="bg-slate-950/95 border border-emerald-500 p-2.5 rounded-2xl text-center shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+                      <span className="text-[8px] text-emerald-400 font-extrabold block mb-1 tracking-wider uppercase">
+                        🔍 SENSOR KONTRAS TINGGI J-T
+                      </span>
+                      <canvas 
+                        ref={debugCanvasRef} 
+                        className="w-32 h-16 rounded border border-slate-800 bg-black" 
+                      />
+                      <span className="text-[7px] text-slate-400 block mt-1 leading-normal font-mono">
+                        Hasil binarisasi sensor barcode
+                      </span>
+                    </div>
+                  )}
+                  
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowDebugFeed(!showDebugFeed);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center space-x-1.5 shadow-md border cursor-pointer select-none transition-all ${
+                      showDebugFeed 
+                        ? "bg-emerald-500 hover:bg-emerald-600 text-slate-950 border-emerald-600" 
+                        : "bg-slate-950/90 hover:bg-slate-900 text-slate-300 border-slate-800 hover:text-white"
+                    }`}
+                  >
+                    <Eye className="h-3 w-3" />
+                    <span>{showDebugFeed ? "TUTUP SENSOR" : "BUKA SENSOR KONTRAS"}</span>
+                  </button>
+                </div>
+              )}
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
               {!cameraActive && (
@@ -963,6 +1276,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <p>1. Dekatkan kamera ke barcode (~10-15 cm) lalu jauhkan perlahan sampai fokus otomatis mengunci.</p>
                 <p>2. Jika ruangan redup, klik tombol <span className="text-amber-400 font-semibold uppercase">"Nyalakan Lampu Flash"</span> di atas.</p>
                 <p>3. Posisikan barcode searah garis horizontal merah agar kamera lebih mudah mendeteksi garis.</p>
+                <p>4. Jika fokus lepas atau buram, <span className="text-yellow-405 font-bold uppercase">ketuk/tap layar kamera</span> di atas untuk memicu pemfokusan ulang instan.</p>
               </div>
             </div>
 
@@ -1087,7 +1401,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   <div>
                     <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Belum Ada Paket</h5>
                     <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
-                      Data scan terbaru untuk seller {config.seller} akan otomatis tertampil secara real-time di panel ini.
+                      Data scan terbaru oleh Anda ({config.operator}) untuk seller {config.seller} akan otomatis tertampil secara real-time di panel ini.
                     </p>
                   </div>
                 </div>
