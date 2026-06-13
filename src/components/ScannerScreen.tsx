@@ -241,113 +241,144 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     // Single offscreen canvas to avoid garbage collection spikes and keep processing instant
     const scanCanvas = document.createElement("canvas");
-    scanCanvas.width = 600;
-    scanCanvas.height = 300;
     const scanCtx = scanCanvas.getContext("2d", { willReadFrequently: true });
 
-    // Single offscreen image to pass standard type-safe HTMLImageElement to ZXing
-    const scanImg = new Image();
     let isDecoding = false;
-
-    // Listen for image load which triggers binarized frame decoding
-    scanImg.onload = async () => {
-      try {
-        const result = await reader.decodeFromImageElement(scanImg);
-        if (result && !isScanningLocked.current) {
-          const resiText = result.getText().trim();
-          if (resiText) {
-            if (handleBarcodeScannedRef.current) {
-              handleBarcodeScannedRef.current(resiText);
-            }
-          }
-        }
-      } catch (decodeErr) {
-        // No barcode matched in this frame - perfectly typical and silent
-      } finally {
-        isDecoding = false;
-      }
-    };
-
-    scanImg.onerror = () => {
-      isDecoding = false;
-    };
-
     let isProcessing = false;
 
     scanIntervalRef.current = setInterval(async () => {
       if (!videoRef.current || isScanningLocked.current || isProcessing || isDecoding) return;
       if (videoRef.current.readyState < 2) return; // HAVE_CURRENT_DATA or higher is required
 
-      const videoWidth = videoRef.current.videoWidth || 640;
-      const videoHeight = videoRef.current.videoHeight || 480;
+      const videoWidth = videoRef.current.videoWidth || 1280;
+      const videoHeight = videoRef.current.videoHeight || 720;
       if (videoWidth <= 0 || videoHeight <= 0) return;
 
       isProcessing = true;
 
       try {
         // Target specifically the J&T barcode area guided inside the red brackets
-        const cropX = Math.round(videoWidth * 0.15); // slightly wider for long J&T barcodes
-        const cropY = Math.round(videoHeight * 0.25);
-        const cropWidth = Math.round(videoWidth * 0.70);
-        const cropHeight = Math.round(videoHeight * 0.50);
+        const cropX = Math.round(videoWidth * 0.125); 
+        const cropY = Math.round(videoHeight * 0.225);
+        const cropWidth = Math.round(videoWidth * 0.75);
+        const cropHeight = Math.round(videoHeight * 0.55);
 
         if (scanCtx) {
-          // Draw the horizontal crop region
+          // Match size 1:1 with video crop coordinates to avoid blur/distortion
+          if (scanCanvas.width !== cropWidth) {
+            scanCanvas.width = cropWidth;
+          }
+          if (scanCanvas.height !== cropHeight) {
+            scanCanvas.height = cropHeight;
+          }
+
+          // Draw raw pixel-perfect frame crop
           scanCtx.drawImage(
             videoRef.current,
             cropX, cropY, cropWidth, cropHeight,
-            0, 0, 600, 300
+            0, 0, cropWidth, cropHeight
           );
 
-          // Get image pixel data to boost contrast
-          const imgData = scanCtx.getImageData(0, 0, 600, 300);
-          const data = imgData.data;
-
-          let minVal = 255;
-          let maxVal = 0;
-
-          // Quick subsampling of pixel blocks to determine low/high dynamic range bounds
-          for (let i = 0; i < data.length; i += 48) {
-            const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
-            if (gray < minVal) minVal = gray;
-            if (gray > maxVal) maxVal = gray;
-          }
-
-          const dynamicRange = maxVal - minVal;
-          if (dynamicRange > 18) {
-            // Apply binarization. Standard 45% midpoint is mathematically selected to avoid merging close barcode lines 
-            // under poor environment conditions
-            const thresholdValue = minVal + (dynamicRange * 0.45);
-
-            for (let i = 0; i < data.length; i += 4) {
-              const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
-              const binarizedVal = gray < thresholdValue ? 0 : 255;
-              data[i] = binarizedVal;
-              data[i + 1] = binarizedVal;
-              data[i + 2] = binarizedVal;
-            }
-            scanCtx.putImageData(imgData, 0, 0);
-          }
-
-          // Render live feedback frame to visible debugger monitor if active
-          if (debugCanvasRef.current) {
-            const dCanvas = debugCanvasRef.current;
-            if (dCanvas.width !== 600) dCanvas.width = 600;
-            if (dCanvas.height !== 300) dCanvas.height = 300;
-            const dCtx = dCanvas.getContext("2d");
-            if (dCtx) {
-              dCtx.drawImage(scanCanvas, 0, 0);
-            }
-          }
-
-          // Trigger image load & decoding chain
           isDecoding = true;
-          scanImg.src = scanCanvas.toDataURL("image/jpeg", 0.85);
+
+          // Pass 1: Try decoding from the raw, high-resolution original image (optimal for 99% of targets)
+          (reader as any).decodeFromCanvas(scanCanvas)
+            .then((result: any) => {
+              if (result && !isScanningLocked.current) {
+                const resiText = result.getText().trim();
+                if (resiText) {
+                  if (handleBarcodeScannedRef.current) {
+                    handleBarcodeScannedRef.current(resiText);
+                  }
+                }
+              }
+              // Draw raw feed on monitor
+              if (debugCanvasRef.current) {
+                const dCanvas = debugCanvasRef.current;
+                if (dCanvas.width !== cropWidth) dCanvas.width = cropWidth;
+                if (dCanvas.height !== cropHeight) dCanvas.height = cropHeight;
+                const dCtx = dCanvas.getContext("2d");
+                if (dCtx) {
+                  dCtx.drawImage(scanCanvas, 0, 0);
+                }
+              }
+              isDecoding = false;
+              isProcessing = false;
+            })
+            .catch(() => {
+              // Pass 2 Fallback: Apply digital contrast enhancement/adaptive thresholding
+              try {
+                const imgData = scanCtx.getImageData(0, 0, cropWidth, cropHeight);
+                const data = imgData.data;
+
+                let minVal = 255;
+                let maxVal = 0;
+
+                // Subsampling to find dynamic range bounds
+                const step = Math.max(4, Math.floor(data.length / 10000)) * 4;
+                for (let i = 0; i < data.length; i += step) {
+                  const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                  if (gray < minVal) minVal = gray;
+                  if (gray > maxVal) maxVal = gray;
+                }
+
+                const dynamicRange = maxVal - minVal;
+                if (dynamicRange > 15) {
+                  const thresholdValue = minVal + (dynamicRange * 0.45);
+
+                  for (let i = 0; i < data.length; i += 4) {
+                    const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                    const binarizedVal = gray < thresholdValue ? 0 : 255;
+                    data[i] = binarizedVal;
+                    data[i + 1] = binarizedVal;
+                    data[i + 2] = binarizedVal;
+                  }
+                  scanCtx.putImageData(imgData, 0, 0);
+
+                  // Decode binarized frame
+                  (reader as any).decodeFromCanvas(scanCanvas)
+                    .then((result: any) => {
+                      if (result && !isScanningLocked.current) {
+                        const resiText = result.getText().trim();
+                        if (resiText) {
+                          if (handleBarcodeScannedRef.current) {
+                            handleBarcodeScannedRef.current(resiText);
+                          }
+                        }
+                      }
+                      isDecoding = false;
+                      isProcessing = false;
+                    })
+                    .catch(() => {
+                      isDecoding = false;
+                      isProcessing = false;
+                    });
+                } else {
+                  isDecoding = false;
+                  isProcessing = false;
+                }
+
+                // Draw status to visible debug canvas
+                if (debugCanvasRef.current) {
+                  const dCanvas = debugCanvasRef.current;
+                  if (dCanvas.width !== cropWidth) dCanvas.width = cropWidth;
+                  if (dCanvas.height !== cropHeight) dCanvas.height = cropHeight;
+                  const dCtx = dCanvas.getContext("2d");
+                  if (dCtx) {
+                    dCtx.drawImage(scanCanvas, 0, 0);
+                  }
+                }
+              } catch (bErr) {
+                isDecoding = false;
+                isProcessing = false;
+              }
+            });
+        } else {
+          isProcessing = false;
         }
       } catch (loopErr) {
         console.warn("Advanced scan loop iteration warning:", loopErr);
         isDecoding = false;
-      } finally {
         isProcessing = false;
       }
     }, 150); // 150ms ensures extreme reactivity of ~7 frames processed per second
