@@ -116,7 +116,7 @@ function generateHistoricalData(): ScanRecord[] {
       Operator: operator,
       Status: i === 12 ? "CANCELLED" : "SCANNED",
       PhotoURL: createMockResiPhoto(resi, seller),
-      SyncStatus: i < 30 ? "SYNCED" : "PENDING", // some pending items for sync simulation!
+      SyncStatus: "SYNCED", 
       ScanTimestamp: new Date(`${today}T${hour}:${min}:${sec}`).getTime()
     });
   }
@@ -222,8 +222,10 @@ export function getDirectDriveImageUrl(url: string | undefined): string {
   }
   
   if (fileId) {
-    // lh3.googleusercontent.com/d/FILE_ID is ultra-fast, has CDN caching and bypassing standard drive redirect page
-    return `https://lh3.googleusercontent.com/d/${fileId}`;
+    // drive.google.com/thumbnail?sz=w1000&id=FILE_ID is the most robust and compatible choice
+    // for embedding Google Drive images in external containers and iframes safely since it
+    // doesn't block on standard browser/referrer security policies.
+    return `https://drive.google.com/thumbnail?sz=w1000&id=${fileId}`;
   }
   
   return url;
