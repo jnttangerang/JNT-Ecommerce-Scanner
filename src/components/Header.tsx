@@ -80,6 +80,21 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Status Indicators & Navigation Menu */}
         <div className="flex items-center space-x-3">
+          {/* Hapus Cache Button */}
+          <button
+            onClick={() => {
+              if (window.confirm("Apakah Anda yakin ingin menghapus cache aplikasi? Semua data lokal akan terhapus dan aplikasi akan dimuat ulang.")) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold select-none bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors"
+            title="Hapus Cache Aplikasi dan Muat Ulang"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">Hapus Cache</span>
+          </button>
+          
           {/* Real-time Clock (Desktop-friendly) */}
           <div className="hidden md:flex flex-col items-end mr-2 font-mono text-xs text-slate-500">
             <span className="text-slate-400 text-[10px] font-bold">TIME</span>

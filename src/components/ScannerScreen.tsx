@@ -108,81 +108,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [isRefocusing, setIsRefocusing] = useState(false);
   const focusTimeoutRef = useRef<any>(null);
 
-  // Background interval and Canvas Reference for high-contrast auto-binarized decoding
   const scanIntervalRef = useRef<any>(null);
-  const debugCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [showDebugFeed, setShowDebugFeed] = useState(false);
-
-  // Camera Stability HUD indicators (Stabilitas HP)
-  const [stabilityScore, setStabilityScore] = useState<number>(98);
-  const [stabilityStatus, setStabilityStatus] = useState<"STABIL" | "SEDANG" | "GOYANG">("STABIL");
-
-  // Track physical or simulated motion to gauge camera stability
-  useEffect(() => {
-    let lastX: number | null = null;
-    let lastY: number | null = null;
-    let lastZ: number | null = null;
-
-    // Simulates continuous micro-sway from human grasp and guides drift back to stability
-    const interval = setInterval(() => {
-      setStabilityScore(oldScore => {
-        const naturalFluctuation = (Math.random() - 0.5) * 3.5;
-        let nextScore = oldScore + naturalFluctuation;
-        
-        // Help score recover quickly to 95%+ once shaking has stopped
-        if (oldScore < 90) {
-          nextScore = oldScore + 6.5;
-        }
-
-        return Math.max(15, Math.min(100, Math.round(nextScore)));
-      });
-    }, 380);
-
-    const handleDeviceMotion = (event: DeviceMotionEvent) => {
-      const acc = event.acceleration || event.accelerationIncludingGravity;
-      if (!acc) return;
-
-      const x = acc.x ?? 0;
-      const y = acc.y ?? 0;
-      const z = acc.z ?? 0;
-
-      if (lastX !== null && lastY !== null && lastZ !== null) {
-        const deltaX = Math.abs(x - lastX);
-        const deltaY = Math.abs(y - lastY);
-        const deltaZ = Math.abs(z - lastZ);
-        const combinedForce = deltaX + deltaY + deltaZ;
-
-        // If delta motion spikes, decrease stability score dramatically
-        if (combinedForce > 1.2) {
-          setStabilityScore(oldScore => {
-            const shockPenalty = Math.min(48, Math.floor(combinedForce * 11));
-            return Math.max(10, oldScore - shockPenalty);
-          });
-        }
-      }
-
-      lastX = x;
-      lastY = y;
-      lastZ = z;
-    };
-
-    window.addEventListener("devicemotion", handleDeviceMotion);
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("devicemotion", handleDeviceMotion);
-    };
-  }, []);
-
-  // Update categorical status from actual score
-  useEffect(() => {
-    if (stabilityScore >= 80) {
-      setStabilityStatus("STABIL");
-    } else if (stabilityScore >= 45) {
-      setStabilityStatus("SEDANG");
-    } else {
-      setStabilityStatus("GOYANG");
-    }
-  }, [stabilityScore]);
 
   // Lock barcode scanning when in retake mode to prevent auto-decodes of other barcodes
   useEffect(() => {
@@ -234,69 +160,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     );
     setRetakeTasks(pendingTasks);
   };
-
-  // Set up high contrast visual sensor feed only when visual debug monitor is active
-  const debugIntervalRef = useRef<any>(null);
-
-  useEffect(() => {
-    if (showDebugFeed && cameraActive) {
-      debugIntervalRef.current = setInterval(() => {
-        const videoEl = document.querySelector("#html5-qr-code-element video") as HTMLVideoElement | null;
-        if (!videoEl || !debugCanvasRef.current || videoEl.readyState < 2) return;
-        
-        const canvas = debugCanvasRef.current;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        const w = videoEl.videoWidth || 640;
-        const h = videoEl.videoHeight || 480;
-        
-        // Focus on the same central 35% bounding box
-        const cropX = Math.round(w * 0.075);
-        const cropY = Math.round(h * 0.325);
-        const cropW = Math.round(w * 0.85);
-        const cropH = Math.round(h * 0.35);
-
-        canvas.width = 160;
-        canvas.height = 68;
-
-        ctx.drawImage(videoEl, cropX, cropY, cropW, cropH, 0, 0, 160, 68);
-
-        // Apply real-time visual binarization filter (simulating J&T High Contrast Sensor)
-        try {
-          const imgData = ctx.getImageData(0, 0, 160, 68);
-          const d = imgData.data;
-          let minVal = 255;
-          let maxVal = 0;
-          for (let i = 0; i < d.length; i += 16) {
-            const gray = (d[i] + d[i+1] + d[i+2]) / 3;
-            if (gray < minVal) minVal = gray;
-            if (gray > maxVal) maxVal = gray;
-          }
-          const threshold = minVal + (maxVal - minVal) * 0.45;
-          for (let i = 0; i < d.length; i += 4) {
-            const gray = (d[i] + d[i+1] + d[i+2]) / 3;
-            const b = gray < threshold ? 0 : 255;
-            d[i] = b;
-            d[i+1] = b;
-            d[i+2] = b;
-          }
-          ctx.putImageData(imgData, 0, 0);
-        } catch (_) {}
-      }, 150);
-    } else {
-      if (debugIntervalRef.current) {
-        clearInterval(debugIntervalRef.current);
-        debugIntervalRef.current = null;
-      }
-    }
-
-    return () => {
-      if (debugIntervalRef.current) {
-        clearInterval(debugIntervalRef.current);
-      }
-    };
-  }, [showDebugFeed, cameraActive]);
 
   // Apply a unified constraints block to prevent hardware features from overriding each other
   const applyCameraConstraints = async (overrides: { torch?: boolean; zoom?: number; focusMode?: string } = {}) => {
@@ -365,7 +228,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
       // Configurations fully optimized for Code 128 shipping resi (horizontal scan area, fps 20-30, environment camera)
       const scanConfig = {
-        fps: 25, // 25 frames per second for high-speed realtime scanning
+        fps: 20, // stable frames per second
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
           // Precise horizontal scanning box layout centered on the middle segment
           const width = Math.min(650, Math.floor(viewfinderWidth * 0.85));
@@ -379,7 +242,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           Html5QrcodeSupportedFormats.ITF,
           Html5QrcodeSupportedFormats.EAN_13
         ],
-        aspectRatio: 1.7777777778, // High-definition widescreen layout
+        // aspectRatio removed for better dynamic sizing on various screens
       };
 
       await html5QrCode.start(
@@ -448,10 +311,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   };
 
   const stopCamera = async () => {
-    if (debugIntervalRef.current) {
-      clearInterval(debugIntervalRef.current);
-      debugIntervalRef.current = null;
-    }
     if (html5QrCodeRef.current) {
       try {
         await html5QrCodeRef.current.stop();
@@ -927,7 +786,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             {/* Video feed backdrop frame */}
             <div 
               onClick={handleContainerClick}
-              className="relative bg-black h-[350px] sm:h-[450px] w-full flex flex-col items-center justify-center overflow-hidden border-b border-slate-850 cursor-crosshair select-none"
+              className="relative bg-slate-900 h-[350px] sm:h-[450px] w-full flex flex-col items-center justify-center overflow-hidden border-b border-slate-850 cursor-crosshair select-none"
             >
               {/* Dynamic Lens Focus Target Sight (Tap-to-Focus Indicator) */}
               {cameraActive && tapFocusPos && (
@@ -956,62 +815,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 </div>
               )}
 
-              {/* Real-time Stability Indicator Gauge Overlay */}
-              {cameraActive && (
-                <div className="absolute top-4 left-4 z-20 bg-slate-950/85 backdrop-blur-md p-3 rounded-2xl border border-slate-800/80 w-[180px] pointer-events-none select-none flex flex-col space-y-1.5 shadow-xl animate-in fade-in slide-in-from-left-2 duration-300">
-                  <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider text-slate-400">
-                    <span>STABILITAS HP</span>
-                    <span className={`font-mono text-xs ${
-                      stabilityStatus === "STABIL" ? "text-emerald-400 font-black" :
-                      stabilityStatus === "SEDANG" ? "text-amber-400 font-bold" :
-                      "text-red-500 font-black animate-pulse"
-                    }`}>
-                      {stabilityScore}%
-                    </span>
-                  </div>
-                  
-                  {/* Progress bar visual */}
-                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden p-[1px] border border-slate-800/60">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-305 ${
-                        stabilityStatus === "STABIL" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
-                        stabilityStatus === "SEDANG" ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" :
-                        "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.7)] animate-pulse"
-                      }`}
-                      style={{ width: `${stabilityScore}%` }}
-                    />
-                  </div>
-
-                  {/* Verbal indicator & helpful icon */}
-                  <div className="flex items-center space-x-1.5 text-[9px] font-black uppercase tracking-wide">
-                    {stabilityStatus === "STABIL" ? (
-                      <>
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                        <span className="text-emerald-400">✓ HP Stabil (Siap Foto)</span>
-                      </>
-                    ) : stabilityStatus === "SEDANG" ? (
-                      <>
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
-                        <span className="text-amber-400">⚠️ Agak Goyang</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-ping" />
-                        <span className="text-red-500 animate-pulse">❌ Goyang! Pegang Diam</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Shaking Alert Banner */}
-              {cameraActive && stabilityStatus === "GOYANG" && (
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-25 bg-red-650/95 border border-red-500 text-white font-extrabold px-4 py-2.5 rounded-2xl text-center text-[10px] uppercase tracking-wider shadow-[0_10px_25px_-5px_rgba(239,68,68,0.4)] backdrop-blur-sm animate-bounce flex items-center space-x-2 pointer-events-none">
-                  <AlertTriangle className="h-4 w-4 text-white animate-pulse" />
-                  <span>JANGAN GOYANG! HP Tidak Stabil</span>
-                </div>
-              )}
-
               {/* Target Scan Lines overlay */}
               <div className="absolute inset-0 border-[3px] border-transparent pointer-events-none z-10">
                 {/* Simulated laser scan */}
@@ -1030,44 +833,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className={`w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 ${cameraActive ? "block" : "hidden"}`}
+                className={`w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 [&>video]:brightness-110 [&>video]:contrast-110 ${cameraActive ? "block" : "hidden"}`}
               />
-
-              {/* High Contrast Scanner real-time binary monitor */}
-              {cameraActive && (
-                <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end space-y-1.5 pointer-events-auto">
-                  {showDebugFeed && (
-                    <div className="bg-slate-950/95 border border-emerald-500 p-2.5 rounded-2xl text-center shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-                      <span className="text-[8px] text-emerald-400 font-extrabold block mb-1 tracking-wider uppercase">
-                        🔍 SENSOR KONTRAS TINGGI J-T
-                      </span>
-                      <canvas 
-                        ref={debugCanvasRef} 
-                        className="w-32 h-16 rounded border border-slate-800 bg-black" 
-                      />
-                      <span className="text-[7px] text-slate-400 block mt-1 leading-normal font-mono">
-                        Hasil binarisasi sensor barcode
-                      </span>
-                    </div>
-                  )}
-                  
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowDebugFeed(!showDebugFeed);
-                    }}
-                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center space-x-1.5 shadow-md border cursor-pointer select-none transition-all ${
-                      showDebugFeed 
-                        ? "bg-emerald-500 hover:bg-emerald-600 text-slate-950 border-emerald-600" 
-                        : "bg-slate-950/90 hover:bg-slate-900 text-slate-300 border-slate-800 hover:text-white"
-                    }`}
-                  >
-                    <Eye className="h-3 w-3" />
-                    <span>{showDebugFeed ? "TUTUP SENSOR" : "BUKA SENSOR KONTRAS"}</span>
-                  </button>
-                </div>
-              )}
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
               {!cameraActive && (
@@ -1236,17 +1003,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   </div>
                 )}
 
-                {/* Simulated Shake testing triggers */}
-                <button
-                  type="button"
-                  onClick={() => setStabilityScore(15)}
-                  className="px-3.5 py-2 rounded-xl text-[10px] font-extrabold uppercase bg-slate-950 hover:bg-slate-900 border border-red-500/35 text-red-500 hover:border-red-500/70 transition-all cursor-pointer flex items-center justify-center space-x-1.5 active:scale-95 shrink-0"
-                  title="Simulasikan guncangan perangkat untuk menguji indikator stabilitas"
-                >
-                  <AlertTriangle className="h-3.5 w-3.5 text-red-500 animate-pulse" />
-                  <span>Simulasikan HP Goyang</span>
-                </button>
-
                 {/* Zoom control slider if supported by hardware */}
                 {zoomSupported && (
                   <div className="flex items-center space-x-3 flex-1 md:max-w-xs bg-slate-950/40 p-2 rounded-xl border border-slate-800/60">
@@ -1266,18 +1022,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 )}
               </div>
             )}
-
-            {/* Helpful Scan Troubleshooting Tips */}
-            <div className="px-4 py-3 bg-slate-900 border-b border-slate-950 text-slate-305 text-[10px] flex items-start space-x-2">
-              <Info className="h-4 w-4 text-blue-400 mt-0.5 shrink-0" />
-              <div className="leading-relaxed space-y-0.5">
-                <span className="font-extrabold text-slate-205 tracking-wide block text-[10px]">TIPS MEMPERCEPAT SCAN DETEKSI:</span>
-                <p>1. Dekatkan kamera ke barcode (~10-15 cm) lalu jauhkan perlahan sampai fokus otomatis mengunci.</p>
-                <p>2. Jika ruangan redup, klik tombol <span className="text-amber-400 font-semibold uppercase">"Nyalakan Lampu Flash"</span> di atas.</p>
-                <p>3. Posisikan barcode searah garis horizontal merah agar kamera lebih mudah mendeteksi garis.</p>
-                <p>4. Jika fokus lepas atau buram, <span className="text-yellow-405 font-bold uppercase">ketuk/tap layar kamera</span> di atas untuk memicu pemfokusan ulang instan.</p>
-              </div>
-            </div>
 
             {/* Simulated Live Audio Check & Input Barcode interface */}
             <div className="p-4 bg-slate-950 space-y-3">

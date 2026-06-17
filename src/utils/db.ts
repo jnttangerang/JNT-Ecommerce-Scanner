@@ -25,7 +25,7 @@ const DEFAULT_CLOUD_CONFIG: CloudConfig = {
   coreFolderUrl: "https://drive.google.com/drive/folders/1Q1Ch2LDxr30cHbyd-xFueIqAnLHANPPY",
   fotoFolderId: "https://drive.google.com/drive/folders/19peJr4JWqKA6Ei4AwuXgohhF2C59ugyp",
   spreadsheetId: "12ly2pM3Vof9IKTwjselkLUX6sMdcdI6rcb_KvbjcQ_Y",
-  appsScriptUrl: "https://script.google.com/macros/s/AKfycbxO2II_Tg_8wBnGJBZTjWGz1sDfqNXdU06o1xNkPmRE6wdvSlDfGmLfb81cTb3_NWWm/exec",
+  appsScriptUrl: "https://script.google.com/macros/s/AKfycbxHsd-wqkrjRxHvasCZ6_a-G0T36x5nZIXJ1fVn18C56TUU0lD3Hm45AHNNxdMIrxsw/exec",
   faviconUrl: "https://jet.co.id/static/favicon.ico"
 };
 
