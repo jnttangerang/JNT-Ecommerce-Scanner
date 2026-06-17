@@ -241,6 +241,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           Html5QrcodeSupportedFormats.ITF,
           Html5QrcodeSupportedFormats.EAN_13
         ],
+        aspectRatio: 1.0 // Force 1:1 Aspect ratio to conform to container properly
       };
 
       await html5QrCode.start(
@@ -583,7 +584,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }
 
     setPendingValidation(null);
-    setManualResi("");
     isScanningLocked.current = false;
   };
 
@@ -823,8 +823,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className="absolute inset-0 w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110"
-                style={{ opacity: cameraActive ? 1 : 0, zIndex: 0 }}
+                className={`w-full max-h-[350px] sm:max-h-[450px] overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover ${cameraActive ? "block" : "hidden"}`}
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
@@ -883,47 +882,49 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Clarity Verification modal ("Validasi Foto") */}
               {pendingValidation && (
                 <div 
-                  className="absolute inset-0 bg-slate-950/98 flex flex-col items-center justify-between p-4 z-30"
+                  className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-between p-4 pb-8 z-50 safe-area-pt overflow-y-auto"
                   id="clarity-validation-overlay"
                 >
-                  <div className="w-full text-center py-2 border-b border-slate-905">
-                    <span className="text-xs font-bold text-red-500 uppercase tracking-widest block">VALIDASI KUALITAS FOTO</span>
-                    <span className="text-xs text-slate-400 font-mono">RESI: {pendingValidation.resi}</span>
+                  <div className="w-full text-center py-4 border-b border-slate-900 sticky top-0 bg-slate-950 z-10 shrink-0">
+                    <span className="text-sm font-bold text-red-500 uppercase tracking-widest block">VALIDASI KUALITAS FOTO</span>
+                    <span className="text-sm text-slate-400 font-mono mt-1 block">RESI: {pendingValidation.resi}</span>
                   </div>
 
                   {/* Thumbnail display */}
-                  <div className="my-2 border-2 border-slate-800 rounded-xl overflow-hidden bg-black flex-1 w-full max-w-sm relative flex items-center justify-center">
+                  <div className="my-4 border-2 border-slate-800 rounded-xl overflow-hidden bg-black flex-1 w-full max-w-2xl relative flex items-center justify-center min-h-[300px]">
                     <img
                       src={pendingValidation.photoURL}
                       alt="Captured parcel preview"
                       className="w-full h-full object-contain"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute top-2 left-2 bg-slate-950/80 px-2 py-0.5 rounded text-[9px] font-bold text-green-400 border border-green-500/20">
+                    <div className="absolute top-3 left-3 bg-slate-950/80 px-3 py-1 rounded text-[10px] font-bold text-green-400 border border-green-500/20 shadow-md">
                       PREVIEW PHOTO
                     </div>
                   </div>
 
-                  <div className="w-full max-w-md bg-slate-900/60 p-3 rounded-xl border border-slate-805 text-center text-[11px] text-slate-300">
-                    <p className="font-semibold">Operator wajib memeriksa:</p>
-                    <p className="text-slate-400">Apakah barcode & nomor resi terlihat jelas dan tidak buram?</p>
+                  <div className="w-full max-w-2xl bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-center text-xs text-slate-300 shrink-0 mt-auto">
+                    <p className="font-semibold text-white text-sm mb-1">Operator wajib memeriksa:</p>
+                    <p className="text-slate-400 leading-relaxed">Apakah barcode & nomor resi terlihat jelas dan tidak buram?</p>
                   </div>
 
                   {/* Dual options triggers */}
-                  <div className="w-full grid grid-cols-2 gap-3 mt-1 max-w-sm">
+                  <div className="w-full max-w-2xl grid grid-cols-2 gap-4 mt-4 shrink-0">
                     <button
                       onClick={() => handleConfirmValidation(false)}
-                      className="bg-slate-900 hover:bg-slate-850 text-red-400 border border-slate-800 hover:border-red-500/30 py-3.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center"
+                      className="bg-slate-900 hover:bg-slate-800 text-red-400 border border-slate-800 hover:border-red-500/30 py-4 px-3 rounded-2xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1 shadow-lg"
                       id="validate-unclear-button"
                     >
-                      ❌ BURAM / RETAKE
+                      <span className="text-xl">❌</span>
+                      <span>BURAM / RETAKE</span>
                     </button>
                     <button
                       onClick={() => handleConfirmValidation(true)}
-                      className="bg-red-650 hover:bg-red-600 text-white py-3.5 px-3 rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer text-center"
+                      className="bg-green-650 hover:bg-green-600 border border-green-500 text-white py-4 px-3 rounded-2xl text-xs sm:text-sm font-extrabold shadow-[0_0_20px_rgba(22,163,74,0.4)] transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1"
                       id="validate-clear-button"
                     >
-                      ✓ JELAS (SIMPAN)
+                      <span className="text-xl">✓</span>
+                      <span>JELAS (SIMPAN)</span>
                     </button>
                   </div>
                 </div>
