@@ -302,7 +302,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const applyCameraConstraints = async (overrides: { torch?: boolean; zoom?: number; focusMode?: string } = {}) => {
     if (!html5QrCodeRef.current) return;
     try {
-      const track = html5QrCodeRef.current.getRunningTrack();
+      const track = (html5QrCodeRef.current as any).getRunningTrack();
       if (!track) return;
 
       const capabilities = track.getCapabilities() as any;
@@ -399,7 +399,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
       // Fetch running track to configure capabilities
       try {
-        const track = html5QrCode.getRunningTrack();
+        const track = (html5QrCode as any).getRunningTrack();
         if (track) {
           const capabilities = track.getCapabilities() as any;
           if (capabilities) {
@@ -474,7 +474,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const toggleTorch = async () => {
     if (!html5QrCodeRef.current) return;
     try {
-      const track = html5QrCodeRef.current.getRunningTrack();
+      const track = (html5QrCodeRef.current as any).getRunningTrack();
       if (track) {
         const capabilities = track.getCapabilities() as any;
         if (capabilities && capabilities.torch) {
@@ -493,7 +493,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const triggerManualFocus = async () => {
     if (!html5QrCodeRef.current) return;
     try {
-      const track = html5QrCodeRef.current.getRunningTrack();
+      const track = (html5QrCodeRef.current as any).getRunningTrack();
       if (track) {
         const capabilities = track.getCapabilities() as any;
         if (capabilities && capabilities.focusMode) {
@@ -506,7 +506,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             
             setTimeout(async () => {
               if (html5QrCodeRef.current) {
-                const refreshedTrack = html5QrCodeRef.current.getRunningTrack();
+                const refreshedTrack = (html5QrCodeRef.current as any).getRunningTrack();
                 if (refreshedTrack) {
                   if (modes.includes("continuous")) {
                     setFocusModeValue("continuous");
@@ -572,7 +572,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setZoomValue(val);
     if (!html5QrCodeRef.current) return;
     try {
-      const track = html5QrCodeRef.current.getRunningTrack();
+      const track = (html5QrCodeRef.current as any).getRunningTrack();
       if (track) {
         const capabilities = track.getCapabilities() as any;
         if (capabilities && capabilities.zoom) {

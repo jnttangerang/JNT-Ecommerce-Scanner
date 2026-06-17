@@ -41,9 +41,10 @@ import { dbService, getDirectDriveImageUrl } from "../utils/db";
 
 interface OwnerDashboardProps {
   onStatusChanged: () => void;
+  isPulling?: boolean;
 }
 
-export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) => {
+export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, isPulling = false }) => {
   // Passcode gate state
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return localStorage.getItem("jt_owner_authenticated") === "true";
@@ -126,7 +127,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
     if (isAuthenticated) {
       loadData();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isPulling]);
 
   const loadData = () => {
     const records = dbService.getRecords();
@@ -1950,21 +1951,21 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                   </td>
                 </tr>
               ) : (
-                filteredRecords.map((r) => (
+                filteredRecords.map((r, idx) => (
                   <tr key={r.Resi + r.Jam} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-3.5 font-mono text-[11px] text-slate-400">{r.ID}</td>
                     <td className="p-3.5">
                       {r.Status !== "CANCELLED" ? (
                         <button
                           onClick={() => handleMarkCancelled(r.Resi)}
-                          className="bg-red-50 hover:bg-red-100 text-red-655 border border-red-150 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"
+                          className={idx === 0 ? "bg-[#df0000] hover:bg-[#df0000]/90 text-white text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-red-50 hover:bg-red-100 text-red-655 border border-red-150 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
                         >
                           BATALKAN
                         </button>
                       ) : (
                         <button
                           onClick={() => handleMarkScanned(r.Resi)}
-                          className="bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"
+                          className={idx === 0 ? "bg-[#df0000] hover:bg-[#df0000]/90 text-white text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
                         >
                           OK
                         </button>
@@ -1983,8 +1984,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged }) 
                         </span>
                       )}
                     </td>
-                    <td className="p-3.5 font-mono text-[11px] text-slate-655">
-                      {r.Tanggal} <span className="text-slate-400">{r.Jam}</span>
+                    <td className={idx === 0 ? "p-3.5 font-mono text-[11px] bg-[#c3c3c3] text-white" : "p-3.5 font-mono text-[11px] text-slate-655"}>
+                      {r.Tanggal} <span className={idx === 0 ? "text-[#ffffff] border border-[#ffffff] px-1 py-0.5 rounded ml-1" : "text-slate-400"}>{r.Jam}</span>
                     </td>
                     <td className="p-3.5 font-bold text-slate-800">{r.Seller}</td>
                     <td className="p-3.5 truncate max-w-[120px] text-slate-600">{r.Outlet}</td>

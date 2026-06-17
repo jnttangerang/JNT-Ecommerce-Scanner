@@ -11,7 +11,7 @@ import { ScannerScreen } from "./components/ScannerScreen";
 import { OwnerScreen } from "./components/OwnerScreen";
 import { dbService } from "./utils/db";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, X, Bell, RefreshCw } from "lucide-react";
+import { AlertCircle, X, Bell, RefreshCw, Check, HelpCircle } from "lucide-react";
 
 export default function App() {
   const [currentView, setView] = useState<AppView>(() => {
@@ -54,8 +54,8 @@ export default function App() {
     localStorage.setItem("jt_is_cloud_data_fresh", String(isCloudDataFresh));
   }, [isCloudDataFresh]);
 
-  // Push notification state for "Order Cancelled" updates
-  const [notifications, setNotifications] = useState<{ id: string; message: string; timestamp: string }[]>([]);
+  // Push notification state for "Order Cancelled" and system updates
+  const [notifications, setNotifications] = useState<{ id: string; message: string; timestamp: string; type?: "success" | "error" | "warning"; title?: string }[]>([]);
 
   const pullDatabaseFromCloud = async () => {
     const config = dbService.getCloudConfig();
@@ -66,14 +66,39 @@ export default function App() {
     if (!hasAppsScript) return;
 
     setIsPulling(true);
+    const timeStr = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
     try {
       await dbService.pullMasters();
       await dbService.pullRecords();
       updatePendingCount();
       setIsCloudDataFresh(true);
-    } catch (err) {
+      
+      // Push positive sync confirmation notification
+      setNotifications(prev => [
+        {
+          id: `pull-success-${Date.now()}`,
+          type: "success",
+          title: "SINKRONISASI SUKSES",
+          message: "✓ Berhasil menarik data terupdate dari Google Spreadsheet! List Seller, Operator, Outlet dan seluruh histori paket pickup kini sinkron.",
+          timestamp: timeStr
+        },
+        ...prev
+      ]);
+    } catch (err: any) {
       console.warn("Manual pull from cloud failed", err);
       setIsCloudDataFresh(false);
+      
+      // Push error sync notification
+      setNotifications(prev => [
+        {
+          id: `pull-error-${Date.now()}`,
+          type: "error",
+          title: "SINKRONISASI GAGAL",
+          message: `⚠ Gagal menarik data dari Google Sheets: ${err?.message || err || "Koneksi terputus."}. Pastikan Apps Script Web App URL valid.`,
+          timestamp: timeStr
+        },
+        ...prev
+      ]);
     } finally {
       setIsPulling(false);
     }
@@ -272,41 +297,73 @@ export default function App() {
       {/* Real-time push notification toaster alerts */}
       <div className="fixed top-20 right-4 z-50 pointer-events-none max-w-sm w-full space-y-2 px-4 sm:px-0">
         <AnimatePresence>
-          {notifications.map((notif) => (
-            <motion.div
-              key={notif.id}
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.95 }}
-              className="pointer-events-auto bg-zinc-900 border-2 border-red-500 rounded-xl p-4 shadow-2xl flex items-start space-x-3 text-xs relative max-w-sm"
-              id={`push-notif-${notif.id}`}
-            >
-              <div className="bg-red-950 text-red-400 p-2 rounded-lg shrink-0 border border-red-900/40">
-                <Bell className="h-4 w-4 animate-ring" />
-              </div>
-              <div className="flex-grow pr-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-red-500 tracking-wider">ORDER CANCELLED ALERT</span>
-                  <span className="text-[10px] text-zinc-550 font-mono">{notif.timestamp}</span>
-                </div>
-                <p className="text-zinc-300 mt-1 leading-relaxed">
-                  {notif.message.split("*").map((chunk, ind) => 
-                    ind % 2 === 1 ? <strong key={ind} className="font-bold text-white font-mono">{chunk}</strong> : chunk
-                  )}
-                </p>
-                <div className="mt-2 text-[10px] text-zinc-500 font-bold uppercase">
-                  ✓ SINKRON OPERASIONAL J&T
-                </div>
-              </div>
-              <button
-                onClick={() => removeNotification(notif.id)}
-                className="absolute right-2 top-2 text-zinc-550 hover:text-zinc-300 cursor-pointer p-1"
-                title="Tutup dismissed alert"
+          {notifications.map((notif) => {
+            const isSuccess = notif.type === "success";
+            const isError = notif.type === "error";
+            const isWarning = notif.type === "warning";
+            
+            let borderColor = "border-red-500";
+            let bgIcon = "bg-red-950 text-red-400 p-2 rounded-lg shrink-0 border border-red-900/40";
+            let titleColor = "text-red-500";
+            let titleText = "ORDER CANCELLED ALERT";
+            let IconComponent = Bell;
+
+            if (isSuccess) {
+              borderColor = "border-emerald-500";
+              bgIcon = "bg-emerald-950 text-emerald-400 p-2 rounded-lg shrink-0 border border-emerald-900/40";
+              titleColor = "text-emerald-500";
+              titleText = "SINKRONISASI DATASHEET SUKSES";
+              IconComponent = Check;
+            } else if (isError) {
+              borderColor = "border-rose-500";
+              bgIcon = "bg-rose-950 text-rose-450 p-2 rounded-lg shrink-0 border border-rose-900/40";
+              titleColor = "text-rose-500";
+              titleText = "GAGAL SINKRONISASI DATA";
+              IconComponent = AlertCircle;
+            } else if (isWarning) {
+              borderColor = "border-amber-500";
+              bgIcon = "bg-amber-950 text-amber-550 p-2 rounded-lg shrink-0 border border-amber-900/40";
+              titleColor = "text-amber-505";
+              titleText = "SINKRONISASI TERTAHAN";
+              IconComponent = HelpCircle;
+            }
+
+            return (
+              <motion.div
+                key={notif.id}
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className={`pointer-events-auto bg-zinc-900 border-2 ${borderColor} rounded-xl p-4 shadow-2xl flex items-start space-x-3 text-xs relative max-w-sm`}
+                id={`push-notif-${notif.id}`}
               >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </motion.div>
-          ))}
+                <div className={bgIcon}>
+                  <IconComponent className={`h-4 w-4 ${!isSuccess && !isError ? "animate-ring" : ""}`} />
+                </div>
+                <div className="flex-grow pr-4">
+                  <div className="flex items-center justify-between">
+                    <span className={`font-extrabold ${titleColor} tracking-wider`}>{notif.title || titleText}</span>
+                    <span className="text-[10px] text-zinc-550 font-mono">{notif.timestamp}</span>
+                  </div>
+                  <p className="text-zinc-300 mt-1 leading-relaxed">
+                    {notif.message.split("*").map((chunk, ind) => 
+                      ind % 2 === 1 ? <strong key={ind} className="font-bold text-white font-mono">{chunk}</strong> : chunk
+                    )}
+                  </p>
+                  <div className="mt-2 text-[10px] text-zinc-500 font-bold uppercase">
+                    ✓ SINKRON OPERASIONAL J&T
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeNotification(notif.id)}
+                  className="absolute right-2 top-2 text-zinc-550 hover:text-zinc-300 cursor-pointer p-1"
+                  title="Tutup dismissed alert"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
       </div>
 
@@ -328,6 +385,7 @@ export default function App() {
                 savedOutlet={selectedOutlet}
                 savedSeller={selectedSeller}
                 savedOperator={selectedOperator}
+                isPulling={isPulling}
               />
             )}
 
@@ -351,6 +409,7 @@ export default function App() {
 
             {currentView === "OWNER_LOGIN" && (
               <OwnerScreen
+                isPulling={isPulling}
                 onStatusChanged={() => {
                   handleOwnerUpdatedStatus();
                 }}
@@ -359,6 +418,7 @@ export default function App() {
 
             {currentView === "OWNER_DASHBOARD" && (
               <OwnerScreen
+                isPulling={isPulling}
                 onStatusChanged={() => {
                   handleOwnerUpdatedStatus();
                 }}

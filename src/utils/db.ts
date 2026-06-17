@@ -660,11 +660,11 @@ export class DatabaseService {
     const index = records.findIndex(r => r.Resi === resi);
     if (index === -1) return false;
 
-    records[index] = { ...records[index], Status: status };
-    // When changed, trigger marked as pending check if offline
-    if (this.getOfflinePreference()) {
-      records[index] = { ...records[index], SyncStatus: "PENDING" };
-    }
+    records[index] = { 
+      ...records[index], 
+      Status: status,
+      SyncStatus: "PENDING" // Always mark as PENDING to queue for syncing immediately
+    };
     
     this.saveRecords(records);
     return true;
@@ -890,7 +890,44 @@ export class DatabaseService {
       }
 
       if (data && data.success) {
-        this.saveRecords(data.records || []);
+        const cloudRecords: ScanRecord[] = data.records || [];
+        
+        // Merge cloud records with our existing cache in a smart, protective way
+        // 1. Map existing local records based on Resi barcode (case-insensitive)
+        const localMap = new Map<string, ScanRecord>();
+        this.recordsCache.forEach(r => {
+          if (r.Resi) {
+            localMap.set(r.Resi.toLowerCase(), r);
+          }
+        });
+
+        // 2. Map and update cloud records: if a record exists locally, preserve local state like RetakeStatus 
+        // and keep the complete local item if it is still "PENDING" to prevent deleting unsynced work!
+        const mergedRecords = cloudRecords.map(cloudRec => {
+          if (!cloudRec.Resi) return cloudRec;
+          const localRec = localMap.get(cloudRec.Resi.toLowerCase());
+          if (localRec) {
+            if (localRec.SyncStatus === "PENDING") {
+              return localRec; // Keep our full local pending record so we don't wipe unsynced work
+            }
+            return {
+              ...cloudRec,
+              // Maintain local-only properties from browser session so they can be restored
+              RetakeStatus: localRec.RetakeStatus || cloudRec.RetakeStatus,
+              // If the local record contains a rich base64 PhotoURL stored locally, and the cloud has a placeholder or empty url, keep the local rich one
+              PhotoURL: (localRec.PhotoURL && localRec.PhotoURL.startsWith("data:image")) ? localRec.PhotoURL : (cloudRec.PhotoURL || localRec.PhotoURL)
+            };
+          }
+          return cloudRec;
+        });
+
+        // 3. Find any local pending records that do not exist on the cloud yet, and append them back
+        const cloudResis = new Set(cloudRecords.map(r => r.Resi ? r.Resi.toLowerCase() : ""));
+        const missingLocalPending = this.recordsCache.filter(r => r.SyncStatus === "PENDING" && r.Resi && !cloudResis.has(r.Resi.toLowerCase()));
+
+        const finalMerged = [...missingLocalPending, ...mergedRecords];
+
+        this.saveRecords(finalMerged);
         return { success: true };
       }
       return { success: false, error: "Gagal menarik data resi." };

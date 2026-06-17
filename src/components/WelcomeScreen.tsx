@@ -17,13 +17,15 @@ interface WelcomeScreenProps {
   savedOutlet: string;
   savedSeller: string;
   savedOperator: string;
+  isPulling?: boolean;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   onStartScanning,
   savedOutlet,
   savedSeller,
-  savedOperator
+  savedOperator,
+  isPulling = false
 }) => {
   // Master lists
   const [outlets, setOutlets] = useState<Outlet[]>([]);
@@ -58,7 +60,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setSelectedOutlet(savedOutlet || "");
     setSelectedSeller(savedSeller || "");
     setSelectedOperator(savedOperator || "");
-  }, [savedOutlet, savedSeller, savedOperator]);
+  }, [savedOutlet, savedSeller, savedOperator, isPulling]);
 
   const handleCreateSeller = (e: React.FormEvent) => {
     e.preventDefault();
