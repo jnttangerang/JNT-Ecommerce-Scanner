@@ -29,6 +29,7 @@ import { ScanRecord, StatusType } from "../types";
 import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
 import { audioService } from "../utils/audio";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
+import { toast } from "sonner";
 
 interface ScannerProps {
   config: {
@@ -242,7 +243,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           Html5QrcodeSupportedFormats.ITF,
           Html5QrcodeSupportedFormats.EAN_13
         ],
-        // aspectRatio removed for better dynamic sizing on various screens
+        aspectRatio: 1.0 // 1:1 Aspect ratio forces video to conform to dynamic container width on mobile
       };
 
       await html5QrCode.start(
@@ -554,7 +555,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (!isValid) {
       // ❌ RESI TIDAK JELAS - Cancel scan & ask for refresh
       audioService.playError();
-      alert("❌ RESI TIDAK JELAS\n\nSilakan posisikan ulang paket dan scan kembali!");
+      toast.error("RESI TIDAK JELAS", { 
+        description: "Silakan posisikan ulang paket dan scan kembali!" 
+      });
       setPendingValidation(null);
       isScanningLocked.current = false;
       return;
@@ -579,7 +582,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         onRecordAdded();
       }
     } else {
-      alert(`Gagal menyimpan: ${result.error}`);
+      toast.error("Gagal menyimpan data", { description: result.error });
     }
 
     setPendingValidation(null);
@@ -604,14 +607,16 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     if (success) {
       audioService.playSuccess();
-      alert(`✅ FOTO ULANG BERHASIL\n\nResi ${activeRetakeResi} telah diperbarui dengan foto yang jelas!`);
+      toast.success("FOTO ULANG BERHASIL", {
+        description: `Resi ${activeRetakeResi} telah diperbarui dengan foto yang jelas!`
+      });
       setActiveRetakeResi(null);
       loadRecords();
       if (onRecordAdded) {
         onRecordAdded(); // triggers update in parent counts
       }
     } else {
-      alert("Gagal memperbarui foto ulang.");
+      toast.error("Gagal memperbarui foto ulang.");
     }
   };
 
@@ -833,7 +838,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className={`w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 [&>video]:brightness-110 [&>video]:contrast-110 ${cameraActive ? "block" : "hidden"}`}
+                className={`w-full max-h-[350px] sm:max-h-[450px] overflow-hidden ${cameraActive ? "block" : "hidden"}`}
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}

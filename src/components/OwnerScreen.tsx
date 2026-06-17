@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService, getDirectDriveImageUrl } from "../utils/db";
+import { toast } from "sonner";
 
 interface OwnerDashboardProps {
   onStatusChanged: () => void;
@@ -1400,8 +1401,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (err) {
-      alert("Gagal mengunduh CSV: " + err);
+    } catch (err: any) {
+      toast.error("Gagal mengunduh", { description: err?.message || err });
     }
   };
 

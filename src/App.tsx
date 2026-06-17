@@ -11,7 +11,8 @@ import { ScannerScreen } from "./components/ScannerScreen";
 import { OwnerScreen } from "./components/OwnerScreen";
 import { dbService } from "./utils/db";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, X, Bell, RefreshCw, Check, HelpCircle } from "lucide-react";
+import { AlertCircle, X, Bell, RefreshCw, Check, HelpCircle, Layers } from "lucide-react";
+import { Toaster, toast } from "sonner";
 
 export default function App() {
   const [currentView, setView] = useState<AppView>(() => {
@@ -74,31 +75,17 @@ export default function App() {
       setIsCloudDataFresh(true);
       
       // Push positive sync confirmation notification
-      setNotifications(prev => [
-        {
-          id: `pull-success-${Date.now()}`,
-          type: "success",
-          title: "SINKRONISASI SUKSES",
-          message: "✓ Berhasil menarik data terupdate dari Google Spreadsheet! List Seller, Operator, Outlet dan seluruh histori paket pickup kini sinkron.",
-          timestamp: timeStr
-        },
-        ...prev
-      ]);
+      toast.success("SINKRONISASI SUKSES", {
+        description: "Berhasil menarik data terupdate dari Google Spreadsheet! List Seller, Operator, Outlet dan seluruh histori paket pickup kini sinkron.",
+      });
     } catch (err: any) {
       console.warn("Manual pull from cloud failed", err);
       setIsCloudDataFresh(false);
       
       // Push error sync notification
-      setNotifications(prev => [
-        {
-          id: `pull-error-${Date.now()}`,
-          type: "error",
-          title: "SINKRONISASI GAGAL",
-          message: `⚠ Gagal menarik data dari Google Sheets: ${err?.message || err || "Koneksi terputus."}. Pastikan Apps Script Web App URL valid.`,
-          timestamp: timeStr
-        },
-        ...prev
-      ]);
+      toast.error("SINKRONISASI GAGAL", {
+        description: `Gagal menarik data dari Google Sheets: ${err?.message || err || "Koneksi terputus."}. Pastikan Apps Script Web App URL valid.`,
+      });
     } finally {
       setIsPulling(false);
     }
@@ -195,7 +182,7 @@ export default function App() {
       await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (err) {
       console.error("Sync error", err);
-      alert("Gagal mengupload: Pastikan konektivitas internet aktif.");
+      toast.error("Gagal mengupload", { description: "Pastikan konektivitas internet aktif." });
     } finally {
       setIsSyncing(false);
       setSyncStatusText("");
@@ -239,32 +226,21 @@ export default function App() {
     const cancelledRecords = allRecords.filter(r => r.Status === "CANCELLED");
     if (cancelledRecords.length > 0) {
       const topCancelled = cancelledRecords[0];
-      const id = `${topCancelled.Resi}-cancelled`;
-      if (!notifications.some(n => n.id === id)) {
-        const time = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-        const newNotif = {
-          id,
-          message: `Dibatalkan: Resi *${topCancelled.Resi}* (Seller: ${topCancelled.Seller}) diubah menjadi CANCELLED oleh Owner! Jangan dikirim, kembalikan ke seller.`,
-          timestamp: time
-        };
-        setNotifications(prev => [newNotif, ...prev].slice(0, 5)); // cap at 5 notifications
-      }
+      const time = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+      toast.error("ORDER CANCELLED ALERT", {
+        description: `Dibatalkan: Resi ${topCancelled.Resi} (Seller: ${topCancelled.Seller}) diubah menjadi CANCELLED oleh Owner! Jangan dikirim, kembalikan ke seller.`,
+        duration: 8000,
+      });
     }
 
     // Check for retake requests
     const retakeRequests = allRecords.filter(r => r.RetakeStatus === "PENDING");
     if (retakeRequests.length > 0) {
       const topRetake = retakeRequests[0];
-      const id = `${topRetake.Resi}-retake`;
-      if (!notifications.some(n => n.id === id)) {
-        const time = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-        const newNotif = {
-          id,
-          message: `Butuh Foto Ulang: Resi *${topRetake.Resi}* (Seller: ${topRetake.Seller}) ditandai BURAM oleh Owner! Harap foto ulang paket tersebut.`,
-          timestamp: time
-        };
-        setNotifications(prev => [newNotif, ...prev].slice(0, 5));
-      }
+      toast.warning("FOTO ULANG (RETAKE)", {
+        description: `Butuh Foto Ulang: Resi ${topRetake.Resi} (Seller: ${topRetake.Seller}) ditandai BURAM oleh Owner! Harap foto ulang paket tersebut.`,
+        duration: 8000,
+      });
     }
 
     updatePendingCount();
@@ -276,6 +252,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none selection:bg-red-650 selection:text-white">
+      <Toaster position="top-center" richColors />
       {/* Header bar component */}
       <Header
         currentView={currentView}
@@ -293,79 +270,6 @@ export default function App() {
         onPullFromCloud={pullDatabaseFromCloud}
         isCloudDataFresh={isCloudDataFresh}
       />
-
-      {/* Real-time push notification toaster alerts */}
-      <div className="fixed top-20 right-4 z-50 pointer-events-none max-w-sm w-full space-y-2 px-4 sm:px-0">
-        <AnimatePresence>
-          {notifications.map((notif) => {
-            const isSuccess = notif.type === "success";
-            const isError = notif.type === "error";
-            const isWarning = notif.type === "warning";
-            
-            let borderColor = "border-red-500";
-            let bgIcon = "bg-red-950 text-red-400 p-2 rounded-lg shrink-0 border border-red-900/40";
-            let titleColor = "text-red-500";
-            let titleText = "ORDER CANCELLED ALERT";
-            let IconComponent = Bell;
-
-            if (isSuccess) {
-              borderColor = "border-emerald-500";
-              bgIcon = "bg-emerald-950 text-emerald-400 p-2 rounded-lg shrink-0 border border-emerald-900/40";
-              titleColor = "text-emerald-500";
-              titleText = "SINKRONISASI DATASHEET SUKSES";
-              IconComponent = Check;
-            } else if (isError) {
-              borderColor = "border-rose-500";
-              bgIcon = "bg-rose-950 text-rose-450 p-2 rounded-lg shrink-0 border border-rose-900/40";
-              titleColor = "text-rose-500";
-              titleText = "GAGAL SINKRONISASI DATA";
-              IconComponent = AlertCircle;
-            } else if (isWarning) {
-              borderColor = "border-amber-500";
-              bgIcon = "bg-amber-950 text-amber-550 p-2 rounded-lg shrink-0 border border-amber-900/40";
-              titleColor = "text-amber-505";
-              titleText = "SINKRONISASI TERTAHAN";
-              IconComponent = HelpCircle;
-            }
-
-            return (
-              <motion.div
-                key={notif.id}
-                initial={{ opacity: 0, y: -20, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className={`pointer-events-auto bg-zinc-900 border-2 ${borderColor} rounded-xl p-4 shadow-2xl flex items-start space-x-3 text-xs relative max-w-sm`}
-                id={`push-notif-${notif.id}`}
-              >
-                <div className={bgIcon}>
-                  <IconComponent className={`h-4 w-4 ${!isSuccess && !isError ? "animate-ring" : ""}`} />
-                </div>
-                <div className="flex-grow pr-4">
-                  <div className="flex items-center justify-between">
-                    <span className={`font-extrabold ${titleColor} tracking-wider`}>{notif.title || titleText}</span>
-                    <span className="text-[10px] text-zinc-550 font-mono">{notif.timestamp}</span>
-                  </div>
-                  <p className="text-zinc-300 mt-1 leading-relaxed">
-                    {notif.message.split("*").map((chunk, ind) => 
-                      ind % 2 === 1 ? <strong key={ind} className="font-bold text-white font-mono">{chunk}</strong> : chunk
-                    )}
-                  </p>
-                  <div className="mt-2 text-[10px] text-zinc-500 font-bold uppercase">
-                    ✓ SINKRON OPERASIONAL J&T
-                  </div>
-                </div>
-                <button
-                  onClick={() => removeNotification(notif.id)}
-                  className="absolute right-2 top-2 text-zinc-550 hover:text-zinc-300 cursor-pointer p-1"
-                  title="Tutup dismissed alert"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
-      </div>
 
       {/* Main Content Area */}
       <main className="flex-grow py-6 relative">
@@ -456,12 +360,27 @@ export default function App() {
       {/* Deep workspace credit footnotes with respect to guidelines (Architechtural Honesty - No telemetry clutters, Humble and clean footer layout) */}
       <footer className="py-6 border-t border-zinc-900 text-center text-[11px] text-zinc-650 font-mono mt-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <span>© 2026 J&T Express Tangerang Barat. All rights reserved.</span>
-          <span className="flex items-center space-x-1">
-            <span className="bg-zinc-900 border border-zinc-850 px-2 py-0.5 rounded text-[10px] text-zinc-500 font-bold font-sans">
-              SERVER-SIDE AUTO ENGINE
+          <button
+            onClick={() => {
+              if (window.confirm("Apakah Anda yakin ingin menghapus cache aplikasi? Semua data lokal akan terhapus dan aplikasi dimuat ulang.")) {
+                localStorage.clear();
+                window.location.reload();
+              }
+            }}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 transition-colors"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span>Hapus Cache & Restart</span>
+          </button>
+          
+          <div className="flex flex-col items-center sm:items-end gap-1">
+            <span>© 2026 J&T Express Tangerang Barat. All rights reserved.</span>
+            <span className="flex items-center space-x-1 mt-1">
+              <span className="bg-zinc-900 border border-zinc-850 px-2 py-0.5 rounded text-[10px] text-zinc-500 font-bold font-sans">
+                SERVER-SIDE AUTO ENGINE
+              </span>
             </span>
-          </span>
+          </div>
         </div>
       </footer>
     </div>

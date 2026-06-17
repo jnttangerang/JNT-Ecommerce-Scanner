@@ -7,6 +7,7 @@ import React, { useState, useEffect } from "react";
 import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen } from "lucide-react";
 import { Outlet, Seller, Operator } from "../types";
 import { dbService } from "../utils/db";
+import { toast } from "sonner";
 
 interface WelcomeScreenProps {
   onStartScanning: (config: {
@@ -95,15 +96,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   const handleStart = () => {
     if (!selectedOutlet) {
-      alert("Harap pilih Outlet!");
+      toast.error("Validasi Gagal", { description: "Harap pilih Outlet!" });
       return;
     }
     if (!selectedSeller) {
-      alert("Harap pilih Seller!");
+      toast.error("Validasi Gagal", { description: "Harap pilih Seller!" });
       return;
     }
     if (!selectedOperator) {
-      alert("Harap pilih Operator!");
+      toast.error("Validasi Gagal", { description: "Harap pilih Operator!" });
       return;
     }
 
