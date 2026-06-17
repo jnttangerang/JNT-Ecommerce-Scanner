@@ -838,12 +838,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className={`w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 ${cameraActive ? "block" : "hidden"}`}
+                className={`absolute inset-0 z-0 w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 ${cameraActive ? "opacity-100" : "opacity-0"}`}
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
               {!cameraActive && (
-                <div className="p-6 text-center space-y-3 z-10 max-w-sm">
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center space-y-3 z-10 bg-slate-900">
                   <div className="bg-red-550/10 text-red-500 rounded-full h-12 w-12 flex items-center justify-center mx-auto border border-red-500/20 shadow">
                     <Smartphone className="h-6 w-6" />
                   </div>
