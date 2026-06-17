@@ -1,5 +1,5 @@
 {
-  "name": "Pickup Ecommerce Scanner J&T",
+  "name": "J&T Sprinter Ecommerce",
   "description": "Aplikasi scan barcode resi pickup J&T Express dengan fitur anti-duplikat, foto otomatis ke Google Drive & data ke Google Spreadsheet, rekap harian, offline mode, dan panel owner dengan fitur 'Order Cancelled'.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
