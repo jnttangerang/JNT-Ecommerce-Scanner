@@ -81,8 +81,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     handleBarcodeScannedRef.current = handleBarcodeScanned;
   });
 
-  // Manual code input helper (for testing/mobile fallbacks)
-  const [manualResi, setManualResi] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Clarity confirmation modal ("Validasi Foto")
@@ -243,7 +241,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           Html5QrcodeSupportedFormats.ITF,
           Html5QrcodeSupportedFormats.EAN_13
         ],
-        aspectRatio: 1.0 // 1:1 Aspect ratio forces video to conform to dynamic container width on mobile
       };
 
       await html5QrCode.start(
@@ -500,7 +497,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
     }
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
-    const simulatedBarcode = scannedResi || manualResi.trim().toUpperCase() || `JX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+    const simulatedBarcode = scannedResi || `JX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
     return createMockResiPhoto(simulatedBarcode, config.seller);
   };
 
@@ -622,18 +619,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   const handleCancelRetake = () => {
     setActiveRetakeResi(null);
-  };
-
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = manualResi.trim().toUpperCase();
-    
-    // Quick validation format
-    if (!clean.match(/^JX\d{10,12}$/i) && !clean.match(/^\d{10,13}$/)) {
-      // Proceed immediately to avoid sandboxed iframe dialog freeze
-    }
-
-    handleBarcodeScanned(clean);
   };
 
   // Clear data safely for testing
@@ -838,7 +823,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className={`absolute inset-0 z-0 w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 ${cameraActive ? "opacity-100" : "opacity-0"}`}
+                className="absolute inset-0 w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110"
+                style={{ opacity: cameraActive ? 1 : 0, zIndex: 0 }}
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
@@ -906,7 +892,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   </div>
 
                   {/* Thumbnail display */}
-                  <div className="my-2 border-2 border-slate-800 rounded-xl overflow-hidden bg-black max-w-[280px] w-full aspect-video flex-grow-0 relative flex items-center justify-center">
+                  <div className="my-2 border-2 border-slate-800 rounded-xl overflow-hidden bg-black flex-1 w-full max-w-sm relative flex items-center justify-center">
                     <img
                       src={pendingValidation.photoURL}
                       alt="Captured parcel preview"
@@ -1032,36 +1018,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             <div className="p-4 bg-slate-950 space-y-3">
               
               {/* Form Input Barcode manually or simulated from camera gun */}
-              <form onSubmit={handleManualSubmit} className="flex flex-col sm:flex-row gap-3">
-                <div className="flex-grow relative">
-                  <input
-                    type="text"
-                    value={manualResi}
-                    onChange={(e) => setManualResi(e.target.value)}
-                    placeholder="Ketik manual"
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 font-mono text-xs focus:outline-none focus:border-red-500 uppercase placeholder:text-slate-500"
-                    id="manual-resi-input"
-                  />
-                  <div className="absolute right-3 top-3 text-[10px] text-slate-500 font-mono tracking-widest uppercase">
-                    BARCODE INPUT
-                  </div>
-                </div>
-                
-                <button
-                  type="submit"
-                  disabled={!manualResi.trim()}
-                  className={`px-5 py-3 rounded-xl text-xs font-bold tracking-wider transition-all uppercase ${
-                    manualResi.trim()
-                      ? "bg-red-600 text-white hover:bg-red-500 cursor-pointer"
-                      : "bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-850"
-                  }`}
-                  style={manualResi.trim() ? { backgroundColor: "#e31111", color: "#ffffff" } : undefined}
-                  id="manual-resi-submit-button"
-                >
-                  SIMPAN RESI
-                </button>
-              </form>
-
               {/* Utility actions / simulations */}
               <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1 border-t border-slate-900">
                 <div className="flex items-center space-x-2 text-[11px] text-slate-500">
