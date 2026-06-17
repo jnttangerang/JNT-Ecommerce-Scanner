@@ -244,20 +244,39 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         aspectRatio: 1.0 // Force 1:1 Aspect ratio to conform to container properly
       };
 
-      await html5QrCode.start(
-        { facingMode: "environment" },
-        scanConfig,
-        (decodedText) => {
-          if (!isScanningLocked.current) {
-            if (handleBarcodeScannedRef.current) {
-              handleBarcodeScannedRef.current(decodedText);
+      try {
+        // Try starting with environment camera
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          scanConfig,
+          (decodedText) => {
+            if (!isScanningLocked.current) {
+              if (handleBarcodeScannedRef.current) {
+                handleBarcodeScannedRef.current(decodedText);
+              }
             }
-          }
-        },
-        () => {
-          // Silent callback during scan intervals to prevent console cluttering
+          },
+          () => {}
+        );
+      } catch (envError) {
+        console.warn("Failed to start environment camera, falling back to any camera", envError);
+        // Fallback to any camera
+        const devices = await Html5Qrcode.getCameras();
+        if (devices && devices.length > 0) {
+          await html5QrCode.start(
+            devices[0].id,
+            scanConfig,
+            (decodedText) => {
+              if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
+                handleBarcodeScannedRef.current(decodedText);
+              }
+            },
+            () => {}
+          );
+        } else {
+          throw new Error("No cameras found");
         }
-      );
+      }
 
       // Fetch running track to configure capabilities
       try {
@@ -823,7 +842,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className={`w-full max-h-[350px] sm:max-h-[450px] overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover ${cameraActive ? "block" : "hidden"}`}
+                className="w-full min-h-[300px] max-h-[350px] sm:max-h-[450px] overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover"
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
@@ -841,6 +860,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       {cameraPermissionError}
                     </div>
                   )}
+                  <button 
+                    onClick={startCamera}
+                    className="mt-4 px-6 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-xs font-bold text-white transition-colors"
+                  >
+                    COBA AKTIFKAN KAMERA
+                  </button>
                 </div>
               )}
 
@@ -891,11 +916,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   </div>
 
                   {/* Thumbnail display */}
-                  <div className="my-4 border-2 border-slate-800 rounded-xl overflow-hidden bg-black flex-1 w-full max-w-2xl relative flex items-center justify-center min-h-[300px]">
+                  <div className="my-4 w-full flex-1 relative flex items-center justify-center min-h-[50vh]">
                     <img
                       src={pendingValidation.photoURL}
                       alt="Captured parcel preview"
-                      className="w-full h-full object-contain"
+                      className="max-w-full max-h-full object-contain border border-slate-800 rounded-xl bg-black shadow-2xl"
                       referrerPolicy="no-referrer"
                     />
                     <div className="absolute top-3 left-3 bg-slate-950/80 px-3 py-1 rounded text-[10px] font-bold text-green-400 border border-green-500/20 shadow-md">
