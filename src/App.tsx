@@ -359,7 +359,7 @@ export default function App() {
 
       {/* Deep workspace credit footnotes with respect to guidelines (Architechtural Honesty - No telemetry clutters, Humble and clean footer layout) */}
       <footer className="py-6 border-t border-zinc-900 text-center text-[11px] text-zinc-650 font-mono mt-8">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col items-center justify-center gap-4">
           <button
             onClick={() => {
               if (window.confirm("Apakah Anda yakin ingin menghapus cache aplikasi? Semua data lokal akan terhapus dan aplikasi dimuat ulang.")) {
@@ -367,18 +367,16 @@ export default function App() {
                 window.location.reload();
               }
             }}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 transition-colors"
+            className="flex items-center space-x-1.5 px-4 py-2 rounded-lg text-[10px] font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 transition-colors"
           >
-            <Layers className="h-3.5 w-3.5" />
+            <Layers className="h-4 w-4" />
             <span>Hapus Cache & Restart</span>
           </button>
           
-          <div className="flex flex-col items-center sm:items-end gap-1">
+          <div className="flex flex-col items-center gap-1 mt-2">
             <span>© 2026 J&T Express Tangerang Barat. All rights reserved.</span>
-            <span className="flex items-center space-x-1 mt-1">
-              <span className="bg-zinc-900 border border-zinc-850 px-2 py-0.5 rounded text-[10px] text-zinc-500 font-bold font-sans">
-                SERVER-SIDE AUTO ENGINE
-              </span>
+            <span className="bg-zinc-900 border border-zinc-850 px-2 py-0.5 rounded text-[10px] text-zinc-500 font-bold font-sans mt-1">
+              SERVER-SIDE AUTO ENGINE
             </span>
           </div>
         </div>

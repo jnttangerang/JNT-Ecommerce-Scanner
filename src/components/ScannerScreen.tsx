@@ -838,7 +838,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className={`w-full max-h-[350px] sm:max-h-[450px] overflow-hidden ${cameraActive ? "block" : "hidden"}`}
+                className={`w-full h-full object-cover select-none overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover [&>video]:scale-110 ${cameraActive ? "block" : "hidden"}`}
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}
