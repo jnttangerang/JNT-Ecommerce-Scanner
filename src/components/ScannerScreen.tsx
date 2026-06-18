@@ -28,6 +28,7 @@ import {
 import { ScanRecord, StatusType } from "../types";
 import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
 import { audioService } from "../utils/audio";
+import { triggerHaptic } from "../utils/haptics";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { toast } from "sonner";
 
@@ -71,6 +72,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Scanner status
   const [latestResi, setLatestResi] = useState("");
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [unclearResiAlert, setUnclearResiAlert] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
 
   // Ref to bypass stale closure on camera callbacks
@@ -120,12 +122,19 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Hydrate initial scanned rows
   useEffect(() => {
+    let active = true;
     loadRecords();
     
-    // Auto start camera
-    startCamera();
+    // Auto start camera with slight delay to ensure DOM is ready
+    const timer = setTimeout(() => {
+      if (active) {
+        startCamera();
+      }
+    }, 200);
 
     return () => {
+      active = false;
+      clearTimeout(timer);
       stopCamera();
     };
   }, []);
@@ -323,7 +332,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       setCameraActive(true);
     } catch (err: any) {
       console.warn("Camera failed to start under html5-qrcode:", err);
-      setCameraPermissionError("Akses kamera ditolak atau tidak tersedia.");
+      // Determine if error is NotAllowedError (permission denied) or NotFoundError (no device)
+      if (err?.name === 'NotAllowedError' || err?.message?.includes('permission')) {
+        setCameraPermissionError("Akses kamera ditolak. Izinkan browser menggunakan kamera.");
+      } else if (err?.name === 'NotFoundError' || err?.message?.includes('device neither found')) {
+        setCameraPermissionError("Kamera perangkat tidak ditemukan.");
+      } else {
+        setCameraPermissionError(`Gagal memulai kamera: ${err?.message || err}`);
+      }
       setCameraActive(false);
     }
   };
@@ -535,19 +551,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // 1. Antiduplicate Validation
     if (dbService.isDuplicate(rawCode)) {
       audioService.playError();
+      triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
       setDuplicateWarning(rawCode);
       isScanningLocked.current = true;
-      
-      // Auto dismiss warning after 4 seconds
-      setTimeout(() => {
-        setDuplicateWarning(prev => {
-          if (prev === rawCode) {
-            isScanningLocked.current = false;
-            return null;
-          }
-          return prev;
-        });
-      }, 4000);
       return;
     }
 
@@ -570,13 +576,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (!pendingValidation) return;
 
     if (!isValid) {
-      // ❌ RESI TIDAK JELAS - Cancel scan & ask for refresh
+      // ❌ RESI TIDAK JELAS - Cancel scan & trigger full-screen warning modal/alert
       audioService.playError();
-      toast.error("RESI TIDAK JELAS", { 
-        description: "Silakan posisikan ulang paket dan scan kembali!" 
-      });
+      triggerHaptic([200, 100, 200]); // Noticeable pulsed vibration for folded/blurry warning alert
+      setUnclearResiAlert(pendingValidation.resi);
       setPendingValidation(null);
-      isScanningLocked.current = false;
+      // Keep isScanningLocked.current = true so scanning remains paused while warning is shown
       return;
     }
 
@@ -879,28 +884,76 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Giant Anti Duplikat Warning Overlay */}
               {duplicateWarning && (
                 <div 
-                  className="absolute inset-0 bg-red-950/95 flex flex-col items-center justify-center px-4 py-6 z-25 text-center space-y-4 border border-red-500 animate-in zoom-in-95 duration-200"
+                  className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
                   id="anti-duplicate-warning-modal"
                 >
-                  <AlertTriangle className="h-16 w-16 text-yellow-500 animate-bounce" />
-                  <div>
-                    <h3 className="text-2xl font-black text-white tracking-widest uppercase">⚠️ RESI DUPLIKAT</h3>
-                    <p className="text-slate-300 font-semibold font-mono text-xs mt-1 bg-slate-950 px-3 py-1.5 rounded-full inline-block border border-red-900">
-                      RESI {duplicateWarning} SUDAH PERNAH DISCAN
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 text-center space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-amber-550/10 text-amber-500 rounded-full h-16 w-16 flex items-center justify-center mx-auto border border-amber-500/20 shadow animate-bounce">
+                      <AlertTriangle className="h-8 w-8 text-amber-450" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white tracking-widest uppercase mb-1">⚠️ DETEKSI RESI DUPLIKAT</h3>
+                      <p className="text-slate-300 font-semibold font-mono text-xs bg-slate-950 px-3 py-1.5 rounded-full inline-block border border-slate-800">
+                        RESI: {duplicateWarning}
+                      </p>
+                    </div>
+                    <p className="text-slate-400 text-xs leading-relaxed">
+                      Resi ini terdeteksi sudah pernah diproses pada pickup hari ini. Jumlah total scan tidak bertambah demi mencegah pencatatan ganda.
                     </p>
+                    <div className="pt-2">
+                      <button
+                        onClick={() => {
+                          setDuplicateWarning(null);
+                          isScanningLocked.current = false;
+                        }}
+                        className="w-full bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.3)] active:scale-95 cursor-pointer uppercase"
+                      >
+                        ✓ OK, LANJUTKAN SCAN LAIN
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-slate-400 text-xs max-w-xs leading-relaxed">
-                    Resi telah terdaftar dalam database pickup hari ini. Total scan tidak bertambah demi mencegah double resi.
-                  </p>
-                  <button
-                    onClick={() => {
-                      setDuplicateWarning(null);
-                      isScanningLocked.current = false;
-                    }}
-                    className="bg-zinc-100 hover:bg-white text-zinc-900 font-bold text-xs px-4 py-2 rounded-lg transition-all"
-                  >
-                    TUTUP PERINGATAN
-                  </button>
+                </div>
+              )}
+
+              {/* Unclear / Blurry/ Folded Warning alert dialog */}
+              {unclearResiAlert && (
+                <div 
+                  className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+                  id="unclear-resi-warning-modal"
+                >
+                  <div className="bg-slate-900 border border-red-500/30 rounded-2xl w-full max-w-md p-6 text-center space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-red-550/10 text-red-500 rounded-full h-16 w-16 flex items-center justify-center mx-auto border border-red-500/20 shadow animate-pulse">
+                      <AlertTriangle className="h-8 w-8 text-red-500" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white tracking-widest uppercase mb-1">⚠️ RESI FOTO BURAM / TERLIPAT</h3>
+                      <p className="text-slate-300 font-semibold font-mono text-xs bg-slate-950 px-3 py-1.5 rounded-full inline-block border border-slate-800">
+                        RESI: {unclearResiAlert}
+                      </p>
+                    </div>
+                    
+                    <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-850 text-left space-y-2">
+                      <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider">⚠️ OPERATOR WAJIB MELAKUKAN TINDAKAN INI:</p>
+                      <ul className="text-[10px] text-slate-450 space-y-1 list-disc pl-4 leading-relaxed">
+                        <li>Luruskan atau rapikan fisik kertas resi paket yang terlipat/kusut agar terbaca sempurna.</li>
+                        <li>Pastikan tulisan barcode dan nomor resi tegak lurus dan tidak terhalang lakban atau kerutan plastik.</li>
+                        <li>Bersihkan lensa kamera smartphone Anda dari kotoran/debu bintik buram.</li>
+                        <li>Pastikan pencahayaan cukup tinggi agar barcode kontras dan jelas terbaca.</li>
+                      </ul>
+                    </div>
+
+                    <div className="pt-2">
+                      <button
+                        onClick={() => {
+                          setUnclearResiAlert(null);
+                          isScanningLocked.current = false;
+                        }}
+                        className="w-full bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(22,163,74,0.3)] active:scale-95 cursor-pointer uppercase"
+                      >
+                        ✓ SAYA SUDAH MEMPERBAIKI KERTAS RESI
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
