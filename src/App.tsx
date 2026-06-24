@@ -11,10 +11,11 @@ import { ScannerScreen } from "./components/ScannerScreen";
 import { OwnerScreen } from "./components/OwnerScreen";
 import { dbService } from "./utils/db";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, X, Bell, RefreshCw, Check, HelpCircle, Layers } from "lucide-react";
+import { AlertCircle, AlertTriangle, X, Bell, RefreshCw, Check, HelpCircle, Layers } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
 export default function App() {
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [currentView, setView] = useState<AppView>(() => {
     const savedView = localStorage.getItem("jt_current_view") as AppView;
     if (savedView === "SCANNER") {
@@ -135,6 +136,17 @@ export default function App() {
 
     autoPullData();
 
+    // Setup event listener for background retry backoff indicators
+    const handleRetryEvent = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      toast.warning(`KONEKSI TERGANGGU (${detail.attempt}/${detail.maxAttempts})`, {
+        description: `Mencoba kirim ulang data otomatis dalam ${Math.round(detail.nextDelay / 1000)} detik...`,
+        duration: 4000,
+      });
+    };
+
+    window.addEventListener("sync-retry-attempt", handleRetryEvent);
+
     // Set up a periodic background sync simulation if online
     const interval = setInterval(() => {
       if (!isOffline && !isSyncing) {
@@ -146,7 +158,10 @@ export default function App() {
       }
     }, 15000); // check ever 15 seconds
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("sync-retry-attempt", handleRetryEvent);
+    };
   }, [isOffline, isSyncing]);
 
   const updatePendingCount = () => {
@@ -252,7 +267,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none selection:bg-red-650 selection:text-white">
-      <Toaster position="top-center" richColors />
+      <Toaster 
+        position="top-center" 
+        richColors 
+        toastOptions={{
+          style: {
+            background: "#18181b", // zinc-900
+            border: "1px solid #27272a", // zinc-800
+            color: "#f4f4f5", // zinc-100
+            fontFamily: "Inter, sans-serif",
+            borderRadius: "0.75rem",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
+          },
+        }}
+      />
       {/* Header bar component */}
       <Header
         currentView={currentView}
@@ -362,12 +390,9 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 flex flex-col items-center justify-center gap-4">
           <button
             onClick={() => {
-              if (window.confirm("Apakah Anda yakin ingin menghapus cache aplikasi? Semua data lokal akan terhapus dan aplikasi dimuat ulang.")) {
-                localStorage.clear();
-                window.location.reload();
-              }
+              setShowResetConfirm(true);
             }}
-            className="flex items-center space-x-1.5 px-4 py-2 rounded-lg text-[10px] font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 transition-colors"
+            className="flex items-center space-x-1.5 px-4 py-2 rounded-lg text-[10px] font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 transition-colors cursor-pointer"
           >
             <Layers className="h-4 w-4" />
             <span>Hapus Cache & Restart</span>
@@ -381,6 +406,53 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Custom Beautified Reset Cache Confirmation Modal */}
+      {showResetConfirm && (
+        <div 
+          className="fixed inset-0 z-50 bg-zinc-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+          id="custom-reset-cache-modal"
+        >
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-6 text-center space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-red-500/10 text-red-500 rounded-full h-14 w-14 flex items-center justify-center mx-auto border border-red-500/20 shadow">
+              <AlertTriangle className="h-7 w-7 text-red-500" />
+            </div>
+            
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-zinc-100 tracking-wider uppercase">
+                HAPUS CACHE & RESTART?
+              </h3>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Tindakan ini akan menghapus seluruh data scan lokal dari perangkat ini dan memuat ulang halaman aplikasi.
+              </p>
+            </div>
+
+            <div className="bg-zinc-950/60 p-3 rounded-xl border border-zinc-850 text-left text-[10px] text-zinc-500 space-y-1 font-mono">
+              <div className="text-red-400 font-bold uppercase tracking-wider mb-1">⚠️ PERINGATAN KERAS:</div>
+              <p>• Data yang belum disinkronkan (<span className="text-amber-500 font-semibold">Stale/Pending</span>) akan hilang.</p>
+              <p>• Pastikan status koneksi sudah <span className="text-emerald-500 font-semibold">SYNCED</span> sebelum melanjutkan.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-2">
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs py-3 px-4 rounded-xl transition-all active:scale-95 cursor-pointer uppercase"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.clear();
+                  window.location.reload();
+                }}
+                className="bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.25)] active:scale-95 cursor-pointer uppercase"
+              >
+                Hapus & Restart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

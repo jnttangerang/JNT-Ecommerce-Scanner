@@ -6,8 +6,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Camera, 
+  CameraOff,
   AlertTriangle, 
   CheckCircle, 
+  XCircle,
   FolderSync, 
   ArrowLeft, 
   RefreshCw, 
@@ -546,6 +548,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     if (isScanningLocked.current) return;
 
+    // LOCK IMMEDIATELY to prevent high-frequency decode callbacks from piling up
+    // during the synchronous canvas rendering / toDataURL compression of captureFrame
+    isScanningLocked.current = true;
+
     setDuplicateWarning(null);
 
     // 1. Antiduplicate Validation
@@ -553,7 +559,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       audioService.playError();
       triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
       setDuplicateWarning(rawCode);
-      isScanningLocked.current = true;
       return;
     }
 
@@ -564,7 +569,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     // 3. Initiate visibility verification ("Validasi Foto")
     // Operator must confirm the picture looks clear before it is inserted
-    isScanningLocked.current = true;
     setPendingValidation({
       resi: rawCode,
       photoURL: photoData
@@ -884,17 +888,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Giant Anti Duplikat Warning Overlay */}
               {duplicateWarning && (
                 <div 
-                  className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+                  className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
                   id="anti-duplicate-warning-modal"
                 >
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 text-center space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
-                    <div className="bg-amber-550/10 text-amber-500 rounded-full h-16 w-16 flex items-center justify-center mx-auto border border-amber-500/20 shadow animate-bounce">
-                      <AlertTriangle className="h-8 w-8 text-amber-450" />
+                  <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-sm p-6 text-center space-y-4 shadow-[0_0_50px_rgba(245,158,11,0.15)] animate-in zoom-in-95 duration-200">
+                    <div className="bg-amber-500/10 text-amber-500 rounded-full h-14 w-14 flex items-center justify-center mx-auto border border-amber-500/20 shadow animate-bounce">
+                      <AlertTriangle className="h-7 w-7 text-amber-500" />
                     </div>
-                    <div>
-                      <h3 className="text-xl font-black text-white tracking-widest uppercase mb-1">⚠️ DETEKSI RESI DUPLIKAT</h3>
-                      <p className="text-slate-300 font-semibold font-mono text-xs bg-slate-950 px-3 py-1.5 rounded-full inline-block border border-slate-800">
-                        RESI: {duplicateWarning}
+                    <div className="space-y-1">
+                      <h3 className="text-base font-extrabold text-zinc-100 tracking-wider uppercase">RESI DUPLIKAT</h3>
+                      <p className="text-amber-500 font-semibold font-mono text-xs bg-amber-500/10 px-3 py-1 rounded-full inline-block border border-amber-500/20">
+                        {duplicateWarning}
                       </p>
                     </div>
                     <p className="text-slate-400 text-xs leading-relaxed">
@@ -906,9 +910,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                           setDuplicateWarning(null);
                           isScanningLocked.current = false;
                         }}
-                        className="w-full bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.3)] active:scale-95 cursor-pointer uppercase"
+                        className="w-full bg-red-650 hover:bg-red-600 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.25)] active:scale-95 cursor-pointer uppercase"
                       >
-                        ✓ OK, LANJUTKAN SCAN LAIN
+                        OK, Lanjutkan Scan
                       </button>
                     </div>
                   </div>
@@ -918,27 +922,29 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Unclear / Blurry/ Folded Warning alert dialog */}
               {unclearResiAlert && (
                 <div 
-                  className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+                  className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
                   id="unclear-resi-warning-modal"
                 >
-                  <div className="bg-slate-900 border border-red-500/30 rounded-2xl w-full max-w-md p-6 text-center space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
-                    <div className="bg-red-550/10 text-red-500 rounded-full h-16 w-16 flex items-center justify-center mx-auto border border-red-500/20 shadow animate-pulse">
-                      <AlertTriangle className="h-8 w-8 text-red-500" />
+                  <div className="bg-slate-900 border border-red-500/20 rounded-3xl w-full max-w-md p-6 text-center space-y-4 shadow-[0_0_50px_rgba(239,68,68,0.2)] animate-in zoom-in-95 duration-200">
+                    <div className="bg-red-500/10 text-red-500 rounded-full h-14 w-14 flex items-center justify-center mx-auto border border-red-500/20 shadow animate-pulse">
+                      <AlertTriangle className="h-7 w-7 text-red-500" />
                     </div>
-                    <div>
-                      <h3 className="text-xl font-black text-white tracking-widest uppercase mb-1">⚠️ RESI FOTO BURAM / TERLIPAT</h3>
-                      <p className="text-slate-300 font-semibold font-mono text-xs bg-slate-950 px-3 py-1.5 rounded-full inline-block border border-slate-800">
-                        RESI: {unclearResiAlert}
+                    <div className="space-y-1">
+                      <h3 className="text-base font-extrabold text-zinc-100 tracking-wider uppercase">RESI BURAM / TERLIPAT</h3>
+                      <p className="text-red-400 font-semibold font-mono text-xs bg-red-500/10 px-3 py-1 rounded-full inline-block border border-red-500/20">
+                        {unclearResiAlert}
                       </p>
                     </div>
                     
-                    <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-850 text-left space-y-2">
-                      <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider">⚠️ OPERATOR WAJIB MELAKUKAN TINDAKAN INI:</p>
-                      <ul className="text-[10px] text-slate-450 space-y-1 list-disc pl-4 leading-relaxed">
-                        <li>Luruskan atau rapikan fisik kertas resi paket yang terlipat/kusut agar terbaca sempurna.</li>
-                        <li>Pastikan tulisan barcode dan nomor resi tegak lurus dan tidak terhalang lakban atau kerutan plastik.</li>
-                        <li>Bersihkan lensa kamera smartphone Anda dari kotoran/debu bintik buram.</li>
-                        <li>Pastikan pencahayaan cukup tinggi agar barcode kontras dan jelas terbaca.</li>
+                    <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-850 text-left space-y-2.5">
+                      <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider flex items-center">
+                        <AlertTriangle className="h-3.5 w-3.5 mr-1" /> OPERATOR WAJIB MELAKUKAN INI:
+                      </p>
+                      <ul className="text-[11px] text-slate-400 space-y-1.5 pl-1 leading-relaxed">
+                        <li className="flex items-start"><span className="text-red-500 mr-1.5">•</span> Luruskan atau rapikan fisik kertas resi paket yang terlipat/kusut agar terbaca sempurna.</li>
+                        <li className="flex items-start"><span className="text-red-500 mr-1.5">•</span> Pastikan tulisan barcode dan nomor resi tegak lurus dan tidak terhalang lakban atau kerutan plastik.</li>
+                        <li className="flex items-start"><span className="text-red-500 mr-1.5">•</span> Bersihkan lensa kamera smartphone Anda dari kotoran/debu bintik buram.</li>
+                        <li className="flex items-start"><span className="text-red-500 mr-1.5">•</span> Pastikan pencahayaan cukup tinggi agar barcode kontras dan jelas terbaca.</li>
                       </ul>
                     </div>
 
@@ -948,9 +954,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                           setUnclearResiAlert(null);
                           isScanningLocked.current = false;
                         }}
-                        className="w-full bg-green-600 hover:bg-green-500 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(22,163,74,0.3)] active:scale-95 cursor-pointer uppercase"
+                        className="w-full bg-green-650 hover:bg-green-600 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(22,163,74,0.3)] active:scale-95 cursor-pointer uppercase"
                       >
-                        ✓ SAYA SUDAH MEMPERBAIKI KERTAS RESI
+                        SAYA SUDAH MEMPERBAIKI KERTAS RESI
                       </button>
                     </div>
                   </div>
@@ -960,12 +966,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Clarity Verification modal ("Validasi Foto") */}
               {pendingValidation && (
                 <div 
-                  className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-between p-4 pb-8 z-50 safe-area-pt overflow-y-auto"
+                  className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-between p-4 pb-8 z-50 safe-area-pt overflow-y-auto animate-in fade-in duration-200"
                   id="clarity-validation-overlay"
                 >
-                  <div className="w-full text-center py-4 border-b border-slate-900 sticky top-0 bg-slate-950 z-10 shrink-0">
-                    <span className="text-sm font-bold text-red-500 uppercase tracking-widest block">VALIDASI KUALITAS FOTO</span>
-                    <span className="text-sm text-slate-400 font-mono mt-1 block">RESI: {pendingValidation.resi}</span>
+                  <div className="w-full text-center py-4 border-b border-slate-900 sticky top-0 bg-slate-950/90 backdrop-blur-md z-10 shrink-0">
+                    <span className="text-xs font-black text-red-500 uppercase tracking-widest block">VALIDASI KUALITAS FOTO</span>
+                    <span className="text-sm text-slate-200 font-bold font-mono mt-1 block">RESI: {pendingValidation.resi}</span>
                   </div>
 
                   {/* Thumbnail display */}
@@ -973,36 +979,36 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     <img
                       src={pendingValidation.photoURL}
                       alt="Captured parcel preview"
-                      className="max-w-full max-h-full object-contain border border-slate-800 rounded-xl bg-black shadow-2xl"
+                      className="max-w-full max-h-full object-contain border border-slate-800 rounded-2xl bg-black shadow-2xl"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute top-3 left-3 bg-slate-950/80 px-3 py-1 rounded text-[10px] font-bold text-green-400 border border-green-500/20 shadow-md">
-                      PREVIEW PHOTO
+                    <div className="absolute top-3 left-3 bg-red-600/90 text-white px-3 py-1 rounded-full text-[9px] font-black border border-red-500/20 shadow-md uppercase tracking-wider">
+                      Preview Foto
                     </div>
                   </div>
 
-                  <div className="w-full max-w-2xl bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-center text-xs text-slate-300 shrink-0 mt-auto">
-                    <p className="font-semibold text-white text-sm mb-1">Operator wajib memeriksa:</p>
-                    <p className="text-slate-400 leading-relaxed">Apakah barcode & nomor resi terlihat jelas dan tidak buram?</p>
+                  <div className="w-full max-w-2xl bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80 text-center text-xs text-slate-300 shrink-0 mt-auto">
+                    <p className="font-extrabold text-white text-xs uppercase tracking-wider mb-1">Verifikasi Hasil Jepretan</p>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">Apakah barcode & nomor resi terlihat jelas, terang, dan tidak buram?</p>
                   </div>
 
                   {/* Dual options triggers */}
                   <div className="w-full max-w-2xl grid grid-cols-2 gap-4 mt-4 shrink-0">
                     <button
                       onClick={() => handleConfirmValidation(false)}
-                      className="bg-slate-900 hover:bg-slate-800 text-red-400 border border-slate-800 hover:border-red-500/30 py-4 px-3 rounded-2xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1 shadow-lg"
+                      className="bg-slate-900 hover:bg-slate-850 text-red-500 border border-slate-800/80 hover:border-red-500/30 py-4 px-3 rounded-2xl text-xs font-bold transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1.5 shadow-lg active:scale-95"
                       id="validate-unclear-button"
                     >
-                      <span className="text-xl">❌</span>
+                      <XCircle className="h-6 w-6 text-red-500" />
                       <span>BURAM / RETAKE</span>
                     </button>
                     <button
                       onClick={() => handleConfirmValidation(true)}
-                      className="bg-green-650 hover:bg-green-600 border border-green-500 text-white py-4 px-3 rounded-2xl text-xs sm:text-sm font-extrabold shadow-[0_0_20px_rgba(22,163,74,0.4)] transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1"
+                      className="bg-green-650 hover:bg-green-600 border border-green-500 text-white py-4 px-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(22,163,74,0.3)] transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1.5 active:scale-95"
                       id="validate-clear-button"
                     >
-                      <span className="text-xl">✓</span>
-                      <span>JELAS (SIMPAN)</span>
+                      <CheckCircle className="h-6 w-6 text-white" />
+                      <span>JELAS & SIMPAN</span>
                     </button>
                   </div>
                 </div>

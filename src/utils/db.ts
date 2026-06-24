@@ -756,36 +756,85 @@ export class DatabaseService {
         return { successCount: pending.length, failedCount: 0 };
       }
 
-      try {
-        const response = await fetch(config.appsScriptUrl, {
-          method: "POST",
-          mode: "cors",
-          headers: {
-            "Content-Type": "text/plain;charset=utf-8"
-          },
-          body: JSON.stringify({
-            action: "sync_batch",
-            records: pending
-          })
-        });
-        
-        const data = await response.json();
-        if (data && data.success) {
-          const pendingIds = new Set(pending.map(p => p.ID));
-          const updated = records.map(r => {
-            if (pendingIds.has(r.ID)) {
-              return { ...r, SyncStatus: "SYNCED" as const };
-            }
-            return r;
+      let attempt = 0;
+      const maxAttempts = 5;
+      let delay = 1000; // Start at 1000ms (1 second)
+      let responseData: any = null;
+      let lastError: any = null;
+      let isSuccess = false;
+
+      while (attempt < maxAttempts) {
+        try {
+          const response = await fetch(config.appsScriptUrl, {
+            method: "POST",
+            mode: "cors",
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify({
+              action: "sync_batch",
+              records: pending
+            })
           });
-          this.saveRecords(updated);
-          return { successCount: pending.length, failedCount: 0 };
-        } else {
-          return { successCount: 0, failedCount: pending.length, error: data.error || "Tanggapan web app bernilai sukses false." };
+
+          if (!response.ok) {
+            throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
+          }
+
+          const data = await response.json();
+          responseData = data;
+          isSuccess = true;
+          break; // Successfully connected and parsed JSON response!
+        } catch (err: any) {
+          attempt++;
+          lastError = err;
+          console.warn(`Sinkronisasi gagal (Percobaan ${attempt}/${maxAttempts}). Mencoba kembali dalam ${delay}ms...`, err);
+
+          // Dispatch custom event to notify UI for retry attempt info
+          if (typeof window !== "undefined") {
+            const event = new CustomEvent("sync-retry-attempt", {
+              detail: { 
+                attempt, 
+                maxAttempts, 
+                nextDelay: delay, 
+                error: err.toString() 
+              }
+            });
+            window.dispatchEvent(event);
+          }
+
+          if (attempt >= maxAttempts) {
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, delay));
+          delay *= 2; // Exponential Backoff increase
         }
-      } catch (err: any) {
-        console.error("Gagal melakukan sinkronisasi cloud", err);
-        return { successCount: 0, failedCount: pending.length, error: err.toString() };
+      }
+
+      if (!isSuccess) {
+        return { 
+          successCount: 0, 
+          failedCount: pending.length, 
+          error: `Gagal tersambung setelah ${maxAttempts} kali percobaan. Kesalahan terakhir: ${lastError?.toString() || "Koneksi terputus."}` 
+        };
+      }
+
+      if (responseData && responseData.success) {
+        const pendingIds = new Set(pending.map(p => p.ID));
+        const updated = records.map(r => {
+          if (pendingIds.has(r.ID)) {
+            return { ...r, SyncStatus: "SYNCED" as const };
+          }
+          return r;
+        });
+        this.saveRecords(updated);
+        return { successCount: pending.length, failedCount: 0 };
+      } else {
+        return { 
+          successCount: 0, 
+          failedCount: pending.length, 
+          error: responseData?.error || "Tanggapan web app bernilai sukses false." 
+        };
       }
     } finally {
       this.isSyncingInProgress = false;
