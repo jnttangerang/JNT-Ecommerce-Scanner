@@ -61,25 +61,26 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 text-slate-900 shadow-sm">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-2 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between">
         {/* Brand Logo and Title */}
-        <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setView("WELCOME")}>
-          <div className="bg-red-600 text-white rounded-lg px-2.5 py-1.5 font-bold tracking-widest text-lg flex items-center justify-center shadow-sm">
+        <div className="flex items-center space-x-2 sm:space-x-3 cursor-pointer" onClick={() => setView("WELCOME")}>
+          <div className="bg-red-600 text-white rounded-lg px-2 py-1 sm:px-2.5 sm:py-1.5 font-bold tracking-widest text-sm sm:text-lg flex items-center justify-center shadow-sm">
             J&T
           </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-tight text-slate-900 flex items-center uppercase">
-              Pickup Scanner Pro
-              <span className="ml-2 bg-red-50 text-red-600 border border-red-200 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+          <div className="leading-tight">
+            <h1 className="text-xs sm:text-sm font-bold tracking-tight text-slate-900 flex items-center uppercase">
+              <span className="hidden min-[360px]:inline">Pickup Scanner Pro</span>
+              <span className="min-[360px]:hidden">Scanner</span>
+              <span className="ml-1 sm:ml-2 bg-red-50 text-red-600 border border-red-200 text-[9px] sm:text-[10px] px-1 sm:px-1.5 py-0.5 rounded-full font-bold">
                 E-COMM
               </span>
             </h1>
-            <p className="text-[11px] text-slate-500 font-medium">Tangerang Barat •</p>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium hidden min-[380px]:block">Tangerang Barat •</p>
           </div>
         </div>
 
         {/* Status Indicators & Navigation Menu */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-1 sm:space-x-3">
           {/* Real-time Clock (Desktop-friendly) */}
           <div className="hidden md:flex flex-col items-end mr-2 font-mono text-xs text-slate-500">
             <span className="text-slate-400 text-[10px] font-bold">TIME</span>
@@ -91,15 +92,16 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={triggerSync}
               disabled={isSyncing}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold select-none transition-all ${
+              className={`flex items-center space-x-1 px-1.5 py-1 sm:space-x-1.5 sm:px-3 sm:py-1.5 rounded-lg text-xs font-semibold select-none transition-all ${
                 isSyncing
                   ? "bg-amber-100 text-amber-700 border border-amber-200 cursor-wait"
                   : "bg-red-600 hover:bg-red-700 text-white border border-red-500 shadow-sm animate-pulse"
               }`}
               id="sync-button"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-              <span>{isSyncing ? "Sync..." : `Sync (${pendingCount})`}</span>
+              <RefreshCw className={`h-3 w-3 sm:h-3.5 sm:w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+              <span className="hidden min-[400px]:inline">{isSyncing ? "Sync..." : `Sync (${pendingCount})`}</span>
+              <span className="min-[400px]:inline-block">{pendingCount}</span>
             </button>
           )}
 
@@ -114,7 +116,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={onPullFromCloud}
                 disabled={isPulling || isOffline}
-                className={`flex items-center justify-center px-3 py-1.5 rounded-lg border text-xs font-semibold select-none transition-all ${
+                className={`flex items-center justify-center p-1.5 sm:px-3 sm:py-1.5 rounded-lg border text-xs font-semibold select-none transition-all ${
                   isPulling
                     ? "bg-slate-100 text-slate-400 border-slate-200 cursor-wait"
                     : isOffline
@@ -125,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
                 id="pull-from-cloud-button"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${isPulling ? "animate-spin text-amber-500" : "text-slate-500"}`} />
-                <span className="hidden sm:inline ml-1.5 text-slate-705">Tarik Sheet</span>
+                <span className="hidden md:inline ml-1.5 text-slate-705">Tarik Sheet</span>
               </button>
             );
           })()}
@@ -135,26 +137,24 @@ export const Header: React.FC<HeaderProps> = ({
             const isDataRealtime = !isOffline && pendingCount === 0 && isCloudDataFresh;
             return isDataRealtime ? (
               <div 
-                className="flex items-center space-x-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1.5 rounded-lg text-[11px] font-bold select-none"
+                className="flex items-center space-x-1 sm:space-x-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-[11px] font-bold select-none"
                 title="Data di aplikasi Anda 100% sinkron dan up-to-date dengan Spreadsheet cloud!"
                 id="synced-cloud-badge"
               >
-                <span className="relative flex h-2 w-2">
+                <span className="relative flex h-2 w-2 flex-shrink-0">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="hidden md:inline">SYNCED (LIVE)</span>
-                <span className="inline md:hidden">SYNCED</span>
+                <span className="hidden sm:inline">SYNCED</span>
               </div>
             ) : (
               <div 
-                className="flex items-center space-x-1.5 bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1.5 rounded-lg text-[11px] font-bold select-none"
+                className="flex items-center space-x-1 sm:space-x-1.5 bg-amber-50 border border-amber-200 text-amber-700 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-[11px] font-bold select-none"
                 title="Menampilkan data cache lokal (Stale). Klik tombol 'Tarik Sheet' atau hubungkan jaringan untuk memuat ulang."
                 id="stale-cache-badge"
               >
-                <span className="h-2 w-2 rounded-full bg-amber-500 animate-[pulse_1.5s_infinite]" />
-                <span className="hidden md:inline">STALE (CACHE)</span>
-                <span className="inline md:hidden">STALE</span>
+                <span className="h-2 w-2 rounded-full bg-amber-500 animate-[pulse_1.5s_infinite] flex-shrink-0" />
+                <span className="hidden sm:inline">STALE</span>
               </div>
             );
           })()}
@@ -162,7 +162,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Interactive Network status toggle */}
           <button
             onClick={handleToggleOffline}
-            className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors select-none ${
+            className={`flex items-center space-x-1 p-1.5 sm:px-3 sm:py-1.5 rounded-lg border text-xs font-medium transition-colors select-none ${
               isOffline
                 ? "bg-slate-50 text-slate-500 border-slate-200 hover:border-red-600 hover:text-red-600"
                 : "bg-green-50 text-green-700 border-green-200 hover:bg-green-100/70"
@@ -172,15 +172,13 @@ export const Header: React.FC<HeaderProps> = ({
           >
             {isOffline ? (
               <>
-                <WifiOff className="h-3.5 w-3.5 text-slate-450" />
-                <span className="hidden sm:inline">OFFLINE MODE</span>
-                <span className="inline sm:hidden font-bold">OFF</span>
+                <WifiOff className="h-3.5 w-3.5 text-slate-450 flex-shrink-0" />
+                <span className="hidden sm:inline">OFFLINE</span>
               </>
             ) : (
               <>
-                <Wifi className="h-3.5 w-3.5 text-green-600 animate-pulse" />
-                <span className="hidden sm:inline">ONLINE SYNC</span>
-                <span className="inline sm:hidden font-bold">ON</span>
+                <Wifi className="h-3.5 w-3.5 text-green-600 animate-pulse flex-shrink-0" />
+                <span className="hidden sm:inline">ONLINE</span>
               </>
             )}
           </button>
@@ -194,29 +192,29 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* View switcher (Operator <-> Owner) */}
-          <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-1" id="view-mode-selector">
+          <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5 sm:p-1" id="view-mode-selector">
             <button
               onClick={() => setView("WELCOME")}
-              className={`p-1.5 rounded-md text-xs flex items-center space-x-1 transition-all ${
+              className={`p-1 sm:p-1.5 rounded-md text-xs flex items-center space-x-1 transition-all ${
                 currentView === "WELCOME" || currentView === "SCANNER"
                   ? "bg-red-600 text-white shadow-sm font-bold"
                   : "text-slate-500 hover:text-slate-900 font-medium"
               }`}
               title="Portal Operator Scan"
             >
-              <Truck className="h-3.5 w-3.5" />
+              <Truck className="h-3.5 w-3.5 flex-shrink-0" />
               <span className="hidden md:inline">Operator</span>
             </button>
             <button
               onClick={() => setView(currentView === "OWNER_DASHBOARD" ? "OWNER_DASHBOARD" : "OWNER_LOGIN")}
-              className={`p-1.5 rounded-md text-xs flex items-center space-x-1 transition-all ${
+              className={`p-1 sm:p-1.5 rounded-md text-xs flex items-center space-x-1 transition-all ${
                 currentView === "OWNER_LOGIN" || currentView === "OWNER_DASHBOARD"
                   ? "bg-white text-slate-900 border border-slate-200 shadow-sm font-bold"
                   : "text-slate-500 hover:text-slate-900 font-medium"
               }`}
               title="Portal Owner Review"
             >
-              <Shield className="h-3.5 w-3.5" />
+              <Shield className="h-3.5 w-3.5 flex-shrink-0" />
               <span className="hidden md:inline">Owner</span>
             </button>
           </div>
