@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AppView, ScanRecord } from "./types";
 import { Header } from "./components/Header";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -16,6 +16,7 @@ import { Toaster, toast } from "sonner";
 
 export default function App() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const isSilentSyncingRef = useRef(false);
   const [currentView, setView] = useState<AppView>(() => {
     const savedView = localStorage.getItem("jt_current_view") as AppView;
     if (savedView === "SCANNER") {
@@ -169,8 +170,8 @@ export default function App() {
     const pending = records.filter((r) => r.SyncStatus === "PENDING").length;
     setPendingCount(pending);
 
-    // Automatically trigger upload if in online mode and records are pending
-    if (!isOffline && pending > 0 && !isSyncing) {
+    // Automatically trigger upload if in online mode and records are pending and not already syncing
+    if (!isOffline && pending > 0 && !isSyncing && !isSilentSyncingRef.current) {
       silentSyncPending();
     }
   };
@@ -207,11 +208,18 @@ export default function App() {
 
   // Auto/Silent Sync in background
   const silentSyncPending = async () => {
+    if (isSilentSyncingRef.current) return;
+    isSilentSyncingRef.current = true;
     try {
       await dbService.syncPendingRecords();
-      updatePendingCount();
     } catch (e) {
       console.warn("Silent background sync failed, will retry", e);
+    } finally {
+      isSilentSyncingRef.current = false;
+      // Safeguard against recursive call loops: read direct from store and update state to refresh badges
+      const records = dbService.getRecords();
+      const pending = records.filter((r) => r.SyncStatus === "PENDING").length;
+      setPendingCount(pending);
     }
   };
 
