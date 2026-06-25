@@ -671,6 +671,16 @@ export class DatabaseService {
   }
 
   /**
+   * Deletes a specific scan record/resi from local database
+   */
+  public deleteRecord(resi: string): boolean {
+    const originalLength = this.recordsCache.length;
+    const updated = this.recordsCache.filter(r => r.Resi.toLowerCase() !== resi.toLowerCase());
+    this.saveRecords(updated);
+    return updated.length < originalLength;
+  }
+
+  /**
    * Request a retake for a specific package photo (requested by Owner)
    */
   public requestRetake(resi: string): boolean {

@@ -2067,14 +2067,14 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                       {r.Status !== "CANCELLED" ? (
                         <button
                           onClick={() => handleMarkCancelled(r.Resi)}
-                          className={idx === 0 ? "bg-[#df0000] hover:bg-[#df0000]/90 text-white text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-red-50 hover:bg-red-100 text-red-655 border border-red-150 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
+                          className={idx === 0 ? "bg-[#f1dcdc] hover:bg-[#f1dcdc]/90 text-[#e9e9e9] text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-red-50 hover:bg-red-100 text-red-655 border border-red-150 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
                         >
                           BATALKAN
                         </button>
                       ) : (
                         <button
                           onClick={() => handleMarkScanned(r.Resi)}
-                          className={idx === 0 ? "bg-[#df0000] hover:bg-[#df0000]/90 text-white text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
+                          className={idx === 0 ? "bg-[#f1dcdc] hover:bg-[#f1dcdc]/90 text-[#e9e9e9] text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
                         >
                           OK
                         </button>
@@ -2093,8 +2093,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                         </span>
                       )}
                     </td>
-                    <td className={idx === 0 ? "p-3.5 font-mono text-[11px] bg-[#c3c3c3] text-white" : "p-3.5 font-mono text-[11px] text-slate-655"}>
-                      {r.Tanggal} <span className={idx === 0 ? "text-[#ffffff] border border-[#ffffff] px-1 py-0.5 rounded ml-1" : "text-slate-400"}>{r.Jam}</span>
+                    <td className={idx === 0 ? "p-3.5 font-mono text-[11px] bg-[#ffffff] border-white text-slate-655" : "p-3.5 font-mono text-[11px] text-slate-655"}>
+                      {r.Tanggal} <span className={idx === 0 ? "text-[#b0b0b0] border border-[#b0b0b0] px-1 py-0.5 rounded ml-1" : "text-slate-400"}>{r.Jam}</span>
                     </td>
                     <td className="p-3.5 font-bold text-slate-800">{r.Seller}</td>
                     <td className="p-3.5 truncate max-w-[120px] text-slate-600">{r.Outlet}</td>

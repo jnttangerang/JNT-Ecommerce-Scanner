@@ -86,6 +86,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   });
 
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [deletingResi, setDeletingResi] = useState<string | null>(null);
 
   // Clarity confirmation modal ("Validasi Foto")
   const [pendingValidation, setPendingValidation] = useState<{
@@ -660,6 +661,21 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     loadRecords();
     setLatestResi("");
     setShowResetConfirm(false);
+  };
+
+  // Delete a specific scanned record
+  const handleDeleteRecord = (resi: string) => {
+    const success = dbService.deleteRecord(resi);
+    if (success) {
+      loadRecords();
+      setDeletingResi(null);
+      if (onRecordAdded) {
+        onRecordAdded(); // triggers update in parent counts/states
+      }
+      toast.success(`Data resi ${resi} berhasil dihapus dari local database.`);
+    } else {
+      toast.error(`Gagal menghapus data resi ${resi}.`);
+    }
   };
 
   return (
@@ -1237,23 +1253,53 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       </div>
                     </div>
 
-                    {/* Badge and Sync status */}
-                    <div className="flex flex-col items-end space-y-1">
-                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                        r.Status === "CANCELLED"
-                          ? "bg-red-50 text-red-650 border border-red-100 font-extrabold"
-                          : "bg-green-50 text-green-700 border border-green-200"
-                      }`}>
-                        {r.Status === "CANCELLED" ? "CANCELLED" : "✓ SCANNED"}
-                      </span>
+                    {/* Badge, Sync status, and Delete Action */}
+                    <div className="flex items-center space-x-3">
+                      <div className="flex flex-col items-end space-y-1">
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                          r.Status === "CANCELLED"
+                            ? "bg-red-50 text-red-650 border border-red-100 font-extrabold"
+                            : "bg-green-50 text-green-700 border border-green-200"
+                        }`}>
+                          {r.Status === "CANCELLED" ? "CANCELLED" : "✓ SCANNED"}
+                        </span>
 
-                      <span className={`text-[8px] font-mono font-bold ${
-                        r.SyncStatus === "SYNCED" 
-                          ? "text-slate-400" 
-                          : "text-amber-600 uppercase animate-pulse"
-                      }`}>
-                        {r.SyncStatus === "SYNCED" ? "cloud-synced" : "offline-queue"}
-                      </span>
+                        <span className={`text-[8px] font-mono font-bold ${
+                          r.SyncStatus === "SYNCED" 
+                            ? "text-slate-400" 
+                            : "text-amber-600 uppercase animate-pulse"
+                        }`}>
+                          {r.SyncStatus === "SYNCED" ? "cloud-synced" : "offline-queue"}
+                        </span>
+                      </div>
+
+                      {/* Delete Actions */}
+                      <div className="flex items-center">
+                        {deletingResi === r.Resi ? (
+                          <div className="flex items-center bg-red-50 border border-red-200 rounded-lg p-1 space-x-1 animate-fadeIn">
+                            <button
+                              onClick={() => handleDeleteRecord(r.Resi)}
+                              className="bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold px-2 py-1 rounded cursor-pointer transition"
+                            >
+                              HAPUS
+                            </button>
+                            <button
+                              onClick={() => setDeletingResi(null)}
+                              className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[9px] font-bold px-2 py-1 rounded cursor-pointer transition"
+                            >
+                              BATAL
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDeletingResi(r.Resi)}
+                            className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-lg transition-colors duration-150 cursor-pointer"
+                            title="Hapus Data Resi"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))
