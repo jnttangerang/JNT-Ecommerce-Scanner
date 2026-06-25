@@ -1706,6 +1706,64 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
       </div>
 
+      {/* Summary Cards by Seller for Quick Validation */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
+        <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="font-bold text-sm text-slate-800 flex items-center">
+              <Users className="h-4 w-4 text-red-500 mr-2" />
+              RINGKASAN SCAN BERDASARKAN SELLER
+            </h3>
+            <p className="text-[10px] text-slate-500">Gunakan kartu ini untuk memvalidasi jumlah paket per seller secara cepat</p>
+          </div>
+          <span className="bg-red-50 text-red-650 border border-red-150 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+            {Object.keys(statsSeller).length} Seller Aktif
+          </span>
+        </div>
+
+        {Object.keys(statsSeller).length === 0 ? (
+          <p className="text-slate-400 text-xs text-center py-6">Belum ada data rekap seller.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {Object.entries(statsSeller).map(([sellerName, total]) => {
+              // Count of cancelled for this seller
+              const cancelledCount = allRecords.filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
+              const scannedCount = (total as number) - cancelledCount;
+
+              return (
+                <div 
+                  key={sellerName}
+                  className="bg-slate-50 hover:bg-slate-100/70 border border-slate-100 hover:border-slate-200 rounded-2xl p-4 transition duration-250 flex flex-col justify-between space-y-3"
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="max-w-[75%]">
+                      <h4 className="font-extrabold text-slate-800 text-xs truncate" title={sellerName}>
+                        {sellerName}
+                      </h4>
+                      <span className="text-[9px] text-slate-400 font-medium block mt-0.5">J&T Partner</span>
+                    </div>
+                    <div className="bg-red-50 text-red-600 border border-red-100 text-[10px] font-black font-mono h-6 px-2 rounded-lg flex items-center justify-center">
+                      {total as number} Pkt
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/50">
+                    <div className="bg-white border border-slate-100 rounded-xl p-1.5 text-center">
+                      <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">OK (SCANNED)</span>
+                      <span className="text-xs font-extrabold text-green-600 font-mono mt-0.5 block">{scannedCount}</span>
+                    </div>
+                    <div className="bg-white border border-slate-100 rounded-xl p-1.5 text-center">
+                      <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">CANCELLED</span>
+                      <span className="text-xs font-extrabold text-red-650 font-mono mt-0.5 block" style={{ color: "#ff0000" }}>{cancelledCount}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Visual Analytics / Daily Rekap per Seller / Outlet */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
@@ -2067,14 +2125,14 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                       {r.Status !== "CANCELLED" ? (
                         <button
                           onClick={() => handleMarkCancelled(r.Resi)}
-                          className={idx === 0 ? "bg-[#f1dcdc] hover:bg-[#f1dcdc]/90 text-[#e9e9e9] text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-red-50 hover:bg-red-100 text-red-655 border border-red-150 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
+                          className="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer shadow-xs"
                         >
                           BATALKAN
                         </button>
                       ) : (
                         <button
                           onClick={() => handleMarkScanned(r.Resi)}
-                          className={idx === 0 ? "bg-[#f1dcdc] hover:bg-[#f1dcdc]/90 text-[#e9e9e9] text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer" : "bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-colors cursor-pointer"}
+                          className="bg-green-50 hover:bg-green-600 text-green-700 hover:text-white border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer shadow-xs"
                         >
                           OK
                         </button>
