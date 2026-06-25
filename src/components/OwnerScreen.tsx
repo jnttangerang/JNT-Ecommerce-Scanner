@@ -89,6 +89,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
   const [outlets, setOutlets] = useState<Outlet[]>([]);
+  
+  // Pagination for Owner Screen - Data Log
+  const [ownerPage, setOwnerPage] = useState(1);
+  const [ownerPageSize, setOwnerPageSize] = useState(10);
+  const [ownerJumpInput, setOwnerJumpInput] = useState("");
+
   const [cloudConfig, setCloudConfig] = useState({
     coreFolderUrl: "",
     fotoFolderId: "",
@@ -1413,7 +1419,16 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     
     // Auto reset review index to start of filtered set
     setReviewIndex(0);
+    setOwnerPage(1);
+    setOwnerJumpInput("");
   }, [searchQuery, selectedOutletFilter, selectedSellerFilter, selectedStatusFilter, allRecords]);
+
+  // Owner pagination variables
+  const totalOwnerRecords = filteredRecords.length;
+  const totalOwnerPages = Math.ceil(totalOwnerRecords / ownerPageSize) || 1;
+  const ownerStartIndex = (ownerPage - 1) * ownerPageSize;
+  const ownerEndIndex = Math.min(ownerStartIndex + ownerPageSize, totalOwnerRecords);
+  const ownerPaginatedRecords = filteredRecords.slice(ownerStartIndex, ownerEndIndex);
 
   // Cancel order trigger function (marks status to CANCELLED)
   const handleMarkCancelled = (targetResi: string) => {
@@ -2003,7 +2018,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               </div>
             )}
 
-            <span className="bg-red-50 text-red-650 border border-red-150 text-[10px] font-bold px-2.5 py-1 rounded-full">
+            <span className="bg-red-50 text-red-650 border border-red-150 text-[10px] font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: "#ff0000" }}>
               {Object.keys(statsSeller).length} Seller Aktif
             </span>
           </div>
@@ -2400,7 +2415,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
-                <th className="p-3.5">ID</th>
+                <th className="p-3.5">No.</th>
                 <th className="p-3.5">Aksi</th>
                 <th className="p-3.5">Resi</th>
                 <th className="p-3.5">Waktu</th>
@@ -2411,28 +2426,28 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white text-slate-705">
-              {filteredRecords.length === 0 ? (
+              {ownerPaginatedRecords.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-slate-500 font-bold">
                     Tidak ada data kecocokan log yang ditemukan.
                   </td>
                 </tr>
               ) : (
-                filteredRecords.map((r, idx) => (
+                ownerPaginatedRecords.map((r, idx) => (
                   <tr key={r.Resi + r.Jam} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-3.5 font-mono text-[11px] text-slate-400">{r.ID}</td>
+                    <td className="p-3.5 font-bold font-mono text-[11px] text-slate-500">{ownerStartIndex + idx + 1}</td>
                     <td className="p-3.5">
                       {r.Status !== "CANCELLED" ? (
                         <button
                           onClick={() => handleMarkCancelled(r.Resi)}
-                          className="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer shadow-xs"
+                          className="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer"
                         >
                           BATALKAN
                         </button>
                       ) : (
                         <button
                           onClick={() => handleMarkScanned(r.Resi)}
-                          className="bg-green-50 hover:bg-green-600 text-green-700 hover:text-white border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer shadow-xs"
+                          className="bg-green-50 hover:bg-green-600 text-green-700 hover:text-white border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer"
                         >
                           OK
                         </button>
@@ -2472,6 +2487,136 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             </tbody>
           </table>
         </div>
+
+        {/* Custom Pagination Panel */}
+        {totalOwnerRecords > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-3 border-t border-slate-150 text-slate-600">
+            {/* Total count */}
+            <div className="text-xs font-semibold text-slate-550">
+              Total <span className="text-slate-850 font-extrabold font-mono">{totalOwnerRecords}</span> data
+            </div>
+
+            {/* Controls */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Page Buttons block */}
+              <div className="flex items-center space-x-1">
+                {/* Previous Button */}
+                <button
+                  type="button"
+                  disabled={ownerPage === 1}
+                  onClick={() => setOwnerPage(prev => Math.max(1, prev - 1))}
+                  className={`px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center justify-center font-bold h-7 ${
+                    ownerPage === 1
+                      ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95 cursor-pointer"
+                  }`}
+                >
+                  &lt;
+                </button>
+
+                {/* Number Buttons */}
+                {(() => {
+                  const pages: (number | string)[] = [];
+                  if (totalOwnerPages <= 7) {
+                    for (let i = 1; i <= totalOwnerPages; i++) pages.push(i);
+                  } else {
+                    pages.push(1);
+                    if (ownerPage > 3) {
+                      pages.push("...");
+                    }
+                    const start = Math.max(2, ownerPage - 1);
+                    const end = Math.min(totalOwnerPages - 1, ownerPage + 1);
+                    for (let i = start; i <= end; i++) {
+                      pages.push(i);
+                    }
+                    if (ownerPage < totalOwnerPages - 2) {
+                      pages.push("...");
+                    }
+                    pages.push(totalOwnerPages);
+                  }
+
+                  return pages.map((p, pIdx) => (
+                    <button
+                      key={pIdx}
+                      type="button"
+                      disabled={p === "..."}
+                      onClick={() => typeof p === "number" && setOwnerPage(p)}
+                      className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all min-w-[28px] h-7 flex items-center justify-center ${
+                        p === ownerPage
+                          ? "bg-red-50 text-red-650 border-red-500 shadow-sm"
+                          : p === "..."
+                          ? "border-transparent text-slate-400 bg-transparent cursor-default"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ));
+                })()}
+
+                {/* Next Button */}
+                <button
+                  type="button"
+                  disabled={ownerPage === totalOwnerPages}
+                  onClick={() => setOwnerPage(prev => Math.min(totalOwnerPages, prev + 1))}
+                  className={`px-2.5 py-1 rounded-lg border text-xs transition-all flex items-center justify-center font-bold h-7 ${
+                    ownerPage === totalOwnerPages
+                      ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95 cursor-pointer"
+                  }`}
+                >
+                  &gt;
+                </button>
+              </div>
+
+              {/* Items Per Page Selector */}
+              <select
+                value={ownerPageSize}
+                onChange={(e) => {
+                  setOwnerPageSize(Number(e.target.value));
+                  setOwnerPage(1);
+                  setOwnerJumpInput("");
+                }}
+                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-650 font-semibold focus:outline-none cursor-pointer h-7"
+              >
+                <option value={10}>10 / halaman</option>
+                <option value={25}>25 / halaman</option>
+                <option value={50}>50 / halaman</option>
+                <option value={100}>100 / halaman</option>
+              </select>
+
+              {/* Jump to Page */}
+              <div className="flex items-center space-x-1">
+                <span className="text-xs text-slate-500 font-semibold">Lompat ke</span>
+                <input
+                  type="text"
+                  value={ownerJumpInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (/^\d*$/.test(val)) {
+                      setOwnerJumpInput(val);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const targetPage = parseInt(ownerJumpInput, 10);
+                      if (targetPage >= 1 && targetPage <= totalOwnerPages) {
+                        setOwnerPage(targetPage);
+                      } else if (targetPage > totalOwnerPages) {
+                        setOwnerPage(totalOwnerPages);
+                        setOwnerJumpInput(String(totalOwnerPages));
+                      } else if (targetPage < 1) {
+                        setOwnerPage(1);
+                        setOwnerJumpInput("1");
+                      }
+                    }
+                  }}
+                  className="w-12 bg-white border border-slate-200 rounded-lg px-1.5 py-1 text-xs text-center text-slate-700 focus:outline-none font-mono h-7"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
       </div>
