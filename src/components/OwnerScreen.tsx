@@ -2151,8 +2151,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                         </span>
                       )}
                     </td>
-                    <td className={idx === 0 ? "p-3.5 font-mono text-[11px] bg-[#ffffff] border-white text-slate-655" : "p-3.5 font-mono text-[11px] text-slate-655"}>
-                      {r.Tanggal} <span className={idx === 0 ? "text-[#b0b0b0] border border-[#b0b0b0] px-1 py-0.5 rounded ml-1" : "text-slate-400"}>{r.Jam}</span>
+                    <td className="p-3.5 font-mono text-[11px] text-slate-600 hover:text-slate-950 transition-colors duration-150">
+                      {r.Tanggal} <span className="text-slate-400 border border-slate-200 bg-slate-50/80 hover:bg-slate-100 hover:border-slate-300 px-1.5 py-0.5 rounded-md ml-1.5 transition-all duration-150">{r.Jam}</span>
                     </td>
                     <td className="p-3.5 font-bold text-slate-800">{r.Seller}</td>
                     <td className="p-3.5 truncate max-w-[120px] text-slate-600">{r.Outlet}</td>
