@@ -123,6 +123,42 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [isPushingMasters, setIsPushingMasters] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
+  // Polling state variables
+  const [lastPollTime, setLastPollTime] = useState<string>("");
+  const [isPollingActive, setIsPollingActive] = useState(true);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
+
+  // Polling effect every 10 seconds to fetch latest updates from Spreadsheet
+  useEffect(() => {
+    if (!isAuthenticated || !isPollingActive) return;
+
+    const pollInterval = setInterval(async () => {
+      const config = dbService.getCloudConfig();
+      const hasAppsScript = config.appsScriptUrl && 
+        !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && 
+        !config.appsScriptUrl.includes("AKfycbz_Example");
+
+      if (hasAppsScript && !isBackgroundFetching) {
+        setIsBackgroundFetching(true);
+        try {
+          const result = await dbService.pullRecords();
+          if (result && result.success) {
+            loadData();
+            const now = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            setLastPollTime(now);
+            onStatusChanged();
+          }
+        } catch (err) {
+          console.warn("Background auto-polling failed, will retry", err);
+        } finally {
+          setIsBackgroundFetching(false);
+        }
+      }
+    }, 10000); // 10 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [isAuthenticated, isPollingActive, isBackgroundFetching]);
+
   // Initialize data on mount / update
   useEffect(() => {
     if (isAuthenticated) {
@@ -1536,6 +1572,78 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <LogOut className="h-3.5 w-3.5" style={{ color: "#e50000", height: "18px", width: "18px" }} />
           <span style={{ color: "#303030" }}>Keluar Dashboard</span>
         </button>
+      </div>
+
+      {/* Auto Polling Status Panel */}
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+        <div className="flex items-center space-x-3">
+          <div className="relative flex h-3.5 w-3.5 items-center justify-center">
+            {isPollingActive && (
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isBackgroundFetching ? "bg-amber-400" : "bg-emerald-400"}`} />
+            )}
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${!isPollingActive ? "bg-slate-400" : isBackgroundFetching ? "bg-amber-500" : "bg-emerald-500"}`} />
+          </div>
+          <div>
+            <span className="text-[11px] font-bold text-slate-700 tracking-wide uppercase">
+              STATUS AUTO-POLLING SPREADSHEET
+            </span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[10px] text-slate-500 font-medium">
+                {isPollingActive 
+                  ? (isBackgroundFetching ? "Sedang memeriksa data terbaru..." : "Aktif memeriksa otomatis setiap 10 detik") 
+                  : "Dinonaktifkan"
+                }
+              </span>
+              {lastPollTime && isPollingActive && (
+                <>
+                  <span className="text-[10px] text-slate-300">•</span>
+                  <span className="text-[10px] text-emerald-600 font-semibold font-mono">
+                    Update terakhir: {lastPollTime}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (!isBackgroundFetching) {
+                setIsBackgroundFetching(true);
+                dbService.pullRecords().then(result => {
+                  if (result && result.success) {
+                    loadData();
+                    const now = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                    setLastPollTime(now);
+                    onStatusChanged();
+                    toast.success("Data berhasil diperbarui dari Spreadsheet!");
+                  }
+                }).catch(err => {
+                  toast.error("Gagal memperbarui data dari Spreadsheet");
+                }).finally(() => {
+                  setIsBackgroundFetching(false);
+                });
+              }
+            }}
+            disabled={isBackgroundFetching}
+            className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${isBackgroundFetching ? "animate-spin text-amber-500" : "text-slate-500"}`} />
+            <span>Cek Sekarang</span>
+          </button>
+
+          <button
+            onClick={() => setIsPollingActive(!isPollingActive)}
+            className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition cursor-pointer border ${
+              isPollingActive
+                ? "bg-red-550/10 text-red-600 border-red-200 hover:bg-red-550/20"
+                : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+            }`}
+          >
+            {isPollingActive ? "Matikan Auto" : "Aktifkan Auto"}
+          </button>
+        </div>
       </div>
 
       {activeTab === "RECAP" && (
