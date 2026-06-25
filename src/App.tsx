@@ -450,6 +450,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => {
+                  dbService.clearAllRecords();
                   localStorage.clear();
                   window.location.reload();
                 }}

@@ -942,43 +942,58 @@ export class DatabaseService {
         const cloudRecords: ScanRecord[] = data.records || [];
         
         // Merge cloud records with our existing cache in a safe, protective way
-        // We start with a copy of all existing local records to ensure zero data loss
-        const finalMergedMap = new Map<string, ScanRecord>();
-        
-        // 1. First, populate the map with all our existing local records (to ensure we don't lose anything)
-        this.recordsCache.forEach(r => {
+        // 1. Create maps for cloud records and final merged records
+        const cloudMap = new Map<string, ScanRecord>();
+        cloudRecords.forEach(r => {
           if (r.Resi) {
-            finalMergedMap.set(r.Resi.toLowerCase(), r);
+            cloudMap.set(r.Resi.toLowerCase(), r);
           }
         });
 
-        // 2. Overwrite/merge with cloud records
-        cloudRecords.forEach(cloudRec => {
-          if (!cloudRec.Resi) return;
-          const resiKey = cloudRec.Resi.toLowerCase();
-          const localRec = finalMergedMap.get(resiKey);
-          
-          if (localRec) {
-            // Merge cloud record into existing local record
-            // If local record is PENDING, do not overwrite its SyncStatus or other fields to prevent overriding unsynced local changes
+        const finalMergedMap = new Map<string, ScanRecord>();
+
+        // 2. Process all existing local records
+        this.recordsCache.forEach(localRec => {
+          if (!localRec.Resi) return;
+          const resiKey = localRec.Resi.toLowerCase();
+          const cloudRec = cloudMap.get(resiKey);
+
+          if (cloudRec) {
+            // Exists in both: merge them safely
             if (localRec.SyncStatus === "PENDING") {
+              // Keep local state if still PENDING so it doesn't get overridden
               finalMergedMap.set(resiKey, {
                 ...localRec,
                 RetakeStatus: cloudRec.RetakeStatus || localRec.RetakeStatus
               });
             } else {
-              // Local is already SYNCED or others, we can update with cloud data safely
+              // Otherwise, update with cloud data
               finalMergedMap.set(resiKey, {
                 ...localRec,
                 ...cloudRec,
-                // Maintain local-only properties from browser session if they exist
+                SyncStatus: "SYNCED",
                 RetakeStatus: cloudRec.RetakeStatus || localRec.RetakeStatus,
-                // If local has a rich base64 image and cloud has a simple URL or empty, keep local rich base64
                 PhotoURL: (localRec.PhotoURL && localRec.PhotoURL.startsWith("data:image")) ? localRec.PhotoURL : (cloudRec.PhotoURL || localRec.PhotoURL)
               });
             }
           } else {
-            // Cloud record is new to this device, add it as SYNCED
+            // Does NOT exist in cloud (Google Sheets) anymore!
+            // If the local record was already SYNCED before, it means the user deleted it from the spreadsheet.
+            // We must remove/skip it to reflect this deletion in the local app.
+            // If it is still PENDING (not synced yet), keep it so the user doesn't lose unsynced work.
+            if (localRec.SyncStatus === "PENDING") {
+              finalMergedMap.set(resiKey, localRec);
+            } else {
+              console.log(`Record ${localRec.Resi} was deleted in spreadsheet, removing from local cache.`);
+            }
+          }
+        });
+
+        // 3. Add any new cloud records that do not exist locally yet
+        cloudRecords.forEach(cloudRec => {
+          if (!cloudRec.Resi) return;
+          const resiKey = cloudRec.Resi.toLowerCase();
+          if (!finalMergedMap.has(resiKey)) {
             finalMergedMap.set(resiKey, {
               ...cloudRec,
               SyncStatus: "SYNCED"
