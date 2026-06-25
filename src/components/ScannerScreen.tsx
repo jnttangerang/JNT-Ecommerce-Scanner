@@ -68,12 +68,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Live video feed
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const isScanningLocked = useRef(false);
+  const prevRetakeCountRef = useRef<number | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState("");
 
   // Scanner status
   const [latestResi, setLatestResi] = useState("");
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [cancelledWarning, setCancelledWarning] = useState<string | null>(null);
   const [unclearResiAlert, setUnclearResiAlert] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
 
@@ -87,6 +89,73 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [deletingResi, setDeletingResi] = useState<string | null>(null);
+
+  // Manual input and live real-time validation states
+  const [manualInput, setManualInput] = useState("");
+  const [liveWarning, setLiveWarning] = useState<{
+    type: "DUPLICATE" | "CANCELLED" | "RETAKE" | "OK";
+    title: string;
+    desc: string;
+  } | null>(null);
+
+  const handleLiveCheck = (val: string) => {
+    const rawCode = val.trim().toUpperCase();
+    if (!rawCode) {
+      setLiveWarning(null);
+      return;
+    }
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    const records = dbService.getRecords();
+    
+    // Find if it exists in today's records
+    const existing = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
+    
+    if (existing) {
+      if (existing.Status === "CANCELLED") {
+        setLiveWarning({
+          type: "CANCELLED",
+          title: "RESI BATAL (CANCELLED)",
+          desc: "Resi ini telah ditandai CANCELLED oleh Seller atau Owner. Jangan diproses!"
+        });
+      } else if (existing.RetakeStatus === "PENDING") {
+        setLiveWarning({
+          type: "RETAKE",
+          title: "PERLU FOTO ULANG (RETAKE)",
+          desc: "Owner meminta foto ulang (retake) untuk resi ini karena gambar sebelumnya tidak jelas."
+        });
+      } else {
+        setLiveWarning({
+          type: "DUPLICATE",
+          title: "RESI DUPLIKAT",
+          desc: "Resi ini sudah pernah diproses pada pickup hari ini. Harap periksa fisik paket."
+        });
+      }
+    } else {
+      // Is there any active retake request for this barcode on any day?
+      const activeRetake = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.RetakeStatus === "PENDING");
+      if (activeRetake) {
+        setLiveWarning({
+          type: "RETAKE",
+          title: "PERLU FOTO ULANG (RETAKE)",
+          desc: "Owner meminta foto ulang (retake) untuk resi ini karena gambar sebelumnya tidak jelas."
+        });
+        return;
+      }
+
+      // It doesn't exist in today's records. Is it in historical records?
+      const historical = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase());
+      if (historical) {
+        setLiveWarning({
+          type: "OK",
+          title: "RESI DARI HARI LAIN",
+          desc: `Resi ini pernah di-scan pada ${historical.Tanggal}. Dapat di-scan ulang hari ini sebagai transaksi baru.`
+        });
+      } else {
+        setLiveWarning(null);
+      }
+    }
+  };
 
   // Clarity confirmation modal ("Validasi Foto")
   const [pendingValidation, setPendingValidation] = useState<{
@@ -169,6 +238,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       r.RetakeStatus === "PENDING" && 
       r.Operator && r.Operator.trim().toLowerCase() === config.operator.trim().toLowerCase()
     );
+
+    if (prevRetakeCountRef.current !== null && pendingTasks.length > prevRetakeCountRef.current) {
+      audioService.playRetake();
+      toast.warning(`Owner meminta FOTO ULANG (RETAKE) untuk ${pendingTasks.length - prevRetakeCountRef.current} resi!`, {
+        duration: 5000,
+      });
+    }
+    prevRetakeCountRef.current = pendingTasks.length;
     setRetakeTasks(pendingTasks);
   };
 
@@ -554,8 +631,41 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     isScanningLocked.current = true;
 
     setDuplicateWarning(null);
+    setCancelledWarning(null);
 
-    // 1. Antiduplicate Validation
+    const todayStr = new Date().toISOString().split("T")[0];
+    const records = dbService.getRecords();
+
+    // Check if there is a pending retake first (can be from any day)
+    const pendingRetake = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.RetakeStatus === "PENDING");
+    if (pendingRetake) {
+      audioService.playRetake();
+      triggerHaptic([100, 50, 100]); // Distinct double-pulse for retake
+      toast.info(`Resi ${rawCode} terdeteksi memiliki instruksi FOTO ULANG (RETAKE) dari Owner!`, {
+        duration: 5000,
+      });
+      handleOpenRetakeModal(pendingRetake.Resi);
+      return;
+    }
+
+    // Check if it already exists in today's cache (duplicate or cancelled today)
+    const existingToday = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
+    if (existingToday) {
+      if (existingToday.Status === "CANCELLED") {
+        audioService.playCancelled();
+        triggerHaptic([200, 100, 200, 100, 200]); // Long warning vibration sequence for cancel
+        setCancelledWarning(rawCode);
+        return;
+      }
+
+      // If it exists today and is not cancelled, it is a duplicate!
+      audioService.playError();
+      triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
+      setDuplicateWarning(rawCode);
+      return;
+    }
+
+    // Double check with service
     if (dbService.isDuplicate(rawCode)) {
       audioService.playError();
       triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
@@ -979,6 +1089,40 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 </div>
               )}
 
+              {/* Giant CANCELLED Warning Overlay */}
+              {cancelledWarning && (
+                <div 
+                  className="fixed inset-0 bg-red-950/90 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+                  id="cancelled-warning-modal"
+                >
+                  <div className="bg-slate-900 border-2 border-red-500 rounded-3xl w-full max-w-sm p-6 text-center space-y-4 shadow-[0_0_60px_rgba(239,68,68,0.35)] animate-in zoom-in-95 duration-200">
+                    <div className="bg-red-500/20 text-red-500 rounded-full h-16 w-16 flex items-center justify-center mx-auto border border-red-500/40 shadow animate-bounce">
+                      <AlertTriangle className="h-8 w-8 text-red-500" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-black text-red-500 tracking-wider uppercase">RESI BATAL / CANCELLED</h3>
+                      <p className="text-red-400 font-bold font-mono text-xs bg-red-500/10 px-3 py-1 rounded-full inline-block border border-red-500/20">
+                        {cancelledWarning}
+                      </p>
+                    </div>
+                    <p className="text-slate-300 text-xs leading-relaxed">
+                      Sistem mendeteksi resi ini telah berstatus <span className="text-red-400 font-extrabold uppercase">CANCELLED</span> (Batal). Jangan diproses atau ditempel ke karung pickup! Pisahkan paket ini sekarang juga!
+                    </p>
+                    <div className="pt-2">
+                      <button
+                        onClick={() => {
+                          setCancelledWarning(null);
+                          isScanningLocked.current = false;
+                        }}
+                        className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(239,68,68,0.3)] active:scale-95 cursor-pointer uppercase"
+                      >
+                        SAYA MENGERTI, AMBIL PAKET BATAL INI
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Clarity Verification modal ("Validasi Foto") */}
               {pendingValidation && (
                 <div 
@@ -1116,11 +1260,93 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             )}
 
             {/* Simulated Live Audio Check & Input Barcode interface */}
-            <div className="p-4 bg-slate-950 space-y-3">
+            <div className="p-4 bg-slate-950 space-y-4 border-t border-slate-900/60">
               
               {/* Form Input Barcode manually or simulated from camera gun */}
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Manual Input / Scanner Gun (USB/Bluetooth)
+                </label>
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (manualInput.trim()) {
+                      handleBarcodeScanned(manualInput);
+                      setManualInput("");
+                      setLiveWarning(null);
+                    }
+                  }}
+                  className="relative flex items-center gap-2"
+                >
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      placeholder="Ketik resi atau tembak dengan scanner gun..."
+                      value={manualInput}
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        setManualInput(val);
+                        handleLiveCheck(val);
+                      }}
+                      className="w-full bg-slate-900 border border-slate-800 focus:border-red-500 rounded-xl px-4 py-3 text-sm font-mono text-zinc-100 placeholder-slate-500 outline-none transition-all uppercase tracking-wider focus:ring-1 focus:ring-red-500/20"
+                    />
+                    {manualInput && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualInput("");
+                          setLiveWarning(null);
+                        }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 cursor-pointer"
+                      >
+                        <XCircle className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!manualInput.trim()}
+                    className={`px-4 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all duration-150 flex items-center space-x-2 border shrink-0 ${
+                      manualInput.trim()
+                        ? "bg-red-650 hover:bg-red-600 text-white border-red-700 active:scale-95 cursor-pointer shadow-[0_0_10px_rgba(220,38,38,0.2)]"
+                        : "bg-slate-900 text-slate-500 border-slate-800/80 cursor-not-allowed"
+                    }`}
+                  >
+                    <span>SUBMIT</span>
+                  </button>
+                </form>
+
+                {/* Real-time live check warning element */}
+                {manualInput && liveWarning && (
+                  <div className={`p-2.5 rounded-xl border flex items-start gap-2.5 text-xs animate-in slide-in-from-top-1 duration-150 ${
+                    liveWarning.type === 'DUPLICATE'
+                      ? "bg-amber-500/10 border-amber-500/20 text-amber-500"
+                      : liveWarning.type === 'CANCELLED'
+                      ? "bg-rose-500/10 border-rose-500/20 text-rose-500"
+                      : liveWarning.type === 'RETAKE'
+                      ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
+                      : "bg-emerald-500/10 border-emerald-500/20 text-emerald-500"
+                  }`}>
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold uppercase tracking-wider text-[10px]">{liveWarning.title}</p>
+                      <p className="text-slate-400 mt-0.5 text-[11px] leading-relaxed">{liveWarning.desc}</p>
+                    </div>
+                  </div>
+                )}
+                {manualInput && !liveWarning && (
+                  <div className="p-2.5 rounded-xl border bg-emerald-500/10 border-emerald-500/20 text-emerald-500 flex items-start gap-2.5 text-xs animate-in slide-in-from-top-1 duration-150">
+                    <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold uppercase tracking-wider text-[10px]">RESI BARU OK</p>
+                      <p className="text-slate-400 mt-0.5 text-[11px]">Resi ini belum pernah di-scan hari ini. Tekan enter atau tombol submit untuk menyimpannya.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Utility actions / simulations */}
-              <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1 border-t border-slate-900">
+              <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-900">
                 <div className="flex items-center space-x-2 text-[11px] text-slate-500">
                   <Volume2 className="h-3 w-3 text-slate-450" />
                   <span>Teet synthesizer aktif</span>

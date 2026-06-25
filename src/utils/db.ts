@@ -579,10 +579,11 @@ export class DatabaseService {
     return this.recordsCache;
   }
 
-  // Check if ticket barcode already exists
+  // Check if ticket barcode already exists today
   public isDuplicate(resi: string): boolean {
+    const todayStr = new Date().toISOString().split("T")[0];
     const records = this.getRecords();
-    return records.some(r => r.Resi.toLowerCase() === resi.trim().toLowerCase());
+    return records.some(r => r.Resi.toLowerCase() === resi.trim().toLowerCase() && r.Tanggal === todayStr);
   }
 
   // Set offline mode preference

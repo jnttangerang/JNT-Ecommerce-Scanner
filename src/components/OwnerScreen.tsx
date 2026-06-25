@@ -34,7 +34,10 @@ import {
   Cloud,
   Github,
   RefreshCw,
-  LogOut
+  LogOut,
+  Calendar,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService, getDirectDriveImageUrl } from "../utils/db";
@@ -65,12 +68,22 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
   // Review Deck indices (for carousel review)
   const [reviewIndex, setReviewIndex] = useState(0);
+  const [isFocusMode, setIsFocusMode] = useState(false);
 
   // Stats
   const [statsSeller, setStatsSeller] = useState<Record<string, number>>({});
   const [statsOutlet, setStatsOutlet] = useState<Record<string, number>>({});
   const [statsTotalScanned, setStatsTotalScanned] = useState(0);
   const [statsTotalCancelled, setStatsTotalCancelled] = useState(0);
+
+  // Summary Date Filters
+  const [summaryDateType, setSummaryDateType] = useState<"ALL" | "TODAY" | "YESTERDAY" | "CUSTOM">("ALL");
+  const [summaryStartDate, setSummaryStartDate] = useState(() => {
+    return new Date().toISOString().split("T")[0];
+  });
+  const [summaryEndDate, setSummaryEndDate] = useState(() => {
+    return new Date().toISOString().split("T")[0];
+  });
 
   // Master lists & Configuration State
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -1257,6 +1270,32 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     );
   };
 
+  const getFilteredSummaryRecords = () => {
+    let filtered = [...allRecords];
+    const todayStr = new Date().toISOString().split("T")[0];
+    
+    if (summaryDateType === "TODAY") {
+      filtered = filtered.filter(r => r.Tanggal === todayStr);
+    } else if (summaryDateType === "YESTERDAY") {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split("T")[0];
+      filtered = filtered.filter(r => r.Tanggal === yesterdayStr);
+    } else if (summaryDateType === "CUSTOM") {
+      if (summaryStartDate) {
+        filtered = filtered.filter(r => r.Tanggal >= summaryStartDate);
+      }
+      if (summaryEndDate) {
+        filtered = filtered.filter(r => r.Tanggal <= summaryEndDate);
+      }
+    }
+    return filtered;
+  };
+
+  useEffect(() => {
+    calculateStatistics(getFilteredSummaryRecords());
+  }, [allRecords, summaryDateType, summaryStartDate, summaryEndDate]);
+
   const calculateStatistics = (records: ScanRecord[]) => {
     const sellerMap: Record<string, number> = {};
     const outletMap: Record<string, number> = {};
@@ -1509,6 +1548,193 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     );
   }
 
+  // Focus Mode View
+  if (isFocusMode) {
+    return (
+      <div className="w-full min-h-[90vh] bg-slate-950 text-slate-100 rounded-3xl p-6 md:p-10 flex flex-col justify-between animate-in fade-in duration-300" id="owner-focus-mode-view">
+        {/* Header bar of Focus Mode */}
+        <div className="flex justify-between items-center pb-4 border-b border-slate-800">
+          <div className="flex items-center space-x-2">
+            <div className="bg-red-600 w-3.5 h-3.5 rounded-full animate-pulse" />
+            <h2 className="text-sm font-black tracking-widest uppercase text-slate-200">OWNER FOCUS MODE (MODE FOKUS)</h2>
+          </div>
+          <button
+            onClick={() => setIsFocusMode(false)}
+            className="bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer border border-slate-800 hover:border-slate-700 shadow-sm"
+          >
+            <Minimize2 className="h-4 w-4" />
+            <span>Keluar Focus Mode</span>
+          </button>
+        </div>
+
+        {activeReviewRecord ? (
+          <div className="flex-1 my-6 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center max-w-7xl mx-auto w-full">
+            {/* Left/Main Column: Giant Image Viewer */}
+            <div className="lg:col-span-7 flex flex-col items-center justify-center relative bg-slate-900 border border-slate-850 rounded-3xl p-4 md:p-6 w-full min-h-[350px] md:min-h-[500px]">
+              
+              {/* Image Frame */}
+              <div className="relative w-full h-full flex items-center justify-center bg-black rounded-2xl overflow-hidden shadow-2xl aspect-video">
+                <img
+                  src={getDirectDriveImageUrl(activeReviewRecord.PhotoURL)}
+                  alt={`Receipt image for ${activeReviewRecord.Resi}`}
+                  className="w-full h-full object-contain"
+                  referrerPolicy="no-referrer"
+                />
+
+                {/* Left Arrow overlay */}
+                <button
+                  onClick={handlePrevReview}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/75 hover:bg-red-600 text-white p-4 rounded-full transition-all hover:scale-110 active:scale-95 shadow-lg border border-slate-800 cursor-pointer"
+                  title="Sebelumnya"
+                >
+                  <ChevronLeft className="h-6 w-6" />
+                </button>
+
+                {/* Right Arrow overlay */}
+                <button
+                  onClick={handleNextReview}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/75 hover:bg-red-600 text-white p-4 rounded-full transition-all hover:scale-110 active:scale-95 shadow-lg border border-slate-800 cursor-pointer"
+                  title="Berikutnya"
+                >
+                  <ChevronRight className="h-6 w-6" />
+                </button>
+
+                {/* Floating micro branding */}
+                <div className="absolute bottom-4 right-4 bg-red-600 text-white font-extrabold text-[10px] tracking-wider px-3 py-1 rounded-md shadow-md">
+                  {activeReviewRecord.Outlet}
+                </div>
+
+                {/* CANCELLED overlay */}
+                {activeReviewRecord.Status === "CANCELLED" && (
+                  <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center space-y-4 z-10 border-4 border-red-600 animate-in fade-in duration-250">
+                    <AlertCircle className="h-20 w-20 text-red-500 animate-bounce" />
+                    <span className="font-black text-white text-3xl tracking-widest bg-slate-950 px-6 py-3 border-2 border-red-500 rounded-xl shadow-2xl">
+                      ❌ ORDER CANCELLED
+                    </span>
+                    <p className="text-xs text-red-400 font-bold uppercase tracking-wider">Paket Batal Pembeli - Pisahkan!</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Giant Details and Core Actions */}
+            <div className="lg:col-span-5 space-y-6 flex flex-col justify-center">
+              
+              {/* Giant Info Card */}
+              <div className="bg-slate-900 border border-slate-850 p-6 md:p-8 rounded-3xl space-y-5 shadow-2xl">
+                <span className="text-xs text-red-500 font-extrabold tracking-widest block uppercase">ID PELACAKAN RESI:</span>
+                <div className="text-3xl md:text-4xl font-black text-white font-mono tracking-wider break-all leading-none selection:bg-red-500">
+                  {activeReviewRecord.Resi}
+                </div>
+
+                <div className="border-t border-slate-800 pt-5 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Seller</span>
+                    <span className="text-xl font-black text-white truncate max-w-[280px]">{activeReviewRecord.Seller}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Operator</span>
+                    <span className="text-lg font-bold text-slate-200 truncate max-w-[280px]">{activeReviewRecord.Operator}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tanggal & Jam</span>
+                    <span className="text-md font-semibold text-slate-300 font-mono">
+                      {activeReviewRecord.Tanggal} ({activeReviewRecord.Jam})
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Status Paket</span>
+                    <span className={`text-xs font-black px-3 py-1 rounded-full uppercase tracking-widest border ${
+                      activeReviewRecord.Status === "CANCELLED"
+                        ? "bg-red-950/80 text-red-400 border-red-500/50"
+                        : "bg-emerald-950/80 text-emerald-400 border-emerald-500/50"
+                    }`}>
+                      {activeReviewRecord.Status}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Status Update Actions - Big Focus Buttons */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {activeReviewRecord.Status !== "CANCELLED" ? (
+                  <button
+                    onClick={() => handleMarkCancelled(activeReviewRecord.Resi)}
+                    className="w-full bg-red-650 hover:bg-red-700 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider"
+                  >
+                    <Ban className="h-5 w-5" />
+                    <span>Tandai Cancelled</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleMarkScanned(activeReviewRecord.Resi)}
+                    className="w-full bg-slate-900 hover:bg-slate-800 text-green-400 border border-slate-800 py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider font-bold"
+                  >
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span>Kembalikan ke Scanned</span>
+                  </button>
+                )}
+
+                {/* Retake Button */}
+                {activeReviewRecord.RetakeStatus === "PENDING" ? (
+                  <div className="w-full bg-amber-950/60 border border-amber-800 text-amber-400 text-center font-bold py-5 px-6 rounded-2xl text-xs uppercase tracking-wider flex items-center justify-center space-x-2">
+                    <RefreshCw className="h-4 w-4 animate-spin text-amber-400" />
+                    <span>Menunggu Retake</span>
+                  </div>
+                ) : activeReviewRecord.RetakeStatus === "RETAKEN" ? (
+                  <div className="space-y-1.5 w-full">
+                    <div className="w-full bg-emerald-950/60 border border-emerald-800 text-emerald-400 text-center font-bold py-2 px-4 rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center space-x-1.5">
+                      <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                      <span>Foto Baru Diupload</span>
+                    </div>
+                    <button
+                      onClick={() => handleRequestRetake(activeReviewRecord.Resi)}
+                      className="w-full bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center space-x-1.5 text-[11px] uppercase tracking-wider cursor-pointer"
+                    >
+                      <Camera className="h-4 w-4 text-slate-400" />
+                      <span>Minta Foto Ulang Lagi</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRequestRetake(activeReviewRecord.Resi)}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider"
+                  >
+                    <Camera className="h-5 w-5" />
+                    <span>Minta Foto Ulang</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Item Carousel Navigation Indicator & Selector */}
+              <div className="flex justify-between items-center bg-slate-900 border border-slate-850 px-6 py-4 rounded-2xl font-mono text-xs">
+                <span className="text-slate-400 font-bold">POSISI DECK:</span>
+                <span className="text-white font-black text-sm">
+                  {reviewIndex + 1} / {filteredRecords.length} ITEM
+                </span>
+              </div>
+
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-20 text-slate-500 space-y-4 border border-dashed border-slate-850 rounded-3xl max-w-md mx-auto my-auto">
+            <Filter className="h-10 w-10 mx-auto opacity-35 text-slate-400 animate-pulse" />
+            <h4 className="font-bold text-slate-300 text-sm">Tidak ada parcel untuk ditinjau</h4>
+            <p className="text-xs text-slate-500">Coba ubah kriteria filter pada halaman monitoring utama.</p>
+          </div>
+        )}
+
+        {/* Mini branding footer */}
+        <div className="text-center text-[10px] text-slate-500 font-mono pt-4 border-t border-slate-900">
+          J&T EXPRESS TANGERANG BARAT • SINKRONISASI AKTIF
+        </div>
+      </div>
+    );
+  }
+
   // Authentic views
   return (
     <div className="w-full max-w-7xl mx-auto px-4 py-6 space-y-6" id="owner-dashboard-workspace">
@@ -1707,8 +1933,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       </div>
 
       {/* Summary Cards by Seller for Quick Validation */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
-        <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
+      <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
+        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 border-b border-slate-100 pb-3">
           <div>
             <h3 className="font-bold text-sm text-slate-800 flex items-center">
               <Users className="h-4 w-4 text-red-500 mr-2" />
@@ -1716,18 +1942,80 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             </h3>
             <p className="text-[10px] text-slate-500">Gunakan kartu ini untuk memvalidasi jumlah paket per seller secara cepat</p>
           </div>
-          <span className="bg-red-50 text-red-650 border border-red-150 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-            {Object.keys(statsSeller).length} Seller Aktif
-          </span>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Quick selectors */}
+            <div className="bg-slate-100 p-0.5 rounded-xl flex items-center">
+              <button
+                type="button"
+                onClick={() => setSummaryDateType("ALL")}
+                className={`px-2.5 py-1 text-[9px] font-bold rounded-lg transition-all cursor-pointer ${
+                  summaryDateType === "ALL" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Semua
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryDateType("TODAY")}
+                className={`px-2.5 py-1 text-[9px] font-bold rounded-lg transition-all cursor-pointer ${
+                  summaryDateType === "TODAY" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Hari Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryDateType("YESTERDAY")}
+                className={`px-2.5 py-1 text-[9px] font-bold rounded-lg transition-all cursor-pointer ${
+                  summaryDateType === "YESTERDAY" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Kemarin
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryDateType("CUSTOM")}
+                className={`px-2.5 py-1 text-[9px] font-bold rounded-lg transition-all cursor-pointer ${
+                  summaryDateType === "CUSTOM" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Kustom
+              </button>
+            </div>
+
+            {/* Custom Inputs */}
+            {summaryDateType === "CUSTOM" && (
+              <div className="flex items-center space-x-1.5 animate-in fade-in slide-in-from-right-2 duration-150">
+                <input
+                  type="date"
+                  value={summaryStartDate}
+                  onChange={(e) => setSummaryStartDate(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-medium text-slate-700 focus:outline-none focus:border-red-500"
+                />
+                <span className="text-[10px] text-slate-400">s/d</span>
+                <input
+                  type="date"
+                  value={summaryEndDate}
+                  onChange={(e) => setSummaryEndDate(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-medium text-slate-700 focus:outline-none focus:border-red-500"
+                />
+              </div>
+            )}
+
+            <span className="bg-red-50 text-red-650 border border-red-150 text-[10px] font-bold px-2.5 py-1 rounded-full">
+              {Object.keys(statsSeller).length} Seller Aktif
+            </span>
+          </div>
         </div>
 
         {Object.keys(statsSeller).length === 0 ? (
-          <p className="text-slate-400 text-xs text-center py-6">Belum ada data rekap seller.</p>
+          <p className="text-slate-400 text-xs text-center py-6">Belum ada data rekap seller pada tanggal terpilih.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {Object.entries(statsSeller).map(([sellerName, total]) => {
-              // Count of cancelled for this seller
-              const cancelledCount = allRecords.filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
+              // Count of cancelled for this seller in the filtered range
+              const cancelledCount = getFilteredSummaryRecords().filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
               const scannedCount = (total as number) - cancelledCount;
 
               return (
@@ -1856,14 +2144,26 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       {/* SECURE BLOCK: Halaman Review Foto Slide-Deck with Centered Bottom Buttons */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm" id="owner-review-deck-section">
         
-        <div className="mb-4 border-b border-slate-100 pb-2">
-          <h3 className="font-bold text-sm text-slate-850 flex items-center">
-            <Compass className="h-4 w-4 text-red-650 mr-2 animate-pulse" />
-            REVIEW FOTO RESI & BARCODE SCANNER DECK
-          </h3>
-          <p className="text-[10px] text-slate-500 font-medium">
-            Gunakan deck visual ini untuk men-scan barcode langsung lewat HP/Sprinter anda. Tekan "Order Cancelled" jika paket dibatalkan pembeli.
-          </p>
+        <div className="mb-4 border-b border-slate-100 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-sm text-[#f20000] flex items-center" style={{ color: "#f20000" }}>
+              <Compass className="h-4 w-4 text-red-650 mr-2 animate-pulse" />
+              REVIEW FOTO RESI & BARCODE SCANNER DECK
+            </h3>
+            <p className="text-[10px] text-slate-500 font-medium">
+              Gunakan deck visual ini untuk men-scan barcode langsung lewat HP/Sprinter anda. Tekan "Order Cancelled" jika paket dibatalkan pembeli.
+            </p>
+          </div>
+          <button
+            onClick={() => setIsFocusMode(true)}
+            style={{ backgroundColor: "#e50000" }}
+            className="self-start sm:self-center text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm hover:scale-[1.02] active:scale-[0.98] cursor-pointer hover:bg-red-700 border-none"
+            title="Masuk Mode Fokus"
+            type="button"
+          >
+            <Maximize2 className="h-3.5 w-3.5 text-white" />
+            <span>Focus Mode</span>
+          </button>
         </div>
 
         {activeReviewRecord ? (

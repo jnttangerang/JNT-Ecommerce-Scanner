@@ -85,6 +85,117 @@ class SoundSynthesizer {
       console.warn("Failed to play error sound", e);
     }
   }
+
+  /**
+   * Safe Indonesian text-to-speech announcer
+   */
+  public speak(text: string) {
+    try {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "id-ID"; // Indonesian
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+        window.speechSynthesis.speak(utterance);
+      }
+    } catch (e) {
+      console.warn("Speech synthesis failed:", e);
+    }
+  }
+
+  /**
+   * Sound alert for CANCELLED resi scan (Alarm/Siren wave + text-to-speech)
+   */
+  public playCancelled() {
+    try {
+      this.initCtx();
+      if (!this.ctx) {
+        this.speak("Resi Batal!");
+        return;
+      }
+
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = "sawtooth";
+      // Siren sound: sweep frequency up and down rapidly
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.linearRampToValueAtTime(800, now + 0.2);
+      osc.frequency.linearRampToValueAtTime(300, now + 0.4);
+      osc.frequency.linearRampToValueAtTime(700, now + 0.6);
+
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.linearRampToValueAtTime(0.35, now + 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.7);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start();
+      osc.stop(now + 0.7);
+
+      // Speak after sound plays slightly
+      setTimeout(() => {
+        this.speak("Peringatan! Resi Batal!");
+      }, 50);
+    } catch (e) {
+      console.warn("Failed to play cancelled sound", e);
+      this.speak("Resi Batal!");
+    }
+  }
+
+  /**
+   * Sound alert for Retake instructions (Two-tone high chirp + text-to-speech)
+   */
+  public playRetake() {
+    try {
+      this.initCtx();
+      if (!this.ctx) {
+        this.speak("Foto Ulang!");
+        return;
+      }
+
+      const now = this.ctx.currentTime;
+      
+      // Tone 1
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(880, now); // A5
+      gain1.gain.setValueAtTime(0.3, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc1.connect(gain1);
+      gain1.connect(this.ctx.destination);
+      osc1.start();
+      osc1.stop(now + 0.15);
+
+      // Tone 2
+      setTimeout(() => {
+        if (!this.ctx) return;
+        const now2 = this.ctx.currentTime;
+        const osc2 = this.ctx.createOscillator();
+        const gain2 = this.ctx.createGain();
+        osc2.type = "sine";
+        osc2.frequency.setValueAtTime(1320, now2); // E6 high chirp
+        gain2.gain.setValueAtTime(0.3, now2);
+        gain2.gain.exponentialRampToValueAtTime(0.01, now2 + 0.2);
+        osc2.connect(gain2);
+        gain2.connect(this.ctx.destination);
+        osc2.start();
+        osc2.stop(now2 + 0.2);
+      }, 120);
+
+      // Speak text
+      setTimeout(() => {
+        this.speak("Foto ulang resi ini!");
+      }, 350);
+    } catch (e) {
+      console.warn("Failed to play retake sound", e);
+      this.speak("Foto Ulang!");
+    }
+  }
 }
 
 export const audioService = new SoundSynthesizer();
