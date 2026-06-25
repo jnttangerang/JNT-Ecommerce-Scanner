@@ -60,6 +60,9 @@ function handleSyncBatch(records) {
   const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
   let newlyScanned = 0;
   
+  // Cache existing resi lists per sheet to prevent redundant and slow sheet queries inside the loop
+  const existingResisCache = {};
+  
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
     
@@ -79,7 +82,11 @@ function handleSyncBatch(records) {
       sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#f1f5f9");
     }
     
-    const existingResis = getExistingResiList(sheet);
+    // Load existing resis for this sheet from cache, or query and cache if not loaded yet
+    if (!existingResisCache[sheetName]) {
+      existingResisCache[sheetName] = getExistingResiList(sheet);
+    }
+    const existingResis = existingResisCache[sheetName];
     
     // Update status jika resi sudah ada (proteksi duplikat & memproses pembatalan)
     if (existingResis.indexOf(r.Resi) !== -1) {
@@ -112,6 +119,9 @@ function handleSyncBatch(records) {
       r.Status,
       finalPhotoUrl
     ]);
+    
+    // Track newly added Resi in our local cache list so duplicates within the same batch are resolved without slow sheet re-reads
+    existingResis.push(r.Resi);
     newlyScanned++;
   }
   

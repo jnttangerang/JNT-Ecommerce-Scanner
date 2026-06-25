@@ -941,40 +941,54 @@ export class DatabaseService {
       if (data && data.success) {
         const cloudRecords: ScanRecord[] = data.records || [];
         
-        // Merge cloud records with our existing cache in a smart, protective way
-        // 1. Map existing local records based on Resi barcode (case-insensitive)
-        const localMap = new Map<string, ScanRecord>();
+        // Merge cloud records with our existing cache in a safe, protective way
+        // We start with a copy of all existing local records to ensure zero data loss
+        const finalMergedMap = new Map<string, ScanRecord>();
+        
+        // 1. First, populate the map with all our existing local records (to ensure we don't lose anything)
         this.recordsCache.forEach(r => {
           if (r.Resi) {
-            localMap.set(r.Resi.toLowerCase(), r);
+            finalMergedMap.set(r.Resi.toLowerCase(), r);
           }
         });
 
-        // 2. Map and update cloud records: if a record exists locally, preserve local state like RetakeStatus 
-        // and keep the complete local item if it is still "PENDING" to prevent deleting unsynced work!
-        const mergedRecords = cloudRecords.map(cloudRec => {
-          if (!cloudRec.Resi) return cloudRec;
-          const localRec = localMap.get(cloudRec.Resi.toLowerCase());
+        // 2. Overwrite/merge with cloud records
+        cloudRecords.forEach(cloudRec => {
+          if (!cloudRec.Resi) return;
+          const resiKey = cloudRec.Resi.toLowerCase();
+          const localRec = finalMergedMap.get(resiKey);
+          
           if (localRec) {
+            // Merge cloud record into existing local record
+            // If local record is PENDING, do not overwrite its SyncStatus or other fields to prevent overriding unsynced local changes
             if (localRec.SyncStatus === "PENDING") {
-              return localRec; // Keep our full local pending record so we don't wipe unsynced work
+              finalMergedMap.set(resiKey, {
+                ...localRec,
+                RetakeStatus: cloudRec.RetakeStatus || localRec.RetakeStatus
+              });
+            } else {
+              // Local is already SYNCED or others, we can update with cloud data safely
+              finalMergedMap.set(resiKey, {
+                ...localRec,
+                ...cloudRec,
+                // Maintain local-only properties from browser session if they exist
+                RetakeStatus: cloudRec.RetakeStatus || localRec.RetakeStatus,
+                // If local has a rich base64 image and cloud has a simple URL or empty, keep local rich base64
+                PhotoURL: (localRec.PhotoURL && localRec.PhotoURL.startsWith("data:image")) ? localRec.PhotoURL : (cloudRec.PhotoURL || localRec.PhotoURL)
+              });
             }
-            return {
+          } else {
+            // Cloud record is new to this device, add it as SYNCED
+            finalMergedMap.set(resiKey, {
               ...cloudRec,
-              // Maintain local-only properties from browser session so they can be restored
-              RetakeStatus: localRec.RetakeStatus || cloudRec.RetakeStatus,
-              // If the local record contains a rich base64 PhotoURL stored locally, and the cloud has a placeholder or empty url, keep the local rich one
-              PhotoURL: (localRec.PhotoURL && localRec.PhotoURL.startsWith("data:image")) ? localRec.PhotoURL : (cloudRec.PhotoURL || localRec.PhotoURL)
-            };
+              SyncStatus: "SYNCED"
+            });
           }
-          return cloudRec;
         });
 
-        // 3. Find any local pending records that do not exist on the cloud yet, and append them back
-        const cloudResis = new Set(cloudRecords.map(r => r.Resi ? r.Resi.toLowerCase() : ""));
-        const missingLocalPending = this.recordsCache.filter(r => r.SyncStatus === "PENDING" && r.Resi && !cloudResis.has(r.Resi.toLowerCase()));
-
-        const finalMerged = [...missingLocalPending, ...mergedRecords];
+        // Convert map back to sorted array
+        const finalMerged = Array.from(finalMergedMap.values())
+          .sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
 
         this.saveRecords(finalMerged);
         return { success: true };
