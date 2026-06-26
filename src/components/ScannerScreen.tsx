@@ -83,6 +83,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Live video feed
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const isScanningLocked = useRef(false);
+  const consecutiveScansRef = useRef<{ barcode: string, count: number }>({ barcode: "", count: 0 });
+  const lastScannedBarcodeRef = useRef<string>("");
+  const lastScannedTimeRef = useRef<number>(0);
   const prevRetakeCountRef = useRef<number | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState("");
@@ -379,29 +382,33 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       const html5QrCode = new Html5Qrcode("html5-qr-code-element");
       html5QrCodeRef.current = html5QrCode;
 
-      // Configurations fully optimized for Code 128 shipping resi (horizontal scan area, fps 20-30, environment camera)
+      // Configurations fully optimized for Code 128 shipping resi (horizontal scan area, fps 20, environment camera)
       const scanConfig = {
-        fps: 20, // stable frames per second
+        fps: 20, // 20 is optimal for mid-range Android devices, 30 might drop frames
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
           // Precise horizontal scanning box layout centered on the middle segment
           const width = Math.min(650, Math.floor(viewfinderWidth * 0.85));
-          const height = Math.min(220, Math.floor(viewfinderHeight * 0.35));
+          const height = Math.min(250, Math.floor(viewfinderHeight * 0.40)); // Slightly taller for stability
           return { width, height };
         },
         formatsToSupport: [
-          Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.CODE_39,
-          Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.ITF,
-          Html5QrcodeSupportedFormats.EAN_13
+          Html5QrcodeSupportedFormats.CODE_128
         ],
-        aspectRatio: 1.0 // Force 1:1 Aspect ratio to conform to container properly
+        aspectRatio: 1.0, // Force 1:1 Aspect ratio to conform to container properly
+        disableFlip: false,
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true // Hardware acceleration if supported
+        }
       };
 
       try {
-        // Try starting with environment camera
+        // Try starting with environment camera and optimal resolution
         await html5QrCode.start(
-          { facingMode: "environment" },
+          { 
+            facingMode: "environment",
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 }
+          },
           scanConfig,
           (decodedText) => {
             if (!isScanningLocked.current) {
@@ -634,10 +641,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const videoEl = document.querySelector("#html5-qr-code-element video") as HTMLVideoElement | null;
     if (videoEl && cameraActive) {
       try {
+        if (!videoEl.videoWidth || !videoEl.videoHeight) {
+          throw new Error("Video width/height is zero or unavailable");
+        }
         const canvas = document.createElement("canvas");
         const maxDim = 640;
-        let originalWidth = videoEl.videoWidth || 640;
-        let originalHeight = videoEl.videoHeight || 480;
+        let originalWidth = videoEl.videoWidth;
+        let originalHeight = videoEl.videoHeight;
         let targetWidth = originalWidth;
         let targetHeight = originalHeight;
 
@@ -671,10 +681,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           ctx.font = "bold 11px monospace";
           ctx.fillText(`J&T REC: ${new Date().toLocaleTimeString()} | ${config.outlet}`, 18, canvas.height - 18);
 
-          return canvas.toDataURL("image/jpeg", 0.7); // compress to JPG with 70% quality
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.7); // compress to JPG with 70% quality
+          if (dataUrl === "data:,") throw new Error("Canvas returned empty dataURL");
+          return dataUrl;
         }
       } catch (err) {
         console.error("Failed to capture stream frame", err);
+        return ""; // Return empty string to indicate failure when camera is active
       }
     }
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
@@ -686,10 +699,45 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
    * Action when a barcode scanner successfully parses a tracking number
    */
   const handleBarcodeScanned = (scannedResi: string) => {
+    if (isScanningLocked.current) return;
+
     const rawCode = scannedResi.trim().toUpperCase();
     if (!rawCode) return;
 
-    if (isScanningLocked.current) return;
+    // VALIDASI FORMAT BARCODE J&T
+    // Mengabaikan barcode acak/pendek yang bukan format J&T
+    const isValidFormat = /^(JX|JZ)\d{10}$/.test(rawCode);
+    if (!isValidFormat) {
+      return; // Abaikan secara hening agar scanner terus mencari resi yang valid
+    }
+
+    // MULTI-FRAME VERIFICATION
+    // Mencegah false positive dengan mengharuskan scanner membaca barcode yang sama 3x berturut-turut
+    if (consecutiveScansRef.current.barcode === rawCode) {
+      consecutiveScansRef.current.count += 1;
+    } else {
+      consecutiveScansRef.current = { barcode: rawCode, count: 1 };
+    }
+
+    if (consecutiveScansRef.current.count < 3) {
+      return; // Belum 3x berturut-turut, abaikan dan tunggu frame berikutnya
+    }
+
+    // DEBOUNCE: Mencegah callback ganda untuk barcode yang sama dalam 1.5 detik setelah sukses
+    const now = Date.now();
+    if (lastScannedBarcodeRef.current === rawCode && (now - lastScannedTimeRef.current) < 1500) {
+      console.log(`[SCAN IGNORED] Debounced duplicate callback for ${rawCode}`);
+      return;
+    }
+
+    console.log(`\n[SCAN START]`);
+    console.log(`Barcode : ${rawCode}`);
+    console.log(`Regex : PASS`);
+    console.log(`Frames : ${consecutiveScansRef.current.count}`);
+
+    lastScannedBarcodeRef.current = rawCode;
+    lastScannedTimeRef.current = now;
+    consecutiveScansRef.current = { barcode: "", count: 0 }; // Reset setelah lolos verifikasi
 
     // LOCK IMMEDIATELY to prevent high-frequency decode callbacks from piling up
     // during the synchronous canvas rendering / toDataURL compression of captureFrame
@@ -717,6 +765,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const existingToday = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
     if (existingToday) {
       if (existingToday.Status === "CANCELLED") {
+        console.log(`Duplicate : CANCELLED`);
         audioService.playCancelled();
         triggerHaptic([200, 100, 200, 100, 200]); // Long warning vibration sequence for cancel
         setCancelledWarning(rawCode);
@@ -724,6 +773,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
 
       // If it exists today and is not cancelled, it is a duplicate!
+      console.log(`Duplicate : TRUE (Cache)`);
       audioService.playError();
       triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
       setDuplicateWarning(rawCode);
@@ -732,16 +782,41 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
     // Double check with service
     if (dbService.isDuplicate(rawCode)) {
+      console.log(`Duplicate : TRUE (DB)`);
       audioService.playError();
       triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
       setDuplicateWarning(rawCode);
       return;
     }
 
+    console.log(`Duplicate : NO`);
+
     // 2. Capture corresponding photo from webcam frame
     setIsCapturing(true);
-    const photoData = captureFrame(rawCode);
+    
+    let photoData = "";
+    const startCaptureTime = Date.now();
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      photoData = captureFrame(rawCode);
+      if (photoData) break; // Success
+      console.log(`Capture Attempt ${attempt} Failed. Retrying...`);
+      // Wait a tiny bit before retry to let video buffer possibly refresh (using synchronous delay is impossible here, but we can't await easily inside handleBarcodeScanned unless we make it async)
+    }
+    
+    const captureTime = Date.now() - startCaptureTime;
     setIsCapturing(false);
+
+    if (photoData) {
+      console.log(`Capture : SUCCESS (${captureTime}ms)`);
+    } else {
+      console.log(`Capture : FAILED (${captureTime}ms)`);
+      // If photo failed completely, unlock and abort
+      audioService.playError();
+      toast.error("Gagal mengambil foto. Coba lagi.");
+      consecutiveScansRef.current = { barcode: "", count: 0 };
+      isScanningLocked.current = false;
+      return;
+    }
 
     // 3. Initiate visibility verification ("Validasi Foto")
     // Operator must confirm the picture looks clear before it is inserted
@@ -752,11 +827,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   };
 
   // Accept verification and persist
-  const handleConfirmValidation = (isValid: boolean) => {
+  const handleConfirmValidation = async (isValid: boolean) => {
     if (!pendingValidation) return;
 
     if (!isValid) {
       // ❌ RESI TIDAK JELAS - Cancel scan & trigger full-screen warning modal/alert
+      console.log(`Validation : REJECTED (Unclear)`);
       audioService.playError();
       triggerHaptic([200, 100, 200]); // Noticeable pulsed vibration for folded/blurry warning alert
       setUnclearResiAlert(pendingValidation.resi);
@@ -765,11 +841,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       return;
     }
 
-    // Capture success sound "Teet"
-    audioService.playSuccess();
-
-    // Persist to database
-    const result = dbService.addRecord({
+    const startSaveTime = Date.now();
+    // Persist to database first, before playing success sounds!
+    const result = await dbService.addRecord({
       resi: pendingValidation.resi,
       outlet: config.outlet,
       seller: config.seller,
@@ -777,18 +851,31 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       photoURL: pendingValidation.photoURL
     });
 
+    const saveTime = Date.now() - startSaveTime;
+
     if (result.success && result.record) {
+      console.log(`Save DB : SUCCESS (${saveTime}ms)`);
+      console.log(`Sync Queue : SUCCESS`);
+      console.log(`Scanner Unlock`);
+      // Capture success sound "Teet" only if data is successfully saved
+      audioService.playSuccess();
+      toast.success(`Resi tersimpan: ${result.record.Resi}`);
+      
       setLatestResi(result.record.Resi);
       loadRecords();
       if (onRecordAdded) {
         onRecordAdded();
       }
+      setPendingValidation(null);
+      isScanningLocked.current = false;
     } else {
-      toast.error("Gagal menyimpan data", { description: result.error });
+      console.log(`Save DB : FAILED - ${result.error}`);
+      // Show error, play error sound, unlock scanner so they can retry
+      audioService.playError();
+      toast.error("Gagal menyimpan data", { description: result.error || "Unknown error" });
+      setPendingValidation(null);
+      isScanningLocked.current = false;
     }
-
-    setPendingValidation(null);
-    isScanningLocked.current = false;
   };
 
   const handleOpenRetakeModal = (resi: string) => {

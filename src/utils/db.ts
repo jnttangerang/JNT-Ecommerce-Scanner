@@ -380,11 +380,11 @@ export class DatabaseService {
   }
 
   // Internal helper to persist cache to IndexedDB and LocalStorage (with size-throttled safe fallback)
-  private saveRecords(records: ScanRecord[]) {
+  private async saveRecords(records: ScanRecord[]): Promise<boolean> {
     this.recordsCache = records;
     
     // 1. Asynchronously write all to IndexedDB (unlimited size limit & avoids blocking UI thread)
-    saveRecordsToIDB(records);
+    const idbSuccess = await saveRecordsToIDB(records);
 
     // 2. Keep localStorage size strictly under 500KB to completely avoid the 5MB QuotaExceededError.
     // We only keep full base64 images inside the 5 most recent scans. For the older files, we keep all
@@ -415,6 +415,8 @@ export class DatabaseService {
         console.error("Critical: Could not write to localStorage at all", e);
       }
     }
+    
+    return idbSuccess;
   }
 
   // Initialize lists
@@ -598,13 +600,13 @@ export class DatabaseService {
   /**
    * Save a newly scanned barcode record
    */
-  public addRecord(data: {
+  public async addRecord(data: {
     resi: string;
     outlet: string;
     seller: string;
     operator: string;
     photoURL?: string;
-  }): { success: boolean; record?: ScanRecord; error?: string } {
+  }): Promise<{ success: boolean; record?: ScanRecord; error?: string }> {
     const resi = data.resi.trim().toUpperCase();
     if (!resi) return { success: false, error: "Tracking number empty" };
 
@@ -648,9 +650,19 @@ export class DatabaseService {
     };
 
     records.unshift(newRecord);
-    this.saveRecords(records);
-
-    return { success: true, record: newRecord };
+    const saveSuccess = await this.saveRecords(records);
+    
+    if (saveSuccess) {
+      // Validate that it actually exists in memory cache as expected
+      const verify = this.getRecords().find(r => r.ID === newRecord.ID);
+      if (verify) {
+        return { success: true, record: newRecord };
+      }
+    }
+    
+    // Rollback if IndexedDB write failed or verification failed
+    this.recordsCache = this.recordsCache.filter(r => r.ID !== newRecord.ID);
+    return { success: false, error: "Gagal menyimpan ke database lokal (IndexedDB)" };
   }
 
   /**
