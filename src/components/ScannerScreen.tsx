@@ -83,6 +83,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Live video feed
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const isScanningLocked = useRef(false);
+  const isCameraTransitioning = useRef(false);
   const consecutiveScansRef = useRef<{ barcode: string, count: number }>({ barcode: "", count: 0 });
   const lastScannedBarcodeRef = useRef<string>("");
   const lastScannedTimeRef = useRef<number>(0);
@@ -364,6 +365,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Camera stream activation under html5-qrcode
   const startCamera = async () => {
+    if (isCameraTransitioning.current) return;
+    isCameraTransitioning.current = true;
     setCameraPermissionError("");
     setTorchSupported(false);
     setTorchActive(false);
@@ -373,7 +376,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     try {
       if (html5QrCodeRef.current) {
         try {
-          await html5QrCodeRef.current.stop();
+          if (html5QrCodeRef.current.getState() !== 1) { // Html5QrcodeScannerState.NOT_STARTED = 1, if it's already running/paused, stop it first.
+             await html5QrCodeRef.current.stop();
+          }
         } catch (_) {}
         html5QrCodeRef.current = null;
       }
@@ -493,13 +498,19 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         setCameraPermissionError(`Gagal memulai kamera: ${err?.message || err}`);
       }
       setCameraActive(false);
+    } finally {
+      isCameraTransitioning.current = false;
     }
   };
 
   const stopCamera = async () => {
+    if (isCameraTransitioning.current) return;
+    isCameraTransitioning.current = true;
     if (html5QrCodeRef.current) {
       try {
-        await html5QrCodeRef.current.stop();
+        if (html5QrCodeRef.current.getState() !== 1) { // 1 = NOT_STARTED
+          await html5QrCodeRef.current.stop();
+        }
       } catch (_) {}
       html5QrCodeRef.current = null;
     }
@@ -514,6 +525,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setTorchActive(false);
     setTorchSupported(false);
     setZoomSupported(false);
+    isCameraTransitioning.current = false;
   };
 
   const toggleTorch = async () => {
