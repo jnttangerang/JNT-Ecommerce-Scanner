@@ -54,6 +54,9 @@ interface ScannerProps {
   isCloudDataFresh?: boolean;
 }
 
+// Global flag to prevent React Strict Mode mount/unmount race conditions
+let globalCameraTransitioning = false;
+
 export const ScannerScreen: React.FC<ScannerProps> = ({
   config,
   onBack,
@@ -365,8 +368,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Camera stream activation under html5-qrcode
   const startCamera = async () => {
-    if (isCameraTransitioning.current) return;
+    let retries = 20;
+    while ((isCameraTransitioning.current || globalCameraTransitioning) && retries > 0) {
+      await new Promise(r => setTimeout(r, 150));
+      retries--;
+    }
+    if (isCameraTransitioning.current || globalCameraTransitioning) return;
+    
     isCameraTransitioning.current = true;
+    globalCameraTransitioning = true;
     setCameraPermissionError("");
     setTorchSupported(false);
     setTorchActive(false);
@@ -376,12 +386,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     try {
       if (html5QrCodeRef.current) {
         try {
-          if (html5QrCodeRef.current.getState() !== 1) { // Html5QrcodeScannerState.NOT_STARTED = 1, if it's already running/paused, stop it first.
+          const state = html5QrCodeRef.current.getState();
+          if (state === 2 || state === 3) {
              await html5QrCodeRef.current.stop();
           }
+          html5QrCodeRef.current.clear();
         } catch (_) {}
         html5QrCodeRef.current = null;
       }
+      
+      // Wait a moment for DOM to completely clear
+      await new Promise(r => setTimeout(r, 100));
 
       // Instantiate html5-qrcode on our container element ID
       const html5QrCode = new Html5Qrcode("html5-qr-code-element");
@@ -500,32 +515,46 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       setCameraActive(false);
     } finally {
       isCameraTransitioning.current = false;
+      globalCameraTransitioning = false;
     }
   };
 
   const stopCamera = async () => {
-    if (isCameraTransitioning.current) return;
+    let retries = 20;
+    while ((isCameraTransitioning.current || globalCameraTransitioning) && retries > 0) {
+      await new Promise(r => setTimeout(r, 150));
+      retries--;
+    }
+    
     isCameraTransitioning.current = true;
-    if (html5QrCodeRef.current) {
-      try {
-        if (html5QrCodeRef.current.getState() !== 1) { // 1 = NOT_STARTED
-          await html5QrCodeRef.current.stop();
-        }
-      } catch (_) {}
-      html5QrCodeRef.current = null;
+    globalCameraTransitioning = true;
+    
+    try {
+      if (html5QrCodeRef.current) {
+        try {
+          const state = html5QrCodeRef.current.getState();
+          if (state === 2 || state === 3) {
+            await html5QrCodeRef.current.stop();
+          }
+          html5QrCodeRef.current.clear();
+        } catch (_) {}
+        html5QrCodeRef.current = null;
+      }
+    } finally {
+      if (focusTimeoutRef.current) {
+        clearTimeout(focusTimeoutRef.current);
+        focusTimeoutRef.current = null;
+      }
+      setTapFocusPos(null);
+      setIsRefocusing(false);
+      setFocusSupported(false);
+      setCameraActive(false);
+      setTorchActive(false);
+      setTorchSupported(false);
+      setZoomSupported(false);
+      isCameraTransitioning.current = false;
+      globalCameraTransitioning = false;
     }
-    if (focusTimeoutRef.current) {
-      clearTimeout(focusTimeoutRef.current);
-      focusTimeoutRef.current = null;
-    }
-    setTapFocusPos(null);
-    setIsRefocusing(false);
-    setFocusSupported(false);
-    setCameraActive(false);
-    setTorchActive(false);
-    setTorchSupported(false);
-    setZoomSupported(false);
-    isCameraTransitioning.current = false;
   };
 
   const toggleTorch = async () => {
