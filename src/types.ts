@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type StatusType = "SCANNED" | "CANCELLED";
+export type StatusType = "SCANNED" | "DISERAHKAN" | "PICKUP" | "CANCELLED";
+export type SyncStatusType = "PENDING" | "UPLOADING" | "SYNCED" | "FAILED";
 
 export interface ScanRecord {
   ID: string;
@@ -15,9 +16,18 @@ export interface ScanRecord {
   Operator: string;
   Status: StatusType;
   PhotoURL: string; // Base64 data-uri or simulated URL
-  SyncStatus: "PENDING" | "SYNCED";
+  SyncStatus: SyncStatusType;
   ScanTimestamp: number; // for sorting
   RetakeStatus?: "PENDING" | "RETAKEN";
+}
+
+export interface ImportLog {
+  id: string;
+  timestamp: number;
+  dateStr: string;
+  importedBy: string;
+  successCount: number;
+  failedCount: number;
 }
 
 export interface Seller {

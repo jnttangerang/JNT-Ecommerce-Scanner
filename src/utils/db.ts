@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ScanRecord, Seller, Outlet, Operator } from "../types";
+import { ScanRecord, Seller, Outlet, Operator, StatusType } from "../types";
 
 // Predefined constants and localstorage keys
 const SELLER_KEY = "jt_pickup_sellers";
 const OUTLET_KEY = "jt_pickup_outlets";
 const OPERATOR_KEY = "jt_pickup_operators";
 const RECORDS_KEY = "jt_pickup_records";
+const IMPORT_LOGS_KEY = "jt_pickup_import_logs";
 const OFFLINE_MODE_KEY = "jt_pickup_offline_mode";
 const CLOUD_CONFIG_KEY = "jt_pickup_cloud_config";
 
@@ -326,6 +327,43 @@ function getAllRecordsFromIDB(): Promise<ScanRecord[] | null> {
 export class DatabaseService {
   private isSyncingInProgress = false;
   private recordsCache: ScanRecord[] = [];
+
+  // STATE MACHINE VALIDATOR
+  public validateStateTransition(current: StatusType, next: StatusType): boolean {
+    if (current === next) return true;
+    switch (current) {
+      case "SCANNED":
+        return next === "DISERAHKAN" || next === "CANCELLED";
+      case "DISERAHKAN":
+        return next === "PICKUP";
+      case "PICKUP":
+        return false;
+      case "CANCELLED":
+        return false;
+      default:
+        return true; // allow initial or unknown state transitions
+    }
+  }
+
+  public getImportLogs(): import("../types").ImportLog[] {
+    try {
+      const raw = localStorage.getItem(IMPORT_LOGS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public addImportLog(log: Omit<import("../types").ImportLog, "id">): void {
+    const logs = this.getImportLogs();
+    const newLog: import("../types").ImportLog = {
+      ...log,
+      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+    };
+    logs.unshift(newLog);
+    // Keep only the last 50 logs
+    localStorage.setItem(IMPORT_LOGS_KEY, JSON.stringify(logs.slice(0, 50)));
+  }
 
   constructor() {
     // 1. Synchronously pre-load in-memory cache from localStorage or mock generators so UI gets instant content
@@ -666,21 +704,36 @@ export class DatabaseService {
   }
 
   /**
-   * Updates package status (e.g. from SCANNED to CANCELLED)
+   * Updates package status (e.g. from SCANNED to DISERAHKAN) with strict state machine validation
    */
-  public updateRecordStatus(resi: string, status: "SCANNED" | "CANCELLED"): boolean {
+  public async updateRecordStatus(resi: string, newStatus: StatusType): Promise<{ success: boolean; error?: string }> {
     const records = [ ...this.getRecords() ];
     const index = records.findIndex(r => r.Resi === resi);
-    if (index === -1) return false;
+    
+    if (index === -1) return { success: false, error: `Resi ${resi} tidak ditemukan` };
+
+    const currentStatus = records[index].Status;
+
+    if (currentStatus === newStatus) {
+      return { success: true };
+    }
+
+    if (!this.validateStateTransition(currentStatus, newStatus)) {
+      return { success: false, error: `Transisi tidak valid: ${currentStatus} → ${newStatus}` };
+    }
 
     records[index] = { 
       ...records[index], 
-      Status: status,
+      Status: newStatus,
       SyncStatus: "PENDING" // Always mark as PENDING to queue for syncing immediately
     };
     
-    this.saveRecords(records);
-    return true;
+    const saveSuccess = await this.saveRecords(records);
+    if (saveSuccess) {
+      return { success: true };
+    }
+    
+    return { success: false, error: "Gagal menyimpan perubahan status" };
   }
 
   /**

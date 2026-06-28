@@ -86,7 +86,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Live video feed
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const isScanningLocked = useRef(false);
-  const isCameraTransitioning = useRef(false);
   const consecutiveScansRef = useRef<{ barcode: string, count: number }>({ barcode: "", count: 0 });
   const lastScannedBarcodeRef = useRef<string>("");
   const lastScannedTimeRef = useRef<number>(0);
@@ -368,15 +367,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Camera stream activation under html5-qrcode
   const startCamera = async () => {
-    let retries = 20;
-    while ((isCameraTransitioning.current || globalCameraTransitioning) && retries > 0) {
-      await new Promise(r => setTimeout(r, 150));
-      retries--;
-    }
-    if (isCameraTransitioning.current || globalCameraTransitioning) return;
-    
-    isCameraTransitioning.current = true;
+    if (globalCameraTransitioning) return;
     globalCameraTransitioning = true;
+    
     setCameraPermissionError("");
     setTorchSupported(false);
     setTorchActive(false);
@@ -387,7 +380,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       if (html5QrCodeRef.current) {
         try {
           const state = html5QrCodeRef.current.getState();
-          if (state === 2 || state === 3) {
+          if (state === 2 || state === 3) { // SCANNING or PAUSED
              await html5QrCodeRef.current.stop();
           }
           html5QrCodeRef.current.clear();
@@ -395,8 +388,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         html5QrCodeRef.current = null;
       }
       
-      // Wait a moment for DOM to completely clear
-      await new Promise(r => setTimeout(r, 100));
+      // Give the DOM a tiny bit of time to breathe
+      await new Promise(r => setTimeout(r, 50));
 
       // Instantiate html5-qrcode on our container element ID
       const html5QrCode = new Html5Qrcode("html5-qr-code-element");
@@ -514,26 +507,19 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
       setCameraActive(false);
     } finally {
-      isCameraTransitioning.current = false;
       globalCameraTransitioning = false;
     }
   };
 
   const stopCamera = async () => {
-    let retries = 20;
-    while ((isCameraTransitioning.current || globalCameraTransitioning) && retries > 0) {
-      await new Promise(r => setTimeout(r, 150));
-      retries--;
-    }
-    
-    isCameraTransitioning.current = true;
+    if (globalCameraTransitioning) return;
     globalCameraTransitioning = true;
     
     try {
       if (html5QrCodeRef.current) {
         try {
           const state = html5QrCodeRef.current.getState();
-          if (state === 2 || state === 3) {
+          if (state === 2 || state === 3) { // SCANNING or PAUSED
             await html5QrCodeRef.current.stop();
           }
           html5QrCodeRef.current.clear();
@@ -552,7 +538,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       setTorchActive(false);
       setTorchSupported(false);
       setZoomSupported(false);
-      isCameraTransitioning.current = false;
       globalCameraTransitioning = false;
     }
   };

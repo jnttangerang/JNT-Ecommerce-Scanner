@@ -85,6 +85,11 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     return new Date().toISOString().split("T")[0];
   });
 
+  // Import YoYi States
+  const [yoyiInput, setYoyiInput] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [importLogs, setImportLogs] = useState<import("../types").ImportLog[]>([]);
+
   // Master lists & Configuration State
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [operators, setOperators] = useState<Operator[]>([]);
@@ -190,6 +195,9 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     setAllRecords(records);
     setFilteredRecords(records);
     calculateStatistics(records);
+
+    // Load import logs
+    setImportLogs(dbService.getImportLogs());
 
     // Load configurations and masters
     setSellers(dbService.getSellers());
@@ -1431,20 +1439,14 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const ownerPaginatedRecords = filteredRecords.slice(ownerStartIndex, ownerEndIndex);
 
   // Cancel order trigger function (marks status to CANCELLED)
-  const handleMarkCancelled = (targetResi: string) => {
-    const success = dbService.updateRecordStatus(targetResi, "CANCELLED");
-    if (success) {
+  const handleMarkCancelled = async (targetResi: string) => {
+    const result = await dbService.updateRecordStatus(targetResi, "CANCELLED");
+    if (result.success) {
       loadData();
       onStatusChanged();
-    }
-  };
-
-  // Re-verify back to scanned
-  const handleMarkScanned = (targetResi: string) => {
-    const success = dbService.updateRecordStatus(targetResi, "SCANNED");
-    if (success) {
-      loadData();
-      onStatusChanged();
+      toast.success("Berhasil mengubah status");
+    } else {
+      toast.error(result.error || "Gagal mengubah status");
     }
   };
 
@@ -1464,6 +1466,85 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
   const handleNextReview = () => {
     setReviewIndex((prev) => (prev < filteredRecords.length - 1 ? prev + 1 : 0));
+  };
+
+  // Handle YoYi Import
+  const handleImportYoYi = async () => {
+    if (!yoyiInput.trim()) {
+      toast.error("Data YoYi tidak boleh kosong!");
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const lines = yoyiInput.trim().split('\n');
+      if (lines.length < 2) {
+        toast.error("Format tidak valid: Harus ada header dan minimal 1 data.");
+        return;
+      }
+
+      const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
+      const idxResi = headers.findIndex(h => h === "nomor resi");
+      const idxStatusPaket = headers.findIndex(h => h === "status paket");
+      const idxStatusWaybill = headers.findIndex(h => h === "status waybill");
+
+      if (idxResi === -1 || idxStatusPaket === -1 || idxStatusWaybill === -1) {
+        toast.error("Header tidak valid! Pastikan ada kolom 'Nomor Resi', 'Status Paket', dan 'Status Waybill'.");
+        return;
+      }
+
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split('\t').map(c => c.trim());
+        if (cols.length < Math.max(idxResi, idxStatusPaket, idxStatusWaybill)) continue;
+
+        const resi = cols[idxResi];
+        const statusPaket = cols[idxStatusPaket].toLowerCase();
+        const statusWaybill = cols[idxStatusWaybill].toLowerCase();
+        
+        let targetStatus: import("../types").StatusType = "SCANNED";
+        
+        if (statusWaybill === "sudah pickup") {
+          targetStatus = "PICKUP";
+        } else if (statusPaket === "diserahkan") {
+          targetStatus = "DISERAHKAN";
+        } else if (statusPaket === "untuk diserahkan") {
+          targetStatus = "SCANNED";
+        } else {
+          // Unhandled status mapping, skip
+          failedCount++;
+          continue;
+        }
+
+        const res = await dbService.updateRecordStatus(resi, targetStatus);
+        if (res.success) {
+          successCount++;
+        } else {
+          failedCount++;
+        }
+      }
+
+      const now = new Date();
+      dbService.addImportLog({
+        timestamp: now.getTime(),
+        dateStr: now.toLocaleString('id-ID'),
+        importedBy: "Owner", // Could be from logged in user if auth exists
+        successCount,
+        failedCount
+      });
+
+      toast.success(`Import selesai! Berhasil: ${successCount}, Gagal/Skip: ${failedCount}`);
+      setYoyiInput("");
+      loadData();
+      onStatusChanged();
+    } catch (err) {
+      toast.error("Terjadi kesalahan saat memproses data YoYi");
+      console.error(err);
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   // Convert currently loaded table to downloadable CSV
@@ -1684,13 +1765,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                     <span>Tandai Cancelled</span>
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleMarkScanned(activeReviewRecord.Resi)}
-                    className="w-full bg-slate-900 hover:bg-slate-800 text-green-400 border border-slate-800 py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider font-bold"
-                  >
-                    <CheckCircle2 className="h-5 w-5" />
-                    <span>Kembalikan ke Scanned</span>
-                  </button>
+                  <div className="w-full bg-slate-900 border border-slate-800 py-5 px-6 rounded-2xl flex items-center justify-center space-x-2 text-sm uppercase tracking-wider font-bold text-slate-500">
+                    <Ban className="h-5 w-5" />
+                    <span>STATUS FINAL (BATAL)</span>
+                  </div>
                 )}
 
                 {/* Retake Button */}
@@ -1946,6 +2024,60 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         </div>
 
       </div>
+
+          {/* Import YoYi Section */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
+            <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-bold text-sm text-slate-800 flex items-center">
+                  <Cloud className="h-4 w-4 text-blue-500 mr-2" />
+                  UPDATE STATUS DARI YOYI
+                </h3>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Copy tabel dari menu Daftar Pesanan YoYi dan paste di bawah ini. Pastikan ada kolom Nomor Resi, Status Paket, Status Waybill.
+                </p>
+              </div>
+              
+              {importLogs.length > 0 && (
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-start gap-3">
+                  <div className="bg-blue-100 text-blue-600 p-2 rounded-lg shrink-0">
+                    <RefreshCw className="h-4 w-4" />
+                  </div>
+                  <div className="text-xs">
+                    <p className="font-bold text-slate-700">Import Terakhir: {importLogs[0].dateStr}</p>
+                    <p className="text-slate-500 mt-0.5">Oleh: {importLogs[0].importedBy} &bull; <span className="text-emerald-600 font-bold">{importLogs[0].successCount} berhasil</span> &bull; <span className="text-rose-600 font-bold">{importLogs[0].failedCount} gagal/skip</span></p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <textarea
+                value={yoyiInput}
+                onChange={(e) => setYoyiInput(e.target.value)}
+                placeholder="Paste data dari YoYi di sini...&#10;Contoh format harus ada kolom: Nomor Resi, Status Paket, Status Waybill"
+                className="w-full h-32 p-3 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-y"
+              />
+              <button
+                onClick={handleImportYoYi}
+                disabled={isImporting || !yoyiInput.trim()}
+                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white py-3 px-6 rounded-xl text-xs font-bold transition-all shadow-sm shadow-blue-500/20 active:scale-95 disabled:active:scale-100 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                {isImporting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>MEMPROSES IMPORT...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    <span>JALANKAN IMPORT YOYI</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
 
       {/* Summary Cards by Seller for Quick Validation */}
       <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
@@ -2258,14 +2390,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                     <span className="text-xs uppercase tracking-wider font-bold">Tandai Order Cancelled</span>
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleMarkScanned(activeReviewRecord.Resi)}
-                    className="w-full bg-slate-100 hover:bg-slate-200 text-green-700 border border-slate-200 py-4 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 cursor-pointer font-bold"
-                    id="mark-order-scanned-button"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span className="text-xs uppercase tracking-wider">Kembalikan ke Scanned (OK)</span>
-                  </button>
+                  <div className="w-full bg-slate-100 border border-slate-200 py-4 px-4 rounded-xl flex items-center justify-center space-x-2 font-bold text-slate-400">
+                    <Ban className="h-4 w-4" />
+                    <span className="text-xs uppercase tracking-wider">STATUS FINAL (BATAL)</span>
+                  </div>
                 )}
               </div>
 
@@ -2445,12 +2573,9 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                           BATALKAN
                         </button>
                       ) : (
-                        <button
-                          onClick={() => handleMarkScanned(r.Resi)}
-                          className="bg-green-50 hover:bg-green-600 text-green-700 hover:text-white border border-green-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer"
-                        >
-                          OK
-                        </button>
+                        <span className="bg-slate-100 text-slate-400 border border-slate-200 text-[10px] px-2.5 py-1 rounded-lg font-bold cursor-not-allowed">
+                          BATAL
+                        </span>
                       )}
                     </td>
                     <td className="p-3.5 font-bold font-mono text-slate-800 tracking-wider text-[12px]">
