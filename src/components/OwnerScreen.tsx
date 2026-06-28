@@ -1756,7 +1756,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
               {/* Status Update Actions - Big Focus Buttons */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activeReviewRecord.Status !== "CANCELLED" ? (
+                {activeReviewRecord.Status === "SCANNED" ? (
                   <button
                     onClick={() => handleMarkCancelled(activeReviewRecord.Resi)}
                     className="w-full bg-red-650 hover:bg-red-700 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider"
@@ -1767,7 +1767,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 ) : (
                   <div className="w-full bg-slate-900 border border-slate-800 py-5 px-6 rounded-2xl flex items-center justify-center space-x-2 text-sm uppercase tracking-wider font-bold text-slate-500">
                     <Ban className="h-5 w-5" />
-                    <span>STATUS FINAL (BATAL)</span>
+                    <span>STATUS FINAL ({activeReviewRecord.Status})</span>
                   </div>
                 )}
 
@@ -2380,7 +2380,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
               {/* Status Update Actions */}
               <div className="space-y-2">
-                {activeReviewRecord.Status !== "CANCELLED" ? (
+                {activeReviewRecord.Status === "SCANNED" ? (
                   <button
                     onClick={() => handleMarkCancelled(activeReviewRecord.Resi)}
                     className="w-full bg-red-600 hover:bg-red-750 text-white font-bold py-4 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer"
@@ -2392,7 +2392,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 ) : (
                   <div className="w-full bg-slate-100 border border-slate-200 py-4 px-4 rounded-xl flex items-center justify-center space-x-2 font-bold text-slate-400">
                     <Ban className="h-4 w-4" />
-                    <span className="text-xs uppercase tracking-wider">STATUS FINAL (BATAL)</span>
+                    <span className="text-xs uppercase tracking-wider">STATUS FINAL ({activeReviewRecord.Status})</span>
                   </div>
                 )}
               </div>
@@ -2565,7 +2565,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   <tr key={r.Resi + r.Jam} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-3.5 font-bold font-mono text-[11px] text-slate-500">{ownerStartIndex + idx + 1}</td>
                     <td className="p-3.5">
-                      {r.Status !== "CANCELLED" ? (
+                      {r.Status === "SCANNED" ? (
                         <button
                           onClick={() => handleMarkCancelled(r.Resi)}
                           className="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer"
@@ -2574,7 +2574,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                         </button>
                       ) : (
                         <span className="bg-slate-100 text-slate-400 border border-slate-200 text-[10px] px-2.5 py-1 rounded-lg font-bold cursor-not-allowed">
-                          BATAL
+                          {r.Status === "CANCELLED" ? "BATAL" : r.Status}
                         </span>
                       )}
                     </td>

@@ -54,9 +54,6 @@ interface ScannerProps {
   isCloudDataFresh?: boolean;
 }
 
-// Global flag to prevent React Strict Mode mount/unmount race conditions
-let globalCameraTransitioning = false;
-
 export const ScannerScreen: React.FC<ScannerProps> = ({
   config,
   onBack,
@@ -102,6 +99,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Ref to bypass stale closure on camera callbacks
   const handleBarcodeScannedRef = useRef<((scannedResi: string) => void) | null>(null);
+  
+  // Track camera transitions to prevent 'Cannot Transition to a new state' error
+  const cameraTransitionRef = useRef<Promise<void>>(Promise.resolve());
 
   // Keep callback ref updated with the latest states/props on every render
   useEffect(() => {
@@ -367,8 +367,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Camera stream activation under html5-qrcode
   const startCamera = async () => {
-    if (globalCameraTransitioning) return;
-    globalCameraTransitioning = true;
+    let resolveMutex: () => void;
+    const previousMutex = cameraTransitionRef.current;
+    cameraTransitionRef.current = new Promise<void>(r => { resolveMutex = () => r(); });
+    await previousMutex;
     
     setCameraPermissionError("");
     setTorchSupported(false);
@@ -507,13 +509,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
       setCameraActive(false);
     } finally {
-      globalCameraTransitioning = false;
+      resolveMutex!();
     }
   };
 
   const stopCamera = async () => {
-    if (globalCameraTransitioning) return;
-    globalCameraTransitioning = true;
+    let resolveMutex: () => void;
+    const previousMutex = cameraTransitionRef.current;
+    cameraTransitionRef.current = new Promise<void>(r => { resolveMutex = () => r(); });
+    await previousMutex;
     
     try {
       if (html5QrCodeRef.current) {
@@ -538,7 +542,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       setTorchActive(false);
       setTorchSupported(false);
       setZoomSupported(false);
-      globalCameraTransitioning = false;
+      resolveMutex!();
     }
   };
 
@@ -769,87 +773,95 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // during the synchronous canvas rendering / toDataURL compression of captureFrame
     isScanningLocked.current = true;
 
-    setDuplicateWarning(null);
-    setCancelledWarning(null);
+    // Wrap in async handler to prevent UI collision and decoupled execution
+    (async () => {
+      try {
+        setDuplicateWarning(null);
+        setCancelledWarning(null);
 
-    const todayStr = new Date().toISOString().split("T")[0];
-    const records = dbService.getRecords();
+        const todayStr = new Date().toISOString().split("T")[0];
+        const records = dbService.getRecords();
 
-    // Check if there is a pending retake first (can be from any day)
-    const pendingRetake = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.RetakeStatus === "PENDING");
-    if (pendingRetake) {
-      audioService.playRetake();
-      triggerHaptic([100, 50, 100]); // Distinct double-pulse for retake
-      toast.info(`Resi ${rawCode} terdeteksi memiliki instruksi FOTO ULANG (RETAKE) dari Owner!`, {
-        duration: 5000,
-      });
-      handleOpenRetakeModal(pendingRetake.Resi);
-      return;
-    }
+        // Check if there is a pending retake first (can be from any day)
+        const pendingRetake = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.RetakeStatus === "PENDING");
+        if (pendingRetake) {
+          audioService.playRetake();
+          triggerHaptic([100, 50, 100]); // Distinct double-pulse for retake
+          toast.info(`Resi ${rawCode} terdeteksi memiliki instruksi FOTO ULANG (RETAKE) dari Owner!`, {
+            duration: 5000,
+          });
+          handleOpenRetakeModal(pendingRetake.Resi);
+          return;
+        }
 
-    // Check if it already exists in today's cache (duplicate or cancelled today)
-    const existingToday = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
-    if (existingToday) {
-      if (existingToday.Status === "CANCELLED") {
-        console.log(`Duplicate : CANCELLED`);
-        audioService.playCancelled();
-        triggerHaptic([200, 100, 200, 100, 200]); // Long warning vibration sequence for cancel
-        setCancelledWarning(rawCode);
-        return;
+        // Check if it already exists in today's cache (duplicate or cancelled today)
+        const existingToday = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
+        if (existingToday) {
+          if (existingToday.Status === "CANCELLED") {
+            console.log(`Duplicate : CANCELLED`);
+            audioService.playCancelled();
+            triggerHaptic([200, 100, 200, 100, 200]); // Long warning vibration sequence for cancel
+            setCancelledWarning(rawCode);
+            return;
+          }
+
+          // If it exists today and is not cancelled, it is a duplicate!
+          console.log(`Duplicate : TRUE (Cache)`);
+          audioService.playError();
+          triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
+          setDuplicateWarning(rawCode);
+          return;
+        }
+
+        // Double check with service
+        if (dbService.isDuplicate(rawCode)) {
+          console.log(`Duplicate : TRUE (DB)`);
+          audioService.playError();
+          triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
+          setDuplicateWarning(rawCode);
+          return;
+        }
+
+        console.log(`Duplicate : NO`);
+
+        // 2. Capture corresponding photo from webcam frame
+        setIsCapturing(true);
+        
+        let photoData = "";
+        const startCaptureTime = Date.now();
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          photoData = captureFrame(rawCode);
+          if (photoData) break; // Success
+          console.log(`Capture Attempt ${attempt} Failed. Retrying...`);
+          await new Promise(r => setTimeout(r, 50));
+        }
+        
+        const captureTime = Date.now() - startCaptureTime;
+        setIsCapturing(false);
+
+        if (photoData) {
+          console.log(`Capture : SUCCESS (${captureTime}ms)`);
+        } else {
+          console.log(`Capture : FAILED (${captureTime}ms)`);
+          // If photo failed completely, unlock and abort
+          audioService.playError();
+          toast.error("Gagal mengambil foto. Coba lagi.");
+          consecutiveScansRef.current = { barcode: "", count: 0 };
+          isScanningLocked.current = false;
+          return;
+        }
+
+        // 3. Initiate visibility verification ("Validasi Foto")
+        // Operator must confirm the picture looks clear before it is inserted
+        setPendingValidation({
+          resi: rawCode,
+          photoURL: photoData
+        });
+      } catch (err) {
+        console.error("Scan processing error:", err);
+        isScanningLocked.current = false;
       }
-
-      // If it exists today and is not cancelled, it is a duplicate!
-      console.log(`Duplicate : TRUE (Cache)`);
-      audioService.playError();
-      triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
-      setDuplicateWarning(rawCode);
-      return;
-    }
-
-    // Double check with service
-    if (dbService.isDuplicate(rawCode)) {
-      console.log(`Duplicate : TRUE (DB)`);
-      audioService.playError();
-      triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
-      setDuplicateWarning(rawCode);
-      return;
-    }
-
-    console.log(`Duplicate : NO`);
-
-    // 2. Capture corresponding photo from webcam frame
-    setIsCapturing(true);
-    
-    let photoData = "";
-    const startCaptureTime = Date.now();
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      photoData = captureFrame(rawCode);
-      if (photoData) break; // Success
-      console.log(`Capture Attempt ${attempt} Failed. Retrying...`);
-      // Wait a tiny bit before retry to let video buffer possibly refresh (using synchronous delay is impossible here, but we can't await easily inside handleBarcodeScanned unless we make it async)
-    }
-    
-    const captureTime = Date.now() - startCaptureTime;
-    setIsCapturing(false);
-
-    if (photoData) {
-      console.log(`Capture : SUCCESS (${captureTime}ms)`);
-    } else {
-      console.log(`Capture : FAILED (${captureTime}ms)`);
-      // If photo failed completely, unlock and abort
-      audioService.playError();
-      toast.error("Gagal mengambil foto. Coba lagi.");
-      consecutiveScansRef.current = { barcode: "", count: 0 };
-      isScanningLocked.current = false;
-      return;
-    }
-
-    // 3. Initiate visibility verification ("Validasi Foto")
-    // Operator must confirm the picture looks clear before it is inserted
-    setPendingValidation({
-      resi: rawCode,
-      photoURL: photoData
-    });
+    })();
   };
 
   // Accept verification and persist
