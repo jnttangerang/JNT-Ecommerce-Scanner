@@ -394,7 +394,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       await new Promise(r => setTimeout(r, 50));
 
       // Instantiate html5-qrcode on our container element ID
-      const html5QrCode = new Html5Qrcode("html5-qr-code-element");
+      let html5QrCode = new Html5Qrcode("html5-qr-code-element");
       html5QrCodeRef.current = html5QrCode;
 
       // Configurations fully optimized for Code 128 shipping resi (horizontal scan area, fps 20, environment camera)
@@ -436,10 +436,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         );
       } catch (envError) {
         console.warn("Failed to start environment camera, falling back to any camera", envError);
+        
+        // IMPORTANT: html5-qrcode may leave its internal state as 'isTransitioning' if start() fails.
+        // We must create a new instance before retrying.
+        try { html5QrCode.clear(); } catch (_) {}
+        const fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
+        html5QrCodeRef.current = fallbackQrCode;
+
         // Fallback to any camera
         const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length > 0) {
-          await html5QrCode.start(
+          await fallbackQrCode.start(
             devices[0].id,
             scanConfig,
             (decodedText) => {
@@ -449,6 +456,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             },
             () => {}
           );
+          html5QrCode = fallbackQrCode; // update the local reference for track fetching below
         } else {
           throw new Error("No cameras found");
         }
