@@ -435,19 +435,16 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           () => {}
         );
       } catch (envError) {
-        console.warn("Failed to start environment camera, falling back to any camera", envError);
+        console.warn("Failed to start environment camera with resolution constraints, trying without constraints", envError);
         
-        // IMPORTANT: html5-qrcode may leave its internal state as 'isTransitioning' if start() fails.
-        // We must create a new instance before retrying.
         try { html5QrCode.clear(); } catch (_) {}
-        const fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
+        let fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
         html5QrCodeRef.current = fallbackQrCode;
 
-        // Fallback to any camera
-        const devices = await Html5Qrcode.getCameras();
-        if (devices && devices.length > 0) {
+        try {
+          // First fallback: just facingMode without width/height constraints
           await fallbackQrCode.start(
-            devices[0].id,
+            { facingMode: "environment" },
             scanConfig,
             (decodedText) => {
               if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
@@ -456,9 +453,42 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             },
             () => {}
           );
-          html5QrCode = fallbackQrCode; // update the local reference for track fetching below
-        } else {
-          throw new Error("No cameras found");
+          html5QrCode = fallbackQrCode;
+        } catch (envFallbackError) {
+          console.warn("Failed to start environment camera without constraints, falling back to device enumeration", envFallbackError);
+          
+          try { fallbackQrCode.clear(); } catch (_) {}
+          fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
+          html5QrCodeRef.current = fallbackQrCode;
+
+          // Second fallback: device enumeration
+          const devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0) {
+            // Find back camera if possible
+            let cameraId = devices[0].id;
+            const backCamera = devices.find(d => 
+              d.label.toLowerCase().includes('back') || 
+              d.label.toLowerCase().includes('environment') || 
+              d.label.toLowerCase().includes('rear')
+            );
+            if (backCamera) {
+              cameraId = backCamera.id;
+            }
+            
+            await fallbackQrCode.start(
+              cameraId,
+              scanConfig,
+              (decodedText) => {
+                if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
+                  handleBarcodeScannedRef.current(decodedText);
+                }
+              },
+              () => {}
+            );
+            html5QrCode = fallbackQrCode; // update the local reference for track fetching below
+          } else {
+            throw new Error("No cameras found");
+          }
         }
       }
 
