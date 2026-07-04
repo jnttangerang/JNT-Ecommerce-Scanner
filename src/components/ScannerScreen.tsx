@@ -466,26 +466,16 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           () => {}
         );
       } catch (envError) {
-        console.warn("Failed to start environment camera, falling back to any camera", envError);
+        console.warn("Failed to start environment camera with constraints, trying without resolution constraints", envError);
         
-        // IMPORTANT: html5-qrcode may leave its internal state as 'isTransitioning' if start() fails.
-        // We must create a new instance before retrying.
         try { html5QrCode.clear(); } catch (_) {}
-        const fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
+        let fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
         html5QrCodeRef.current = fallbackQrCode;
 
-        // Fallback: try to pick the back/rear camera by label instead of blindly using
-        // devices[0], which is the front camera on a number of Android/iPad devices.
-        const devices = await Html5Qrcode.getCameras();
-        if (devices && devices.length > 0) {
-          const backCamera = devices.find(d => {
-            const label = d.label.toLowerCase();
-            return (label.includes("back") || label.includes("rear") || label.includes("environment")) && !label.includes("front");
-          });
-          const chosenDevice = backCamera || devices[devices.length - 1] || devices[0];
-
+        try {
+          // First fallback: just facingMode without width/height constraints
           await fallbackQrCode.start(
-            chosenDevice.id,
+            { facingMode: "environment" },
             scanConfig,
             (decodedText) => {
               if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
@@ -494,9 +484,39 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             },
             () => {}
           );
-          html5QrCode = fallbackQrCode; // update the local reference for track fetching below
-        } else {
-          throw new Error("No cameras found");
+          html5QrCode = fallbackQrCode;
+        } catch (envFallbackError) {
+          console.warn("Failed to start environment camera without constraints, falling back to device enumeration", envFallbackError);
+          
+          try { fallbackQrCode.clear(); } catch (_) {}
+          fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
+          html5QrCodeRef.current = fallbackQrCode;
+
+          // Second fallback: try to pick the back/rear camera by label instead of blindly using
+          // devices[0], which is the front camera on a number of Android/iPad devices.
+          const devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0) {
+            const backCamera = devices.find(d => {
+              const label = d.label.toLowerCase();
+              return (label.includes("back") || label.includes("rear") || label.includes("environment") || label.includes("1")) && !label.includes("front");
+            });
+            // devices[devices.length - 1] is often the back camera on Android if it's the last one enumerated, but we can also check for camera facing 0 (usually front).
+            const chosenDevice = backCamera || devices.find(d => !d.label.toLowerCase().includes("front")) || devices[devices.length - 1] || devices[0];
+
+            await fallbackQrCode.start(
+              chosenDevice.id,
+              scanConfig,
+              (decodedText) => {
+                if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
+                  handleBarcodeScannedRef.current(decodedText);
+                }
+              },
+              () => {}
+            );
+            html5QrCode = fallbackQrCode; // update the local reference for track fetching below
+          } else {
+            throw new Error("No cameras found");
+          }
         }
       }
 
@@ -1547,6 +1567,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 )}
               </div>
             )}
+          </div>
 
           {/* Big Active Tracking Screen banner */}
           {latestResi && (
