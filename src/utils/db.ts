@@ -5,6 +5,21 @@
 
 import { ScanRecord, Seller, Outlet, Operator, StatusType } from "../types";
 
+/**
+ * Returns "today" as YYYY-MM-DD based on the DEVICE'S LOCAL time zone (WIB), not UTC.
+ *
+ * IMPORTANT: always use this (instead of `new Date().toISOString().split("T")[0]`,
+ * which returns the UTC date) anywhere "today" is compared against a stored Tanggal.
+ * WIB is UTC+7, so between 00:00-06:59 local time, the UTC date is still "yesterday" -
+ * mixing the two methods causes false duplicate-detection and mis-dated records.
+ */
+export function getTodayLocalDateString(date: Date = new Date()): string {
+  const YYYY = date.getFullYear();
+  const MM = String(date.getMonth() + 1).padStart(2, "0");
+  const DD = String(date.getDate()).padStart(2, "0");
+  return `${YYYY}-${MM}-${DD}`;
+}
+
 // Predefined constants and localstorage keys
 const SELLER_KEY = "jt_pickup_sellers";
 const OUTLET_KEY = "jt_pickup_outlets";
@@ -57,12 +72,12 @@ function generateHistoricalData(): ScanRecord[] {
   const operators = ["FITRI FAJRIA", "M. HARI YANTO", "M. DANANG"];
   const sellers = ["Skincare A", "Fashion B", "Elektronik C", "Hijab Trend"];
   
-  const today = new Date().toISOString().split("T")[0];
+  const today = getTodayLocalDateString();
   
   // Yesterday
   const yesterdayObj = new Date();
   yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-  const yesterday = yesterdayObj.toISOString().split("T")[0];
+  const yesterday = getTodayLocalDateString(yesterdayObj);
 
   // Let's generate about 40 entries for yesterday, and 30 for today
   let idCounter = 1000;
@@ -621,7 +636,7 @@ export class DatabaseService {
 
   // Check if ticket barcode already exists today
   public isDuplicate(resi: string): boolean {
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getTodayLocalDateString();
     const records = this.getRecords();
     return records.some(r => r.Resi.toLowerCase() === resi.trim().toLowerCase() && r.Tanggal === todayStr);
   }
@@ -657,14 +672,11 @@ export class DatabaseService {
     
     // Auto generate date & time based on local timezone
     const now = new Date();
-    const YYYY = now.getFullYear();
-    const MM = String(now.getMonth() + 1).padStart(2, "0");
-    const DD = String(now.getDate()).padStart(2, "0");
     const hh = String(now.getHours()).padStart(2, "0");
     const mm = String(now.getMinutes()).padStart(2, "0");
     const ss = String(now.getSeconds()).padStart(2, "0");
 
-    const tanggal = `${YYYY}-${MM}-${DD}`;
+    const tanggal = getTodayLocalDateString(now);
     const jam = `${hh}:${mm}:${ss}`;
 
     // Compute photo URL or fallback dummy generator
@@ -786,6 +798,12 @@ export class DatabaseService {
   /**
    * Batch Upload / Sync to Spreadsheet
    */
+  // Records are sent to Apps Script in small chunks rather than all at once. This keeps
+  // each request well under Apps Script's ~6 minute execution limit (large batches with
+  // many photos can otherwise time out mid-way) and means a problem in one chunk can't
+  // block/mask the sync status of records in other chunks.
+  private readonly SYNC_CHUNK_SIZE = 8;
+
   public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
     if (this.isSyncingInProgress) {
       console.log("Sinkronisasi sedang berlangsung. Permintaan diabaikan untuk mencegah duplikat.");
@@ -832,86 +850,110 @@ export class DatabaseService {
         return { successCount: pending.length, failedCount: 0 };
       }
 
-      let attempt = 0;
-      const maxAttempts = 5;
-      let delay = 1000; // Start at 1000ms (1 second)
-      let responseData: any = null;
-      let lastError: any = null;
-      let isSuccess = false;
+      // Split into small chunks so one problematic record/chunk can't block the rest
+      const chunks: (typeof pending)[] = [];
+      for (let i = 0; i < pending.length; i += this.SYNC_CHUNK_SIZE) {
+        chunks.push(pending.slice(i, i + this.SYNC_CHUNK_SIZE));
+      }
 
-      while (attempt < maxAttempts) {
-        try {
-          const response = await fetch(config.appsScriptUrl, {
-            method: "POST",
-            mode: "cors",
-            headers: {
-              "Content-Type": "text/plain;charset=utf-8"
-            },
-            body: JSON.stringify({
-              action: "sync_batch",
-              records: pending
-            })
-          });
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let lastErrorMsg: string | undefined;
+      const syncedIds = new Set<string>();
 
-          if (!response.ok) {
-            throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
-          }
+      for (const chunk of chunks) {
+        let attempt = 0;
+        const maxAttempts = 5;
+        let delay = 1000; // Start at 1000ms (1 second)
+        let responseData: any = null;
+        let lastError: any = null;
+        let isSuccess = false;
 
-          const data = await response.json();
-          responseData = data;
-          isSuccess = true;
-          break; // Successfully connected and parsed JSON response!
-        } catch (err: any) {
-          attempt++;
-          lastError = err;
-          console.warn(`Sinkronisasi gagal (Percobaan ${attempt}/${maxAttempts}). Mencoba kembali dalam ${delay}ms...`, err);
-
-          // Dispatch custom event to notify UI for retry attempt info
-          if (typeof window !== "undefined") {
-            const event = new CustomEvent("sync-retry-attempt", {
-              detail: { 
-                attempt, 
-                maxAttempts, 
-                nextDelay: delay, 
-                error: err.toString() 
-              }
+        while (attempt < maxAttempts) {
+          try {
+            const response = await fetch(config.appsScriptUrl, {
+              method: "POST",
+              mode: "cors",
+              headers: {
+                "Content-Type": "text/plain;charset=utf-8"
+              },
+              body: JSON.stringify({
+                action: "sync_batch",
+                records: chunk
+              })
             });
-            window.dispatchEvent(event);
-          }
 
-          if (attempt >= maxAttempts) {
-            break;
+            if (!response.ok) {
+              throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
+            }
+
+            responseData = await response.json();
+            isSuccess = true;
+            break; // Successfully connected and parsed JSON response!
+          } catch (err: any) {
+            attempt++;
+            lastError = err;
+            console.warn(`Sinkronisasi gagal (Percobaan ${attempt}/${maxAttempts}). Mencoba kembali dalam ${delay}ms...`, err);
+
+            // Dispatch custom event to notify UI for retry attempt info
+            if (typeof window !== "undefined") {
+              const event = new CustomEvent("sync-retry-attempt", {
+                detail: { 
+                  attempt, 
+                  maxAttempts, 
+                  nextDelay: delay, 
+                  error: err.toString() 
+                }
+              });
+              window.dispatchEvent(event);
+            }
+
+            if (attempt >= maxAttempts) {
+              break;
+            }
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay *= 2; // Exponential Backoff increase
           }
-          await new Promise(resolve => setTimeout(resolve, delay));
-          delay *= 2; // Exponential Backoff increase
+        }
+
+        if (!isSuccess) {
+          totalFailed += chunk.length;
+          lastErrorMsg = `Gagal tersambung setelah ${maxAttempts} kali percobaan. Kesalahan terakhir: ${lastError?.toString() || "Koneksi terputus."}`;
+          continue; // Don't let this chunk block the remaining chunks
+        }
+
+        if (responseData && responseData.success) {
+          // Apps Script now reports exactly which IDs (if any) failed to process within
+          // the chunk, so only those specific records stay PENDING - everything else in
+          // the chunk is marked SYNCED even if one sibling record had a problem.
+          const failedIdsFromServer: string[] = Array.isArray(responseData.failedIds) ? responseData.failedIds : [];
+          chunk.forEach(r => {
+            if (!failedIdsFromServer.includes(r.ID)) {
+              syncedIds.add(r.ID);
+              totalSuccess++;
+            } else {
+              totalFailed++;
+            }
+          });
+          if (failedIdsFromServer.length > 0) {
+            lastErrorMsg = `${failedIdsFromServer.length} resi gagal diproses di server (lihat log Apps Script untuk detail).`;
+          }
+        } else {
+          totalFailed += chunk.length;
+          lastErrorMsg = responseData?.error || "Tanggapan web app bernilai sukses false.";
         }
       }
 
-      if (!isSuccess) {
-        return { 
-          successCount: 0, 
-          failedCount: pending.length, 
-          error: `Gagal tersambung setelah ${maxAttempts} kali percobaan. Kesalahan terakhir: ${lastError?.toString() || "Koneksi terputus."}` 
-        };
+      if (syncedIds.size > 0) {
+        const updated = records.map(r => syncedIds.has(r.ID) ? { ...r, SyncStatus: "SYNCED" as const } : r);
+        this.saveRecords(updated);
       }
 
-      if (responseData && responseData.success) {
-        const pendingIds = new Set(pending.map(p => p.ID));
-        const updated = records.map(r => {
-          if (pendingIds.has(r.ID)) {
-            return { ...r, SyncStatus: "SYNCED" as const };
-          }
-          return r;
-        });
-        this.saveRecords(updated);
-        return { successCount: pending.length, failedCount: 0 };
-      } else {
-        return { 
-          successCount: 0, 
-          failedCount: pending.length, 
-          error: responseData?.error || "Tanggapan web app bernilai sukses false." 
-        };
-      }
+      return {
+        successCount: totalSuccess,
+        failedCount: totalFailed,
+        error: totalFailed > 0 ? lastErrorMsg : undefined
+      };
     } finally {
       this.isSyncingInProgress = false;
     }

@@ -32,9 +32,10 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { ScanRecord, StatusType } from "../types";
-import { dbService, createMockResiPhoto, getDirectDriveImageUrl } from "../utils/db";
+import { dbService, createMockResiPhoto, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
 import { audioService } from "../utils/audio";
 import { triggerHaptic } from "../utils/haptics";
+import { estimateSharpness, BLUR_WARNING_THRESHOLD } from "../utils/blur";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { toast } from "sonner";
 
@@ -86,6 +87,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const consecutiveScansRef = useRef<{ barcode: string, count: number }>({ barcode: "", count: 0 });
   const lastScannedBarcodeRef = useRef<string>("");
   const lastScannedTimeRef = useRef<number>(0);
+  // Tracks codes that ARE read by the camera but don't match the expected resi format,
+  // so we can warn the operator instead of ignoring them completely silently.
+  const invalidFormatScanRef = useRef<{ code: string, count: number }>({ code: "", count: 0 });
+  const lastInvalidFormatToastRef = useRef<number>(0);
+  // Sharpness score (from the Laplacian-variance blur estimator) of the most recently
+  // captured frame, read right after captureFrame() runs.
+  const lastCaptureSharpnessRef = useRef<number>(Infinity);
   const prevRetakeCountRef = useRef<number | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraPermissionError, setCameraPermissionError] = useState("");
@@ -126,7 +134,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       return;
     }
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getTodayLocalDateString();
     const records = dbService.getRecords();
     
     // Find if it exists in today's records
@@ -182,6 +190,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [pendingValidation, setPendingValidation] = useState<{
     resi: string;
     photoURL: string;
+    isBlurry?: boolean;
   } | null>(null);
 
   // Retake photo states
@@ -232,6 +241,23 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     };
   }, []);
 
+  // Mobile browsers often freeze/kill the camera stream when the tab or app goes to the
+  // background (switching apps, locking the phone, an incoming call). If we don't release
+  // it ourselves first, the camera can be left in a stuck "mid-transition" state that
+  // later surfaces as "Cannot transition to a new state, already under transition" when
+  // the operator comes back. Explicitly stop on hide and restart on show to avoid that.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopCamera();
+      } else {
+        startCamera();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
   // Reload records whenever a background sync or pull completes
   useEffect(() => {
     if (!isSyncing && !isPulling) {
@@ -248,7 +274,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     );
     
     // Filter down to today's records specifically for this operator
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getTodayLocalDateString();
     const filteredToday = operatorRecords.filter(r => r.Tanggal === todayStr);
     
     setScannedRecords(operatorRecords); // Store full list for robust, multi-day, on-demand filtering
@@ -397,17 +423,22 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       let html5QrCode = new Html5Qrcode("html5-qr-code-element");
       html5QrCodeRef.current = html5QrCode;
 
-      // Configurations fully optimized for Code 128 shipping resi (horizontal scan area, fps 20, environment camera)
+      // Configurations for shipping resi labels, which may carry a Code 128 barcode,
+      // a QR code, or occasionally other 1D formats depending on the ecommerce seller.
       const scanConfig = {
         fps: 20, // 20 is optimal for mid-range Android devices, 30 might drop frames
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-          // Precise horizontal scanning box layout centered on the middle segment
-          const width = Math.min(650, Math.floor(viewfinderWidth * 0.85));
-          const height = Math.min(250, Math.floor(viewfinderHeight * 0.40)); // Slightly taller for stability
+          // Tighter scanning box so it targets a single resi instead of also catching a
+          // neighboring package's barcode when packages are stacked close together.
+          const width = Math.min(480, Math.floor(viewfinderWidth * 0.78));
+          const height = Math.min(170, Math.floor(viewfinderHeight * 0.28));
           return { width, height };
         },
         formatsToSupport: [
-          Html5QrcodeSupportedFormats.CODE_128
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.EAN_13
         ],
         aspectRatio: 1.0, // Force 1:1 Aspect ratio to conform to container properly
         disableFlip: false,
@@ -435,16 +466,26 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           () => {}
         );
       } catch (envError) {
-        console.warn("Failed to start environment camera with resolution constraints, trying without constraints", envError);
+        console.warn("Failed to start environment camera, falling back to any camera", envError);
         
+        // IMPORTANT: html5-qrcode may leave its internal state as 'isTransitioning' if start() fails.
+        // We must create a new instance before retrying.
         try { html5QrCode.clear(); } catch (_) {}
-        let fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
+        const fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
         html5QrCodeRef.current = fallbackQrCode;
 
-        try {
-          // First fallback: just facingMode without width/height constraints
+        // Fallback: try to pick the back/rear camera by label instead of blindly using
+        // devices[0], which is the front camera on a number of Android/iPad devices.
+        const devices = await Html5Qrcode.getCameras();
+        if (devices && devices.length > 0) {
+          const backCamera = devices.find(d => {
+            const label = d.label.toLowerCase();
+            return (label.includes("back") || label.includes("rear") || label.includes("environment")) && !label.includes("front");
+          });
+          const chosenDevice = backCamera || devices[devices.length - 1] || devices[0];
+
           await fallbackQrCode.start(
-            { facingMode: "environment" },
+            chosenDevice.id,
             scanConfig,
             (decodedText) => {
               if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
@@ -453,42 +494,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             },
             () => {}
           );
-          html5QrCode = fallbackQrCode;
-        } catch (envFallbackError) {
-          console.warn("Failed to start environment camera without constraints, falling back to device enumeration", envFallbackError);
-          
-          try { fallbackQrCode.clear(); } catch (_) {}
-          fallbackQrCode = new Html5Qrcode("html5-qr-code-element");
-          html5QrCodeRef.current = fallbackQrCode;
-
-          // Second fallback: device enumeration
-          const devices = await Html5Qrcode.getCameras();
-          if (devices && devices.length > 0) {
-            // Find back camera if possible
-            let cameraId = devices[0].id;
-            const backCamera = devices.find(d => 
-              d.label.toLowerCase().includes('back') || 
-              d.label.toLowerCase().includes('environment') || 
-              d.label.toLowerCase().includes('rear')
-            );
-            if (backCamera) {
-              cameraId = backCamera.id;
-            }
-            
-            await fallbackQrCode.start(
-              cameraId,
-              scanConfig,
-              (decodedText) => {
-                if (!isScanningLocked.current && handleBarcodeScannedRef.current) {
-                  handleBarcodeScannedRef.current(decodedText);
-                }
-              },
-              () => {}
-            );
-            html5QrCode = fallbackQrCode; // update the local reference for track fetching below
-          } else {
-            throw new Error("No cameras found");
-          }
+          html5QrCode = fallbackQrCode; // update the local reference for track fetching below
+        } else {
+          throw new Error("No cameras found");
         }
       }
 
@@ -749,6 +757,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           ctx.font = "bold 11px monospace";
           ctx.fillText(`J&T REC: ${new Date().toLocaleTimeString()} | ${config.outlet}`, 18, canvas.height - 18);
 
+          // Estimate sharpness on the full-quality canvas BEFORE JPEG compression,
+          // since compression artifacts can distort the edge-variance measurement.
+          lastCaptureSharpnessRef.current = estimateSharpness(canvas);
+
           const dataUrl = canvas.toDataURL("image/jpeg", 0.7); // compress to JPG with 70% quality
           if (dataUrl === "data:,") throw new Error("Canvas returned empty dataURL");
           return dataUrl;
@@ -759,6 +771,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
     }
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
+    lastCaptureSharpnessRef.current = Infinity; // Not a real capture, so never flag it as blurry
     const simulatedBarcode = scannedResi || `JX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
     return createMockResiPhoto(simulatedBarcode, config.seller);
   };
@@ -773,11 +786,27 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (!rawCode) return;
 
     // VALIDASI FORMAT BARCODE J&T
-    // Mengabaikan barcode acak/pendek yang bukan format J&T
     const isValidFormat = /^(JX|JZ)\d{10}$/.test(rawCode);
     if (!isValidFormat) {
-      return; // Abaikan secara hening agar scanner terus mencari resi yang valid
+      // Only surface a warning once the SAME unrecognized code has been read stably a
+      // few times (avoids reacting to single-frame noise), and at most once every few
+      // seconds (avoids spamming toasts while the camera keeps re-reading it).
+      if (invalidFormatScanRef.current.code === rawCode) {
+        invalidFormatScanRef.current.count += 1;
+      } else {
+        invalidFormatScanRef.current = { code: rawCode, count: 1 };
+      }
+
+      const now = Date.now();
+      if (invalidFormatScanRef.current.count >= 5 && now - lastInvalidFormatToastRef.current > 4000) {
+        lastInvalidFormatToastRef.current = now;
+        toast.warning("FORMAT RESI TIDAK DIKENALI", {
+          description: `Barcode terbaca (${rawCode}) tapi formatnya tidak sesuai pola resi J&T. Pastikan ini resi yang benar.`,
+        });
+      }
+      return; // Ignore for saving purposes; scanner keeps looking for a valid resi
     }
+    invalidFormatScanRef.current = { code: "", count: 0 };
 
     // MULTI-FRAME VERIFICATION
     // Mencegah false positive dengan mengharuskan scanner membaca barcode yang sama 3x berturut-turut
@@ -817,7 +846,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         setDuplicateWarning(null);
         setCancelledWarning(null);
 
-        const todayStr = new Date().toISOString().split("T")[0];
+        const todayStr = getTodayLocalDateString();
         const records = dbService.getRecords();
 
         // Check if there is a pending retake first (can be from any day)
@@ -889,11 +918,25 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           return;
         }
 
+        // 2b. Automatic blur check on the frame we just captured. This doesn't replace
+        // the manual "Validasi Foto" step below - it just flags a likely-blurry photo
+        // so the operator pays extra attention before confirming it as clear.
+        const isBlurry = lastCaptureSharpnessRef.current < BLUR_WARNING_THRESHOLD;
+        if (isBlurry) {
+          console.log(`Sharpness : ${lastCaptureSharpnessRef.current.toFixed(1)} (BLUR WARNING, threshold ${BLUR_WARNING_THRESHOLD})`);
+          audioService.playError();
+          triggerHaptic([120, 60, 120]);
+          toast.warning("FOTO KEMUNGKINAN BURAM", {
+            description: "Sistem mendeteksi foto ini kurang tajam. Periksa dulu sebelum menyimpan.",
+          });
+        }
+
         // 3. Initiate visibility verification ("Validasi Foto")
         // Operator must confirm the picture looks clear before it is inserted
         setPendingValidation({
           resi: rawCode,
-          photoURL: photoData
+          photoURL: photoData,
+          isBlurry
         });
       } catch (err) {
         console.error("Scan processing error:", err);
@@ -964,16 +1007,25 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     setIsCapturing(true);
     // Grab frame from webcam stream with timestamp overlay
     const photoData = captureFrame(activeRetakeResi);
+    const isBlurry = lastCaptureSharpnessRef.current < BLUR_WARNING_THRESHOLD;
     
     // Save to DB
     const success = dbService.submitRetake(activeRetakeResi, photoData);
     setIsCapturing(false);
 
     if (success) {
-      audioService.playSuccess();
-      toast.success("FOTO ULANG BERHASIL", {
-        description: `Resi ${activeRetakeResi} telah diperbarui dengan foto yang jelas!`
-      });
+      if (isBlurry) {
+        audioService.playError();
+        triggerHaptic([120, 60, 120]);
+        toast.warning("FOTO ULANG KEMUNGKINAN MASIH BURAM", {
+          description: `Foto ulang untuk resi ${activeRetakeResi} tersimpan, tapi sistem mendeteksi masih kurang tajam. Owner mungkin akan meminta foto ulang lagi.`
+        });
+      } else {
+        audioService.playSuccess();
+        toast.success("FOTO ULANG BERHASIL", {
+          description: `Resi ${activeRetakeResi} telah diperbarui dengan foto yang jelas!`
+        });
+      }
       setActiveRetakeResi(null);
       loadRecords();
       if (onRecordAdded) {
@@ -1374,6 +1426,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       Preview Foto
                     </div>
                   </div>
+
+                  {pendingValidation.isBlurry && (
+                    <div className="w-full max-w-2xl bg-amber-950/80 border border-amber-600/60 rounded-2xl p-3 flex items-center gap-2.5 shrink-0 mb-3 animate-in fade-in duration-200">
+                      <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+                      <p className="text-[11px] text-amber-200 leading-relaxed text-left">
+                        <span className="font-extrabold uppercase">Sistem mendeteksi foto ini kemungkinan buram.</span> Periksa kembali dengan teliti sebelum memilih "Jelas & Simpan".
+                      </p>
+                    </div>
+                  )}
 
                   <div className="w-full max-w-2xl bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80 text-center text-xs text-slate-300 shrink-0 mt-auto">
                     <p className="font-extrabold text-white text-xs uppercase tracking-wider mb-1">Verifikasi Hasil Jepretan</p>
@@ -1785,17 +1846,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const today = new Date().toISOString().split("T")[0];
+                    const today = getTodayLocalDateString();
                     setFilterStartDate(today);
                     setFilterEndDate(today);
                   }}
                   className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    filterStartDate === new Date().toISOString().split("T")[0] && filterEndDate === new Date().toISOString().split("T")[0]
+                    filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
                       ? "text-white border-none"
                       : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
                   }`}
                   style={
-                    filterStartDate === new Date().toISOString().split("T")[0] && filterEndDate === new Date().toISOString().split("T")[0]
+                    filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
                       ? { backgroundColor: "#565656" }
                       : undefined
                   }
@@ -1807,17 +1868,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   onClick={() => {
                     const yesterdayObj = new Date();
                     yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-                    const yesterday = yesterdayObj.toISOString().split("T")[0];
+                    const yesterday = getTodayLocalDateString(yesterdayObj);
                     setFilterStartDate(yesterday);
                     setFilterEndDate(yesterday);
                   }}
                   className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    filterStartDate === new Date(Date.now() - 86400000).toISOString().split("T")[0] && filterEndDate === new Date(Date.now() - 86400000).toISOString().split("T")[0]
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
                       ? "text-white border-none"
                       : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
                   }`}
                   style={
-                    filterStartDate === new Date(Date.now() - 86400000).toISOString().split("T")[0] && filterEndDate === new Date(Date.now() - 86400000).toISOString().split("T")[0]
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
                       ? { backgroundColor: "#565656" }
                       : undefined
                   }
@@ -1829,18 +1890,18 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   onClick={() => {
                     const threeDaysAgoObj = new Date();
                     threeDaysAgoObj.setDate(threeDaysAgoObj.getDate() - 2); // 3 days including today
-                    const threeDaysAgo = threeDaysAgoObj.toISOString().split("T")[0];
-                    const today = new Date().toISOString().split("T")[0];
+                    const threeDaysAgo = getTodayLocalDateString(threeDaysAgoObj);
+                    const today = getTodayLocalDateString();
                     setFilterStartDate(threeDaysAgo);
                     setFilterEndDate(today);
                   }}
                   className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    filterStartDate === new Date(Date.now() - 2 * 86400000).toISOString().split("T")[0] && filterEndDate === new Date().toISOString().split("T")[0]
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
                       ? "text-white border-none"
                       : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
                   }`}
                   style={
-                    filterStartDate === new Date(Date.now() - 2 * 86400000).toISOString().split("T")[0] && filterEndDate === new Date().toISOString().split("T")[0]
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
                       ? { backgroundColor: "#565656" }
                       : undefined
                   }

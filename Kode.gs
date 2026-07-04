@@ -62,67 +62,78 @@ function handleSyncBatch(records) {
   
   // Cache existing resi lists per sheet to prevent redundant and slow sheet queries inside the loop
   const existingResisCache = {};
+  // IDs that failed to process are reported back to the client so ONLY those specific
+  // records stay PENDING and get retried - one bad record no longer blocks/hides the
+  // sync status of every other record in the batch.
+  const failedIds = [];
   
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
-    
-    // ROUTING TEPAT BERDASARKAN OUTLET PENJEMPUTAN
-    let sheetName = "Data Resi J&T Pasir Jaha Balaraja"; 
-    if (r.Outlet && r.Outlet.indexOf("Jayanti") !== -1) {
-      sheetName = "Data Resi J&T Jayanti";
-    } else if (r.Outlet && r.Outlet.indexOf("Cikupa Mas") !== -1) {
-      sheetName = "Data Resi J&T Cikupa Mas";
-    }
-    
-    const sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
-    
-    // Set headers jika kosong
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"]);
-      sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#f1f5f9");
-    }
-    
-    // Load existing resis for this sheet from cache, or query and cache if not loaded yet
-    if (!existingResisCache[sheetName]) {
-      existingResisCache[sheetName] = getExistingResiList(sheet);
-    }
-    const existingResis = existingResisCache[sheetName];
-    
-    // Update status jika resi sudah ada (proteksi duplikat & memproses pembatalan)
-    if (existingResis.indexOf(r.Resi) !== -1) {
-      updateRowStatus(sheet, r.Resi, r.Status);
-      continue;
-    }
-    
-    // Konversi base64 image dan upload ke Google Drive (FOTO RESI)
-    let finalPhotoUrl = r.PhotoURL;
-    if (r.PhotoURL && r.PhotoURL.indexOf("data:image") === 0) {
-      try {
-        const rawBase64 = r.PhotoURL.split(",")[1];
-        const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", r.Resi + ".jpg");
-        const file = driveFolder.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        finalPhotoUrl = file.getUrl();
-      } catch (uploadErr) {
-        finalPhotoUrl = "Upload error: " + uploadErr.toString();
+
+    try {
+      // ROUTING TEPAT BERDASARKAN OUTLET PENJEMPUTAN
+      let sheetName = "Data Resi J&T Pasir Jaha Balaraja"; 
+      if (r.Outlet && r.Outlet.indexOf("Jayanti") !== -1) {
+        sheetName = "Data Resi J&T Jayanti";
+      } else if (r.Outlet && r.Outlet.indexOf("Cikupa Mas") !== -1) {
+        sheetName = "Data Resi J&T Cikupa Mas";
       }
+      
+      const sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+      
+      // Set headers jika kosong
+      if (sheet.getLastRow() === 0) {
+        sheet.appendRow(["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"]);
+        sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#f1f5f9");
+      }
+      
+      // Load existing resis for this sheet from cache, or query and cache if not loaded yet
+      if (!existingResisCache[sheetName]) {
+        existingResisCache[sheetName] = getExistingResiList(sheet);
+      }
+      const existingResis = existingResisCache[sheetName];
+      
+      // Update status jika resi sudah ada (proteksi duplikat & memproses pembatalan)
+      if (existingResis.indexOf(r.Resi) !== -1) {
+        updateRowStatus(sheet, r.Resi, r.Status);
+        continue;
+      }
+      
+      // Konversi base64 image dan upload ke Google Drive (FOTO RESI)
+      let finalPhotoUrl = r.PhotoURL;
+      if (r.PhotoURL && r.PhotoURL.indexOf("data:image") === 0) {
+        try {
+          const rawBase64 = r.PhotoURL.split(",")[1];
+          const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", r.Resi + ".jpg");
+          const file = driveFolder.createFile(blob);
+          file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          finalPhotoUrl = file.getUrl();
+        } catch (uploadErr) {
+          finalPhotoUrl = "Upload error: " + uploadErr.toString();
+        }
+      }
+      
+      sheet.appendRow([
+        r.ID,
+        r.Tanggal,
+        r.Jam,
+        r.Resi,
+        r.Outlet,
+        r.Seller,
+        r.Operator,
+        r.Status,
+        finalPhotoUrl
+      ]);
+      
+      // Track newly added Resi in our local cache list so duplicates within the same batch are resolved without slow sheet re-reads
+      existingResis.push(r.Resi);
+      newlyScanned++;
+    } catch (recordErr) {
+      // Isolate the failure to THIS record only - log it and keep processing the rest
+      // of the batch instead of letting one bad record throw away the whole request.
+      Logger.log("Gagal memproses resi " + r.ID + " (" + r.Resi + "): " + recordErr.toString());
+      failedIds.push(r.ID);
     }
-    
-    sheet.appendRow([
-      r.ID,
-      r.Tanggal,
-      r.Jam,
-      r.Resi,
-      r.Outlet,
-      r.Seller,
-      r.Operator,
-      r.Status,
-      finalPhotoUrl
-    ]);
-    
-    // Track newly added Resi in our local cache list so duplicates within the same batch are resolved without slow sheet re-reads
-    existingResis.push(r.Resi);
-    newlyScanned++;
   }
   
   // Update real-time summary dashboard sheet
@@ -132,7 +143,7 @@ function handleSyncBatch(records) {
     Logger.log("Gagal memperbarui sheet dashboard: " + dashErr.toString());
   }
   
-  return ContentService.createTextOutput(JSON.stringify({ success: true, added: newlyScanned }))
+  return ContentService.createTextOutput(JSON.stringify({ success: true, added: newlyScanned, failedIds: failedIds }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
