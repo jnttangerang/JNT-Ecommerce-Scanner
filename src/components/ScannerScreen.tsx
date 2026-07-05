@@ -25,6 +25,9 @@ import {
   ZoomOut,
   Info,
   HelpCircle,
+  LogOut,
+  X,
+  Check,
   Target,
   Filter,
   Calendar,
@@ -71,14 +74,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [totalToday, setTotalToday] = useState(0);
 
   // Filter & Search states for the Scanned History Panel
-  const [filterStartDate, setFilterStartDate] = useState("");
-  const [filterEndDate, setFilterEndDate] = useState("");
-  const [filterSyncStatus, setFilterSyncStatus] = useState<"ALL" | "SYNCED" | "PENDING">("ALL");
   const [filterSearchQuery, setFilterSearchQuery] = useState("");
 
   // Pagination for Operator Screen - History
   const [operatorPage, setOperatorPage] = useState(1);
-  const [operatorPageSize, setOperatorPageSize] = useState(10);
+  const [operatorPageSize, setOperatorPageSize] = useState(20);
   const [operatorJumpInput, setOperatorJumpInput] = useState("");
 
   // Live video feed
@@ -117,6 +117,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   });
 
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [deletingResi, setDeletingResi] = useState<string | null>(null);
 
   // Manual input and live real-time validation states
@@ -268,9 +269,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const loadRecords = () => {
     const all = dbService.getRecords();
     
-    // Filter records exclusively for the currently logged-in operator (robust trimmed, case-insensitive match)
+    // Filter records exclusively for the currently logged-in operator, seller, and outlet combination (current batch/session)
     const operatorRecords = all.filter(r => 
-      r.Operator && r.Operator.trim().toLowerCase() === config.operator.trim().toLowerCase()
+      r.Operator && r.Operator.trim().toLowerCase() === config.operator.trim().toLowerCase() &&
+      r.Seller && r.Seller.trim().toLowerCase() === config.seller.trim().toLowerCase() &&
+      r.Outlet && r.Outlet.trim().toLowerCase() === config.outlet.trim().toLowerCase()
     );
     
     // Filter down to today's records specifically for this operator
@@ -299,36 +302,19 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Memoized filtered and displayed records calculation
   const filteredRecords = React.useMemo(() => {
     return scannedRecords.filter(r => {
-      // 1. Search Query (matches Resi or Seller name, case insensitive)
+      // 1. Search Query (matches Resi, case insensitive)
       if (filterSearchQuery.trim()) {
         const q = filterSearchQuery.trim().toLowerCase();
         const matchResi = r.Resi && r.Resi.toLowerCase().includes(q);
-        const matchSeller = r.Seller && r.Seller.toLowerCase().includes(q);
-        if (!matchResi && !matchSeller) return false;
-      }
-
-      // 2. Sync status filter
-      if (filterSyncStatus !== "ALL") {
-        if (filterSyncStatus === "SYNCED" && r.SyncStatus !== "SYNCED") return false;
-        if (filterSyncStatus === "PENDING" && r.SyncStatus !== "PENDING") return false;
-      }
-
-      // 3. Start date filter (r.Tanggal >= filterStartDate)
-      if (filterStartDate) {
-        if (r.Tanggal < filterStartDate) return false;
-      }
-
-      // 4. End date filter (r.Tanggal <= filterEndDate)
-      if (filterEndDate) {
-        if (r.Tanggal > filterEndDate) return false;
+        if (!matchResi) return false;
       }
 
       return true;
     });
-  }, [scannedRecords, filterSearchQuery, filterSyncStatus, filterStartDate, filterEndDate]);
+  }, [scannedRecords, filterSearchQuery]);
 
   // Check if any filters are actively set (other than default)
-  const isFilterActive = !!(filterStartDate || filterEndDate || filterSyncStatus !== "ALL" || filterSearchQuery.trim());
+  const isFilterActive = !!(filterSearchQuery.trim());
 
   // Operator pagination calculations
   const totalOperatorRecords = filteredRecords.length;
@@ -344,7 +330,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   useEffect(() => {
     setOperatorPage(1);
     setOperatorJumpInput("");
-  }, [filterStartDate, filterEndDate, filterSyncStatus, filterSearchQuery, scannedRecords.length]);
+  }, [filterSearchQuery, scannedRecords.length]);
 
   // Apply a unified constraints block to prevent hardware features from overriding each other
   const applyCameraConstraints = async (overrides: { torch?: boolean; zoom?: number; focusMode?: string } = {}) => {
@@ -1584,7 +1570,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               </div>
             </div>
           )}
-
         </div>
 
         {/* Right Side: Scanned Receipt Records (Newest Top) */}
@@ -1622,9 +1607,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setFilterStartDate("");
-                    setFilterEndDate("");
-                    setFilterSyncStatus("ALL");
                     setFilterSearchQuery("");
                   }}
                   style={{ backgroundColor: "#585858" }}
@@ -1644,7 +1626,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 </span>
                 <input
                   type="text"
-                  placeholder="Cari No. Resi atau Nama Seller..."
+                  placeholder="Cari No. Resi..."
                   value={filterSearchQuery}
                   onChange={(e) => setFilterSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-8 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-450 focus:outline-none focus:border-red-550 focus:ring-1 focus:ring-red-550/20 font-mono transition-all"
@@ -1658,164 +1640,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     <XCircle className="h-3.5 w-3.5" />
                   </button>
                 )}
-              </div>
-
-              {/* Row 2: Date Range Picker & Sync Filter */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Date range inputs */}
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
-                    <Calendar className="h-3 w-3 text-slate-400" />
-                    Rentang Tanggal
-                  </label>
-                  <div className="flex items-center space-x-1">
-                    <input
-                      type="date"
-                      value={filterStartDate}
-                      onChange={(e) => setFilterStartDate(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-[11px] text-slate-600 focus:outline-none focus:border-red-500 font-mono"
-                    />
-                    <span className="text-slate-400 text-[10px]">s/d</span>
-                    <input
-                      type="date"
-                      value={filterEndDate}
-                      onChange={(e) => setFilterEndDate(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-[11px] text-slate-600 focus:outline-none focus:border-red-500 font-mono"
-                    />
-                  </div>
-                </div>
-
-                {/* Sync status segmented select */}
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
-                    <SlidersHorizontal className="h-3 w-3 text-slate-400" />
-                    Status Sinkronisasi
-                  </label>
-                  <div className="grid grid-cols-3 bg-slate-200/60 p-0.5 rounded-lg text-[10px] font-bold text-center">
-                    <button
-                      type="button"
-                      onClick={() => setFilterSyncStatus("ALL")}
-                      className={`py-1 rounded-md transition-all cursor-pointer ${
-                        filterSyncStatus === "ALL"
-                          ? "bg-white text-slate-800 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
-                          : "text-slate-500 hover:text-slate-800"
-                      }`}
-                    >
-                      Semua
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFilterSyncStatus("SYNCED")}
-                      className={`py-1 rounded-md transition-all cursor-pointer ${
-                        filterSyncStatus === "SYNCED"
-                          ? "bg-emerald-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.05)] font-extrabold"
-                          : "text-slate-500 hover:text-slate-800"
-                      }`}
-                    >
-                      Synced
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFilterSyncStatus("PENDING")}
-                      className={`py-1 rounded-md transition-all cursor-pointer ${
-                        filterSyncStatus === "PENDING"
-                          ? "bg-amber-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.05)] font-extrabold"
-                          : "text-slate-500 hover:text-slate-800"
-                      }`}
-                    >
-                      Pending
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Quick Preset Buttons */}
-              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100/60">
-                <span className="text-[9px] font-bold uppercase text-slate-400 mr-1">Preset Tanggal:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilterStartDate("");
-                    setFilterEndDate("");
-                  }}
-                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    !filterStartDate && !filterEndDate
-                      ? "text-white border-none"
-                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
-                  }`}
-                  style={
-                    !filterStartDate && !filterEndDate
-                      ? { backgroundColor: "#565656" }
-                      : undefined
-                  }
-                >
-                  Semua Waktu
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const today = getTodayLocalDateString();
-                    setFilterStartDate(today);
-                    setFilterEndDate(today);
-                  }}
-                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
-                      ? "text-white border-none"
-                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
-                  }`}
-                  style={
-                    filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
-                      ? { backgroundColor: "#565656" }
-                      : undefined
-                  }
-                >
-                  Hari Ini
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const yesterdayObj = new Date();
-                    yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-                    const yesterday = getTodayLocalDateString(yesterdayObj);
-                    setFilterStartDate(yesterday);
-                    setFilterEndDate(yesterday);
-                  }}
-                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
-                      ? "text-white border-none"
-                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
-                  }`}
-                  style={
-                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
-                      ? { backgroundColor: "#565656" }
-                      : undefined
-                  }
-                >
-                  Kemarin
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const threeDaysAgoObj = new Date();
-                    threeDaysAgoObj.setDate(threeDaysAgoObj.getDate() - 2); // 3 days including today
-                    const threeDaysAgo = getTodayLocalDateString(threeDaysAgoObj);
-                    const today = getTodayLocalDateString();
-                    setFilterStartDate(threeDaysAgo);
-                    setFilterEndDate(today);
-                  }}
-                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
-                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
-                      ? "text-white border-none"
-                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
-                  }`}
-                  style={
-                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
-                      ? { backgroundColor: "#565656" }
-                      : undefined
-                  }
-                >
-                  3 Hari Terakhir
-                </button>
               </div>
             </div>
 
@@ -2029,8 +1853,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     }}
                     className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-650 font-semibold focus:outline-none cursor-pointer h-7"
                   >
-                    <option value={10}>10 / halaman</option>
-                    <option value={25}>25 / halaman</option>
+                    <option value={20}>20 / halaman</option>
                     <option value={50}>50 / halaman</option>
                     <option value={100}>100 / halaman</option>
                   </select>
@@ -2068,10 +1891,108 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               </div>
             )}
 
+            {/* Selesai Sesi Scan Button */}
+            <div className="mt-5 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowSummaryModal(true)}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl shadow-sm transition-all active:scale-95 text-sm tracking-wide flex items-center justify-center space-x-2 border border-emerald-500 cursor-pointer"
+              >
+                <CheckCircle className="h-5 w-5" />
+                <span>Selesai Sesi Scan ({totalToday} Resi)</span>
+              </button>
+            </div>
+
           </div>
         </div>
 
       </div>
+
+      {/* Selesai Sesi Summary Modal */}
+      {showSummaryModal && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-6 text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-200 relative">
+            <button 
+              onClick={() => setShowSummaryModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            
+            <div className="bg-emerald-100 text-emerald-600 rounded-full h-16 w-16 flex items-center justify-center mx-auto shadow-sm">
+              <Check className="h-8 w-8 text-emerald-500 stroke-[3]" />
+            </div>
+            
+            <div className="space-y-1.5">
+              <h3 className="text-2xl font-black text-slate-800 tracking-tight">
+                Sesi Selesai!
+              </h3>
+              <p className="text-sm text-slate-500 font-medium">
+                Ringkasan laporan pemindaian seller Anda hari ini
+              </p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 text-left space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span className="text-xs font-semibold text-slate-500">Nama Operator:</span>
+                <span className="text-xs font-black text-slate-800">{config.operator}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span className="text-xs font-semibold text-slate-500">Outlet J&T:</span>
+                <span className="text-xs font-black text-slate-800">{config.outlet}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span className="text-xs font-semibold text-slate-500">Seller Pengirim:</span>
+                <span className="text-xs font-black text-slate-800">{config.seller}</span>
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs font-semibold text-slate-500">Total Scanned Batch:</span>
+                <span className="text-sm font-black text-red-600 font-mono">{totalToday} Resi</span>
+              </div>
+            </div>
+
+            {totalToday === 0 && (
+              <p className="text-xs text-slate-400 font-medium">
+                Tidak ada resi yang diproses pada batch ini.
+              </p>
+            )}
+
+            <div className="space-y-4 pt-2">
+              <div className="space-y-1 text-left">
+                <button
+                  onClick={() => {
+                    setShowSummaryModal(false);
+                    onBack(); // Go back to setup screen, which remembers operator
+                  }}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-extrabold py-3 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.2)] active:scale-95 cursor-pointer flex items-center justify-center space-x-2"
+                >
+                  <span>Scan Seller Lain</span>
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+                <p className="text-[10px] text-slate-500 font-medium text-center">
+                  Tetap masuk sebagai operator <strong className="text-slate-700">{config.operator}</strong>, hanya mengganti Seller atau Outlet scan.
+                </p>
+              </div>
+              
+              <div className="space-y-1 text-left">
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("jt_saved_operator");
+                    localStorage.setItem("jt_current_view", "WELCOME");
+                    window.location.reload();
+                  }}
+                  className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold py-3 px-4 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center space-x-2"
+                >
+                  <LogOut className="h-4 w-4 text-slate-500" />
+                  <span>Logout Sesi Operator</span>
+                </button>
+                <p className="text-[10px] text-slate-500 font-medium text-center">
+                  Keluar sepenuhnya dari sesi ini dan kembali ke halaman setup login Operator utama.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

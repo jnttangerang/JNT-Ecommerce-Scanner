@@ -1,0 +1,171 @@
+                  </button>
+                )}
+              </div>
+
+              {/* Row 2: Date Range Picker & Sync Filter */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Date range inputs */}
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                    <Calendar className="h-3 w-3 text-slate-400" />
+                    Rentang Tanggal
+                  </label>
+                  <div className="flex items-center space-x-1">
+                    <input
+                      type="date"
+                      value={filterStartDate}
+                      onChange={(e) => setFilterStartDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-[11px] text-slate-600 focus:outline-none focus:border-red-500 font-mono"
+                    />
+                    <span className="text-slate-400 text-[10px]">s/d</span>
+                    <input
+                      type="date"
+                      value={filterEndDate}
+                      onChange={(e) => setFilterEndDate(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1 text-[11px] text-slate-600 focus:outline-none focus:border-red-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Sync status segmented select */}
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                    <SlidersHorizontal className="h-3 w-3 text-slate-400" />
+                    Status Sinkronisasi
+                  </label>
+                  <div className="grid grid-cols-3 bg-slate-200/60 p-0.5 rounded-lg text-[10px] font-bold text-center">
+                    <button
+                      type="button"
+                      onClick={() => setFilterSyncStatus("ALL")}
+                      className={`py-1 rounded-md transition-all cursor-pointer ${
+                        filterSyncStatus === "ALL"
+                          ? "bg-white text-slate-800 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Semua
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterSyncStatus("SYNCED")}
+                      className={`py-1 rounded-md transition-all cursor-pointer ${
+                        filterSyncStatus === "SYNCED"
+                          ? "bg-emerald-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.05)] font-extrabold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Synced
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterSyncStatus("PENDING")}
+                      className={`py-1 rounded-md transition-all cursor-pointer ${
+                        filterSyncStatus === "PENDING"
+                          ? "bg-amber-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.05)] font-extrabold"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Pending
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100/60">
+                <span className="text-[9px] font-bold uppercase text-slate-400 mr-1">Preset Tanggal:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterStartDate("");
+                    setFilterEndDate("");
+                  }}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                    !filterStartDate && !filterEndDate
+                      ? "text-white border-none"
+                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
+                  }`}
+                  style={
+                    !filterStartDate && !filterEndDate
+                      ? { backgroundColor: "#565656" }
+                      : undefined
+                  }
+                >
+                  Semua Waktu
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = getTodayLocalDateString();
+                    setFilterStartDate(today);
+                    setFilterEndDate(today);
+                  }}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                    filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
+                      ? "text-white border-none"
+                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
+                  }`}
+                  style={
+                    filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
+                      ? { backgroundColor: "#565656" }
+                      : undefined
+                  }
+                >
+                  Hari Ini
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const yesterdayObj = new Date();
+                    yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+                    const yesterday = getTodayLocalDateString(yesterdayObj);
+                    setFilterStartDate(yesterday);
+                    setFilterEndDate(yesterday);
+                  }}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
+                      ? "text-white border-none"
+                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
+                  }`}
+                  style={
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
+                      ? { backgroundColor: "#565656" }
+                      : undefined
+                  }
+                >
+                  Kemarin
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const threeDaysAgoObj = new Date();
+                    threeDaysAgoObj.setDate(threeDaysAgoObj.getDate() - 2); // 3 days including today
+                    const threeDaysAgo = getTodayLocalDateString(threeDaysAgoObj);
+                    const today = getTodayLocalDateString();
+                    setFilterStartDate(threeDaysAgo);
+                    setFilterEndDate(today);
+                  }}
+                  className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
+                      ? "text-white border-none"
+                      : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
+                  }`}
+                  style={
+                    filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
+                      ? { backgroundColor: "#565656" }
+                      : undefined
+                  }
+                >
+                  3 Hari Terakhir
+                </button>
+              </div>
+            </div>
+
+            {/* Scanned Feed list box */}
+            <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1 flex-grow" id="recent-scans-feed">
+              {scannedRecords.length === 0 ? (
+                <div className="text-center py-16 text-slate-400 space-y-3">
+                  <ListRestart className="h-10 w-10 mx-auto opacity-30 text-slate-400" />
+                  <div>
+                    <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Belum Ada Paket</h5>
+                    <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">

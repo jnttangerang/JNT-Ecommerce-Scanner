@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users } from "lucide-react";
+import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users, Calendar, SlidersHorizontal } from "lucide-react";
 import { Outlet, Seller, Operator, ScanRecord } from "../types";
-import { dbService } from "../utils/db";
+import { dbService, getTodayLocalDateString } from "../utils/db";
 import { toast } from "sonner";
 
 interface WelcomeScreenProps {
@@ -49,13 +49,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   // Local scan records for summary
   const [allRecords, setAllRecords] = useState<ScanRecord[]>([]);
-  const [summaryDateType, setSummaryDateType] = useState<"ALL" | "TODAY" | "YESTERDAY" | "CUSTOM">("ALL");
-  const [summaryStartDate, setSummaryStartDate] = useState(() => {
-    return new Date().toISOString().split("T")[0];
-  });
-  const [summaryEndDate, setSummaryEndDate] = useState(() => {
-    return new Date().toISOString().split("T")[0];
-  });
+  const [filterStartDate, setFilterStartDate] = useState("");
+  const [filterEndDate, setFilterEndDate] = useState("");
+  const [filterSyncStatus, setFilterSyncStatus] = useState<"ALL" | "SYNCED" | "PENDING">("ALL");
 
   useEffect(() => {
     // Load local scan records
@@ -133,23 +129,23 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   // Filter records based on selected date
   const getFilteredSummaryRecords = () => {
     let filtered = [...allRecords];
-    const todayStr = new Date().toISOString().split("T")[0];
     
-    if (summaryDateType === "TODAY") {
-      filtered = filtered.filter(r => r.Tanggal === todayStr);
-    } else if (summaryDateType === "YESTERDAY") {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split("T")[0];
-      filtered = filtered.filter(r => r.Tanggal === yesterdayStr);
-    } else if (summaryDateType === "CUSTOM") {
-      if (summaryStartDate) {
-        filtered = filtered.filter(r => r.Tanggal >= summaryStartDate);
-      }
-      if (summaryEndDate) {
-        filtered = filtered.filter(r => r.Tanggal <= summaryEndDate);
-      }
+    // Sync status filter
+    if (filterSyncStatus !== "ALL") {
+      if (filterSyncStatus === "SYNCED") filtered = filtered.filter(r => r.SyncStatus === "SYNCED");
+      if (filterSyncStatus === "PENDING") filtered = filtered.filter(r => r.SyncStatus === "PENDING");
     }
+
+    // Start date filter (r.Tanggal >= filterStartDate)
+    if (filterStartDate) {
+      filtered = filtered.filter(r => r.Tanggal >= filterStartDate);
+    }
+
+    // End date filter (r.Tanggal <= filterEndDate)
+    if (filterEndDate) {
+      filtered = filtered.filter(r => r.Tanggal <= filterEndDate);
+    }
+    
     return filtered;
   };
 
@@ -318,64 +314,164 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           </p>
         </div>
 
-        {/* Date Filters */}
+        {/* Date & Sync Filters */}
         <div className="space-y-3">
-          <div className="bg-slate-100 p-0.5 rounded-xl flex items-center justify-between">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Date range inputs */}
+            <div className="space-y-1">
+              <label className="block text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                <Calendar className="h-3 w-3 text-slate-400" />
+                Rentang Tanggal
+              </label>
+              <div className="flex items-center space-x-1">
+                <input
+                  type="date"
+                  value={filterStartDate}
+                  onChange={(e) => setFilterStartDate(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-1 text-[11px] text-slate-600 focus:outline-none focus:border-red-500 font-mono"
+                />
+                <span className="text-slate-400 text-[10px]">s/d</span>
+                <input
+                  type="date"
+                  value={filterEndDate}
+                  onChange={(e) => setFilterEndDate(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-1 text-[11px] text-slate-600 focus:outline-none focus:border-red-500 font-mono"
+                />
+              </div>
+            </div>
+
+            {/* Sync status segmented select */}
+            <div className="space-y-1">
+              <label className="block text-[9px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1">
+                <SlidersHorizontal className="h-3 w-3 text-slate-400" />
+                Status Sinkronisasi
+              </label>
+              <div className="grid grid-cols-3 bg-slate-200/60 p-0.5 rounded-lg text-[10px] font-bold text-center">
+                <button
+                  type="button"
+                  onClick={() => setFilterSyncStatus("ALL")}
+                  className={`py-1 rounded-md transition-all cursor-pointer ${
+                    filterSyncStatus === "ALL"
+                      ? "bg-white text-slate-800 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Semua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterSyncStatus("SYNCED")}
+                  className={`py-1 rounded-md transition-all cursor-pointer ${
+                    filterSyncStatus === "SYNCED"
+                      ? "bg-emerald-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.05)] font-extrabold"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Synced
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterSyncStatus("PENDING")}
+                  className={`py-1 rounded-md transition-all cursor-pointer ${
+                    filterSyncStatus === "PENDING"
+                      ? "bg-amber-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.05)] font-extrabold"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Pending
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Preset Buttons */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100/60">
+            <span className="text-[9px] font-bold uppercase text-slate-400 mr-1">Preset Tanggal:</span>
             <button
               type="button"
-              onClick={() => setSummaryDateType("ALL")}
-              className={`flex-1 py-1 text-[9px] font-bold rounded-lg text-center transition-all cursor-pointer ${
-                summaryDateType === "ALL" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+              onClick={() => {
+                setFilterStartDate("");
+                setFilterEndDate("");
+              }}
+              className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                !filterStartDate && !filterEndDate
+                  ? "text-white border-none"
+                  : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
               }`}
+              style={
+                !filterStartDate && !filterEndDate
+                  ? { backgroundColor: "#565656" }
+                  : undefined
+              }
             >
-              Semua
+              Semua Waktu
             </button>
             <button
               type="button"
-              onClick={() => setSummaryDateType("TODAY")}
-              className={`flex-1 py-1 text-[9px] font-bold rounded-lg text-center transition-all cursor-pointer ${
-                summaryDateType === "TODAY" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+              onClick={() => {
+                const today = getTodayLocalDateString();
+                setFilterStartDate(today);
+                setFilterEndDate(today);
+              }}
+              className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
+                  ? "text-white border-none"
+                  : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
               }`}
+              style={
+                filterStartDate === getTodayLocalDateString() && filterEndDate === getTodayLocalDateString()
+                  ? { backgroundColor: "#565656" }
+                  : undefined
+              }
             >
               Hari Ini
             </button>
             <button
               type="button"
-              onClick={() => setSummaryDateType("YESTERDAY")}
-              className={`flex-1 py-1 text-[9px] font-bold rounded-lg text-center transition-all cursor-pointer ${
-                summaryDateType === "YESTERDAY" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+              onClick={() => {
+                const yesterdayObj = new Date();
+                yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+                const yesterday = getTodayLocalDateString(yesterdayObj);
+                setFilterStartDate(yesterday);
+                setFilterEndDate(yesterday);
+              }}
+              className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
+                  ? "text-white border-none"
+                  : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
               }`}
+              style={
+                filterStartDate === getTodayLocalDateString(new Date(Date.now() - 86400000)) && filterEndDate === getTodayLocalDateString(new Date(Date.now() - 86400000))
+                  ? { backgroundColor: "#565656" }
+                  : undefined
+              }
             >
               Kemarin
             </button>
             <button
               type="button"
-              onClick={() => setSummaryDateType("CUSTOM")}
-              className={`flex-1 py-1 text-[9px] font-bold rounded-lg text-center transition-all cursor-pointer ${
-                summaryDateType === "CUSTOM" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-800"
+              onClick={() => {
+                const threeDaysAgoObj = new Date();
+                threeDaysAgoObj.setDate(threeDaysAgoObj.getDate() - 2); // 3 days including today
+                const threeDaysAgo = getTodayLocalDateString(threeDaysAgoObj);
+                const today = getTodayLocalDateString();
+                setFilterStartDate(threeDaysAgo);
+                setFilterEndDate(today);
+              }}
+              className={`px-2 py-0.5 rounded text-[9px] font-bold transition-colors cursor-pointer ${
+                filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
+                  ? "text-white border-none"
+                  : "bg-white text-slate-500 border border-slate-200 hover:bg-[#565656] hover:text-white hover:border-[#565656]"
               }`}
+              style={
+                filterStartDate === getTodayLocalDateString(new Date(Date.now() - 2 * 86400000)) && filterEndDate === getTodayLocalDateString()
+                  ? { backgroundColor: "#565656" }
+                  : undefined
+              }
             >
-              Kustom
+              3 Hari Terakhir
             </button>
           </div>
-
-          {summaryDateType === "CUSTOM" && (
-            <div className="flex items-center space-x-1.5 animate-in fade-in slide-in-from-top-2 duration-150 bg-slate-50 p-2 border border-slate-200/60 rounded-xl justify-center">
-              <input
-                type="date"
-                value={summaryStartDate}
-                onChange={(e) => setSummaryStartDate(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-medium text-slate-700 focus:outline-none focus:border-red-500"
-              />
-              <span className="text-[10px] text-slate-400 font-bold">s/d</span>
-              <input
-                type="date"
-                value={summaryEndDate}
-                onChange={(e) => setSummaryEndDate(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-medium text-slate-700 focus:outline-none focus:border-red-500"
-              />
-            </div>
-          )}
         </div>
 
         {Object.keys(statsSeller).length === 0 ? (
