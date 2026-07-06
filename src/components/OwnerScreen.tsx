@@ -37,11 +37,13 @@ import {
   LogOut,
   Calendar,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Tag
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
-import { dbService, getDirectDriveImageUrl } from "../utils/db";
+import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
 import { toast } from "sonner";
+import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
 interface OwnerDashboardProps {
   onStatusChanged: () => void;
@@ -69,6 +71,15 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   // Review Deck indices (for carousel review)
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isFocusMode, setIsFocusMode] = useState(false);
+  const [selectedReviewSeller, setSelectedReviewSeller] = useState<string | null>(null);
+  const [completedSellers, setCompletedSellers] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("jt_completed_pickup_sellers");
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  });
 
   // Stats
   const [statsSeller, setStatsSeller] = useState<Record<string, number>>({});
@@ -134,6 +145,14 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [copiedScript, setCopiedScript] = useState(false);
   const [apiTestStatus, setApiTestStatus] = useState<"IDLE" | "TESTING" | "SUCCESS" | "FAILED">("IDLE");
   const [activeTab, setActiveTab] = useState<"RECAP" | "MASTERS" | "INTEGRATION" | "DEPLOYMENT">("RECAP");
+
+  // Prefix Resi states
+  const [newPrefixInput, setNewPrefixInput] = useState("");
+  const [savedPrefixes, setSavedPrefixes] = useState<string[]>(() => {
+    const stored = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
+    return stored.split(",").map(p => p.trim().toUpperCase()).filter(Boolean);
+  });
+  const [resiPrefixSuccess, setResiPrefixSuccess] = useState(false);
 
   // Password change states
   const [oldPassword, setOldPassword] = useState("");
@@ -380,6 +399,35 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     } finally {
       setIsPushingMasters(false);
     }
+  };
+
+  const handleAddResiPrefix = (e: React.FormEvent) => {
+    e.preventDefault();
+    const formatted = newPrefixInput.trim().toUpperCase();
+    if (!formatted) return;
+
+    let currentPrefixes = [...savedPrefixes];
+    if (!currentPrefixes.includes(formatted)) {
+      currentPrefixes.push(formatted);
+    }
+    
+    const formattedStr = currentPrefixes.join(", ");
+    setSavedPrefixes(currentPrefixes);
+    localStorage.setItem("jt_resi_prefixes", formattedStr);
+    
+    setNewPrefixInput("");
+    setResiPrefixSuccess(true);
+    setTimeout(() => setResiPrefixSuccess(false), 3000);
+  };
+
+  const handleDeletePrefix = (prefixToDelete: string) => {
+    let currentPrefixes = savedPrefixes.filter(p => p !== prefixToDelete);
+    if (currentPrefixes.length === 0) {
+      currentPrefixes = ["JX", "JZ"];
+    }
+    const formatted = currentPrefixes.join(", ");
+    setSavedPrefixes(currentPrefixes);
+    localStorage.setItem("jt_resi_prefixes", formatted);
   };
 
   const handleSaveCloudConfigField = (field: string, value: string) => {
@@ -800,6 +848,79 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
           <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
             * Perubahan sandi hanya disimpan di local storage peramban browser perangkat ini.
+          </p>
+        </div>
+
+        {/* Pengaturan Kode Resi Card */}
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div>
+                <h4 className="font-bold text-slate-900 flex items-center text-sm font-sans">
+                  <Tag className="h-4 w-4 text-red-600 mr-2" />
+                  PENGATURAN AWALAN KODE RESI
+                </h4>
+                <p className="text-[10px] text-slate-400">Atur huruf awalan resi yang diizinkan saat scan barcode</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddResiPrefix} className="space-y-4">
+              <div className="space-y-1.55">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Tambah Awalan Baru:</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newPrefixInput}
+                    onChange={(e) => setNewPrefixInput(e.target.value)}
+                    placeholder="Contoh: JX"
+                    className="flex-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-2.5 text-[#333333] text-xs focus:outline-none focus:border-red-650 focus:bg-white selection:bg-red-200 selection:text-red-900 font-mono uppercase transition-all duration-300"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-slate-900 hover:bg-black text-white font-bold px-4 rounded-xl cursor-pointer text-xs flex items-center justify-center border border-slate-900 transition-all shadow-sm"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {resiPrefixSuccess && (
+                <p className="text-[10px] text-emerald-600 font-bold">✓ Daftar awalan resi berhasil disimpan!</p>
+              )}
+            </form>
+            
+            <div className="mt-5 border-t border-slate-100 pt-4">
+              <h5 className="text-[10px] font-bold text-slate-500 uppercase mb-2">Awalan Tersimpan:</h5>
+              <div className="max-h-[150px] overflow-y-auto pr-1 custom-scrollbar">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      <th className="py-2 px-3 font-bold text-slate-600 uppercase text-[10px] rounded-l-lg border-b border-slate-200">Kode Awalan</th>
+                      <th className="py-2 px-3 font-bold text-slate-600 uppercase text-[10px] text-right rounded-r-lg border-b border-slate-200 w-16">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {savedPrefixes.map((prefix) => (
+                      <tr key={prefix} className="hover:bg-slate-50 transition-colors group">
+                        <td className="py-2 px-3 font-mono font-bold text-slate-700">{prefix}</td>
+                        <td className="py-2 px-3 text-right">
+                          <button
+                            onClick={() => handleDeletePrefix(prefix)}
+                            className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                            title="Hapus Awalan"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
+            * Awalan resi digunakan untuk memvalidasi barcode yang dipindai kamera. Format standar J&T adalah 2 huruf diikuti 10 angka.
           </p>
         </div>
 
@@ -1461,11 +1582,13 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
   // Reviews indices navigation centered at middle-bottom
   const handlePrevReview = () => {
-    setReviewIndex((prev) => (prev > 0 ? prev - 1 : filteredRecords.length - 1));
+    const listLength = selectedReviewSeller ? reviewDeckRecords.length : filteredRecords.length;
+    setReviewIndex((prev) => (prev > 0 ? prev - 1 : listLength - 1));
   };
 
   const handleNextReview = () => {
-    setReviewIndex((prev) => (prev < filteredRecords.length - 1 ? prev + 1 : 0));
+    const listLength = selectedReviewSeller ? reviewDeckRecords.length : filteredRecords.length;
+    setReviewIndex((prev) => (prev < listLength - 1 ? prev + 1 : 0));
   };
 
   // Handle YoYi Import
@@ -1592,8 +1715,49 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const uniqueOutlets = Array.from(new Set(allRecords.map(r => r.Outlet)));
   const uniqueSellers = Array.from(new Set(allRecords.map(r => r.Seller)));
 
+  // Get records specifically for the currently selected review seller
+  const reviewDeckRecords = React.useMemo(() => {
+    if (!selectedReviewSeller) return [];
+    return filteredRecords.filter(r => r.Seller === selectedReviewSeller);
+  }, [filteredRecords, selectedReviewSeller]);
+
   // Retrieve current active record for Review Deck
-  const activeReviewRecord = filteredRecords[reviewIndex] || null;
+  const activeReviewRecord = selectedReviewSeller
+    ? (reviewDeckRecords[reviewIndex] || null)
+    : null;
+
+  // Get unique list of sellers present in filteredRecords with stats
+  const sellersInFilteredSet = React.useMemo(() => {
+    const map: Record<string, { name: string; total: number; cancelled: number; lastScanTime: string }> = {};
+    filteredRecords.forEach(r => {
+      if (!map[r.Seller]) {
+        map[r.Seller] = { name: r.Seller, total: 0, cancelled: 0, lastScanTime: r.Jam };
+      }
+      map[r.Seller].total++;
+      if (r.Status === "CANCELLED") {
+        map[r.Seller].cancelled++;
+      }
+      if (r.Jam > map[r.Seller].lastScanTime) {
+        map[r.Seller].lastScanTime = r.Jam;
+      }
+    });
+    return Object.values(map).sort((a, b) => b.lastScanTime.localeCompare(a.lastScanTime));
+  }, [filteredRecords]);
+
+  // Toggle seller completed scan pickup
+  const toggleSellerPickupCompleted = (sellerName: string) => {
+    const isCompleted = completedSellers.includes(sellerName);
+    let newList: string[];
+    if (isCompleted) {
+      newList = completedSellers.filter(s => s !== sellerName);
+      toast.success(`Seller ${sellerName} ditandai Belum Scan Pickup`);
+    } else {
+      newList = [...completedSellers, sellerName];
+      toast.success(`Seller ${sellerName} ditandai Selesai Scan Pickup!`);
+    }
+    setCompletedSellers(newList);
+    localStorage.setItem("jt_completed_pickup_sellers", JSON.stringify(newList));
+  };
 
   // Render Gate passcode if not authenticated
   if (!isAuthenticated) {
@@ -1649,21 +1813,148 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     return (
       <div className="w-full min-h-[90vh] bg-slate-950 text-slate-100 rounded-3xl p-6 md:p-10 flex flex-col justify-between animate-in fade-in duration-300" id="owner-focus-mode-view">
         {/* Header bar of Focus Mode */}
-        <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-          <div className="flex items-center space-x-2">
-            <div className="bg-red-600 w-3.5 h-3.5 rounded-full animate-pulse" />
-            <h2 className="text-sm font-black tracking-widest uppercase text-slate-200">OWNER FOCUS MODE (MODE FOKUS)</h2>
+        <div className="flex flex-col sm:flex-row justify-between items-center pb-4 border-b border-slate-800 gap-4">
+          <div className="flex items-center space-x-2.5">
+            {selectedReviewSeller && (
+              <button
+                onClick={() => {
+                  setSelectedReviewSeller(null);
+                  setReviewIndex(0);
+                }}
+                type="button"
+                className="bg-slate-900 hover:bg-slate-850 text-slate-300 p-2.5 rounded-xl transition-all cursor-pointer border border-slate-800 flex items-center justify-center"
+                title="Kembali ke Daftar Seller"
+              >
+                <ChevronLeft className="h-4 w-4 text-slate-300" />
+              </button>
+            )}
+            <div>
+              <div className="flex items-center space-x-2">
+                <div className="bg-red-600 w-3.5 h-3.5 rounded-full animate-pulse" />
+                <h2 className="text-sm font-black tracking-widest uppercase text-slate-200">
+                  {selectedReviewSeller ? `FOCUS MODE: ${selectedReviewSeller}` : "OWNER FOCUS MODE (MODE FOKUS)"}
+                </h2>
+              </div>
+              <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                {selectedReviewSeller 
+                  ? `Menampilkan slide-deck untuk di-scan cepat` 
+                  : "Silakan pilih salah satu seller untuk masuk ke deck scanner"
+                }
+              </p>
+            </div>
           </div>
-          <button
-            onClick={() => setIsFocusMode(false)}
-            className="bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer border border-slate-800 hover:border-slate-700 shadow-sm"
-          >
-            <Minimize2 className="h-4 w-4" />
-            <span>Keluar Focus Mode</span>
-          </button>
+          <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+            {selectedReviewSeller && (
+              <button
+                onClick={() => toggleSellerPickupCompleted(selectedReviewSeller)}
+                type="button"
+                className={`font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer ${
+                  completedSellers.includes(selectedReviewSeller)
+                    ? "bg-emerald-950 text-emerald-400 border-emerald-900"
+                    : "bg-green-600 hover:bg-green-700 text-white border-none"
+                }`}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>{completedSellers.includes(selectedReviewSeller) ? "✓ Selesai Pickup" : "Selesai Scan Pickup"}</span>
+              </button>
+            )}
+            <button
+              onClick={() => setIsFocusMode(false)}
+              className="bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer border border-slate-800 hover:border-slate-700 shadow-sm"
+            >
+              <Minimize2 className="h-4 w-4" />
+              <span>Keluar Focus Mode</span>
+            </button>
+          </div>
         </div>
 
-        {activeReviewRecord ? (
+        {!selectedReviewSeller ? (
+          /* DARK FOCUS SELLER LIST */
+          <div className="flex-1 my-8 max-w-7xl mx-auto w-full flex flex-col justify-start overflow-y-auto">
+            <h3 className="text-lg font-black text-slate-100 mb-6 text-center tracking-widest uppercase">PILIH SELLER UNTUK SCAN</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6">
+              {sellersInFilteredSet.length === 0 ? (
+                <div className="col-span-full text-center py-24 text-slate-500 border border-dashed border-slate-850 rounded-3xl">
+                  <Filter className="h-10 w-10 mx-auto opacity-30 text-slate-500 mb-2" />
+                  <p className="text-xs font-bold uppercase tracking-wider">Belum ada seller yang discan hari ini</p>
+                </div>
+              ) : (
+                sellersInFilteredSet.map((s) => {
+                  const isCompleted = completedSellers.includes(s.name);
+                  return (
+                    <div 
+                      key={s.name}
+                      className={`border rounded-2xl p-6 transition-all flex flex-col justify-between hover:border-slate-700 ${
+                        isCompleted 
+                          ? "bg-slate-900/40 border-emerald-900/50 hover:bg-slate-900/60" 
+                          : "bg-slate-900 border-slate-850 hover:bg-slate-850/50"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-start justify-between">
+                          <span className="font-extrabold text-white text-base truncate max-w-[180px]" title={s.name}>
+                            {s.name}
+                          </span>
+                          <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider ${
+                            isCompleted 
+                              ? "bg-emerald-950 text-emerald-400 font-bold border border-emerald-900/40" 
+                              : "bg-slate-800 text-slate-400 font-medium"
+                          }`}>
+                            {isCompleted ? "✓ Selesai" : "Belum Scan"}
+                          </span>
+                        </div>
+                        
+                        <div className="mt-4 space-y-2 text-xs text-slate-400">
+                          <div className="flex justify-between">
+                            <span>Total Paket Scanned:</span>
+                            <span className="font-bold text-slate-200">{s.total} resi</span>
+                          </div>
+                          {s.cancelled > 0 && (
+                            <div className="flex justify-between text-red-400">
+                              <span>Dibatalkan (Cancelled):</span>
+                              <span className="font-bold">{s.cancelled} resi</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-[11px] text-slate-500 pt-1">
+                            <span>Scan Terakhir:</span>
+                            <span className="font-mono">{s.lastScanTime}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between gap-3">
+                        <button
+                          onClick={() => toggleSellerPickupCompleted(s.name)}
+                          type="button"
+                          className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center space-x-1.5 border cursor-pointer ${
+                            isCompleted
+                              ? "bg-emerald-950/40 hover:bg-emerald-950/80 border-emerald-900 text-emerald-400"
+                              : "bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-300"
+                          }`}
+                        >
+                          <Check className="h-4 w-4" />
+                          <span>{isCompleted ? "Ubah Belum" : "Selesai Scan"}</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setSelectedReviewSeller(s.name);
+                            setReviewIndex(0);
+                          }}
+                          type="button"
+                          className="bg-red-650 hover:bg-red-700 text-white font-black px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-all flex items-center space-x-1.5 cursor-pointer border-none shadow-md"
+                        >
+                          <span>Review Foto ({s.total})</span>
+                          <ChevronRight className="h-4 w-4 text-white" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        ) : activeReviewRecord ? (
           <div className="flex-1 my-6 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center max-w-7xl mx-auto w-full">
             {/* Left/Main Column: Giant Image Viewer */}
             <div className="lg:col-span-7 flex flex-col items-center justify-center relative bg-slate-900 border border-slate-850 rounded-3xl p-4 md:p-6 w-full min-h-[350px] md:min-h-[500px]">
@@ -1759,7 +2050,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 {activeReviewRecord.Status === "SCANNED" ? (
                   <button
                     onClick={() => handleMarkCancelled(activeReviewRecord.Resi)}
-                    className="w-full bg-red-650 hover:bg-red-700 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider"
+                    className="w-full bg-red-655 hover:bg-red-700 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider border-none"
                   >
                     <Ban className="h-5 w-5" />
                     <span>Tandai Cancelled</span>
@@ -1794,7 +2085,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 ) : (
                   <button
                     onClick={() => handleRequestRetake(activeReviewRecord.Resi)}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider"
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-5 px-6 rounded-2xl transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer transform active:scale-95 text-sm uppercase tracking-wider border-none"
                   >
                     <Camera className="h-5 w-5" />
                     <span>Minta Foto Ulang</span>
@@ -1806,7 +2097,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               <div className="flex justify-between items-center bg-slate-900 border border-slate-850 px-6 py-4 rounded-2xl font-mono text-xs">
                 <span className="text-slate-400 font-bold">POSISI DECK:</span>
                 <span className="text-white font-black text-sm">
-                  {reviewIndex + 1} / {filteredRecords.length} ITEM
+                  {reviewIndex + 1} / {reviewDeckRecords.length} ITEM
                 </span>
               </div>
 
@@ -1821,7 +2112,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         )}
 
         {/* Mini branding footer */}
-        <div className="text-center text-[10px] text-slate-500 font-mono pt-4 border-t border-slate-900">
+        <div className="text-center text-[10px] text-slate-550 font-mono pt-4 border-t border-slate-900">
           J&T EXPRESS TANGERANG BARAT • SINKRONISASI AKTIF
         </div>
       </div>
@@ -2024,6 +2315,54 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         </div>
 
       </div>
+
+          {/* Chart Ringkasan (Recharts) */}
+          {(() => {
+            const todayStr = getTodayLocalDateString();
+            const resiTodayCount = allRecords.filter(r => r.Tanggal === todayStr).length;
+            const retakeCount = allRecords.filter(r => r.RetakeStatus === "PENDING" || r.RetakeStatus === "RETAKEN").length;
+            const cancelledCount = allRecords.filter(r => r.Status === "CANCELLED").length;
+
+            const chartData = [
+              { name: "Scan Hari Ini", value: resiTodayCount, fill: "#3b82f6" },
+              { name: "Bermasalah (Retake)", value: retakeCount, fill: "#f59e0b" },
+              { name: "Status Cancelled", value: cancelledCount, fill: "#ef4444" }
+            ];
+
+            return (
+              <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
+                <div className="border-b border-slate-100 pb-3">
+                  <h3 className="font-bold text-sm text-slate-800 flex items-center">
+                    <BarChart3 className="h-4 w-4 text-blue-500 mr-2" />
+                    RINGKASAN STATUS RESI
+                  </h3>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Grafik perbandingan total resi yang discan hari ini, total resi bermasalah, dan total dibatalkan.
+                  </p>
+                </div>
+                
+                <div className="h-[250px] w-full mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} dy={10} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} />
+                      <RechartsTooltip 
+                        cursor={{ fill: '#f1f5f9' }}
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
+                        itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
+                      />
+                      <Bar dataKey="value" radius={[6, 6, 0, 0]} barSize={40}>
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Import YoYi Section */}
           <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
@@ -2292,28 +2631,151 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm" id="owner-review-deck-section">
         
         <div className="mb-4 border-b border-slate-100 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h3 className="font-bold text-sm text-[#f20000] flex items-center" style={{ color: "#f20000" }}>
-              <Compass className="h-4 w-4 text-red-650 mr-2 animate-pulse" />
-              REVIEW FOTO RESI & BARCODE SCANNER DECK
-            </h3>
-            <p className="text-[10px] text-slate-500 font-medium">
-              Gunakan deck visual ini untuk men-scan barcode langsung lewat HP/Sprinter anda. Tekan "Order Cancelled" jika paket dibatalkan pembeli.
-            </p>
+          <div className="flex items-center space-x-2.5">
+            {selectedReviewSeller && (
+              <button
+                onClick={() => {
+                  setSelectedReviewSeller(null);
+                  setReviewIndex(0);
+                }}
+                type="button"
+                className="bg-slate-50 hover:bg-slate-100 text-slate-700 p-2.5 rounded-xl transition-all cursor-pointer border border-slate-200 flex items-center justify-center"
+                title="Kembali ke Daftar Seller"
+              >
+                <ChevronLeft className="h-4 w-4 text-slate-700" />
+              </button>
+            )}
+            <div>
+              <h3 className="font-bold text-sm text-[#f20000] flex items-center" style={{ color: "#f20000" }}>
+                <Compass className="h-4 w-4 text-red-650 mr-2 animate-pulse" />
+                {selectedReviewSeller ? `FOTO RESI: ${selectedReviewSeller}` : "REVIEW FOTO RESI & BARCODE SCANNER DECK"}
+              </h3>
+              <p className="text-[10px] text-slate-500 font-medium">
+                {selectedReviewSeller 
+                  ? `Menampilkan ${reviewDeckRecords.length} foto paket milik ${selectedReviewSeller} untuk di-scan`
+                  : "Daftar seluruh seller yang sudah discan oleh admin hari ini. Pilih seller untuk memulai slide-deck scan."
+                }
+              </p>
+            </div>
           </div>
-          <button
-            onClick={() => setIsFocusMode(true)}
-            style={{ backgroundColor: "#e50000" }}
-            className="self-start sm:self-center text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm hover:scale-[1.02] active:scale-[0.98] cursor-pointer hover:bg-red-700 border-none"
-            title="Masuk Mode Fokus"
-            type="button"
-          >
-            <Maximize2 className="h-3.5 w-3.5 text-white" />
-            <span>Focus Mode</span>
-          </button>
+          
+          <div className="flex items-center space-x-2 self-start sm:self-center">
+            {selectedReviewSeller && (
+              <button
+                onClick={() => toggleSellerPickupCompleted(selectedReviewSeller)}
+                type="button"
+                className={`font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer ${
+                  completedSellers.includes(selectedReviewSeller)
+                    ? "bg-green-100 text-green-700 border-green-200"
+                    : "bg-green-600 hover:bg-green-700 text-white border-none"
+                }`}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>{completedSellers.includes(selectedReviewSeller) ? "Selesai Scan" : "Selesai Scan Pickup"}</span>
+              </button>
+            )}
+
+            {selectedReviewSeller && (
+              <button
+                onClick={() => setIsFocusMode(true)}
+                style={{ backgroundColor: "#e50000" }}
+                className="text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm hover:scale-[1.02] active:scale-[0.98] cursor-pointer hover:bg-red-700 border-none"
+                title="Masuk Mode Fokus"
+                type="button"
+              >
+                <Maximize2 className="h-3.5 w-3.5 text-white" />
+                <span>Focus Mode</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {activeReviewRecord ? (
+        {!selectedReviewSeller ? (
+          /* LIST OF SELLERS SCANNED BY ADMIN */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 py-2" id="owner-seller-pickup-list">
+            {sellersInFilteredSet.length === 0 ? (
+              <div className="col-span-full text-center py-16 text-slate-400 space-y-3 border border-dashed border-slate-200 rounded-3xl">
+                <Filter className="h-10 w-10 mx-auto opacity-30 text-slate-400" />
+                <h5 className="text-slate-650 font-bold text-sm uppercase tracking-wider">Belum Ada Seller yang Di-scan</h5>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto font-semibold leading-relaxed">
+                  Tidak ditemukan seller dengan data scan di database pada filter aktif saat ini.
+                </p>
+              </div>
+            ) : (
+              sellersInFilteredSet.map((s) => {
+                const isCompleted = completedSellers.includes(s.name);
+                return (
+                  <div 
+                    key={s.name}
+                    className={`border rounded-2xl p-4 transition-all flex flex-col justify-between hover:shadow-md ${
+                      isCompleted 
+                        ? "bg-green-50/40 border-green-200/60" 
+                        : "bg-white border-slate-200/80 hover:border-red-200"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-start justify-between">
+                        <span className="font-extrabold text-slate-800 text-sm md:text-base truncate max-w-[170px]" title={s.name}>
+                          {s.name}
+                        </span>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                          isCompleted 
+                            ? "bg-green-100 text-green-700 font-bold border border-green-200" 
+                            : "bg-slate-100 text-slate-500 font-medium"
+                        }`}>
+                          {isCompleted ? "✓ Selesai" : "Belum Scan"}
+                        </span>
+                      </div>
+                      
+                      <div className="mt-3 space-y-1 text-[11px] text-slate-500 font-semibold">
+                        <div className="flex justify-between">
+                          <span>Total Paket Scanned:</span>
+                          <span className="font-bold text-slate-700">{s.total} resi</span>
+                        </div>
+                        {s.cancelled > 0 && (
+                          <div className="flex justify-between text-red-650">
+                            <span>Dibatalkan (Cancelled):</span>
+                            <span className="font-bold">{s.cancelled} resi</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[10px] text-slate-400 pt-1">
+                          <span>Scan Terakhir:</span>
+                          <span className="font-mono font-bold text-slate-600">{s.lastScanTime}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => toggleSellerPickupCompleted(s.name)}
+                        type="button"
+                        className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center space-x-1 border border-transparent cursor-pointer text-white hover:opacity-90"
+                        style={{ backgroundColor: "#ff0000" }}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        <span>{isCompleted ? "Ubah Belum" : "Selesai Scan"}</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setSelectedReviewSeller(s.name);
+                          setReviewIndex(0);
+                        }}
+                        type="button"
+                        className="text-white font-black px-3.5 py-2 rounded-xl text-[10px] uppercase tracking-wider transition-all flex items-center space-x-1 cursor-pointer border-none shadow-sm hover:opacity-90"
+                        style={{ backgroundColor: "#666666" }}
+                      >
+                        <span>Review Foto ({s.total})</span>
+                        <ChevronRight className="h-3.5 w-3.5 text-white" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        ) : activeReviewRecord ? (
+          /* SLIDER CAROUSEL VIEW FOR SELECTED SELLER */
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
             
             {/* Left Col: Giant image frame */}
@@ -2329,7 +2791,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 />
                 
                 {/* Micro branding watermark */}
-                <div className="absolute bottom-3 right-3 bg-red-650 text-white font-bold text-[9px] px-2 py-0.5 rounded border border-red-500/30">
+                <div className="absolute bottom-3 right-3 bg-red-655 text-white font-bold text-[9px] px-2 py-0.5 rounded border border-red-500/30">
                   {activeReviewRecord.Outlet}
                 </div>
 
@@ -2383,7 +2845,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 {activeReviewRecord.Status === "SCANNED" ? (
                   <button
                     onClick={() => handleMarkCancelled(activeReviewRecord.Resi)}
-                    className="w-full bg-red-600 hover:bg-red-750 text-white font-bold py-4 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer"
+                    className="w-full bg-red-650 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer border-none"
                     id="mark-order-cancelled-button"
                   >
                     <Ban className="h-4 w-4" />
@@ -2401,7 +2863,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               <div className="space-y-2">
                 {activeReviewRecord.RetakeStatus === "PENDING" ? (
                   <div className="w-full bg-amber-50 border border-amber-200 text-amber-700 text-center font-bold py-3 px-4 rounded-xl text-[11px] uppercase tracking-wider flex items-center justify-center space-x-2">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-505" />
                     <span>⚠️ Menunggu Foto Ulang Operator</span>
                   </div>
                 ) : activeReviewRecord.RetakeStatus === "RETAKEN" ? (
@@ -2422,7 +2884,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 ) : (
                   <button
                     onClick={() => handleRequestRetake(activeReviewRecord.Resi)}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer"
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer border-none"
                     id="request-retake-button"
                   >
                     <Camera className="h-4 w-4" />
@@ -2433,7 +2895,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
               {/* Index indicator */}
               <div className="text-center font-mono text-xs text-slate-440 font-bold">
-                Gambar <span className="text-slate-800 font-extrabold">{reviewIndex + 1}</span> dari <span className="text-slate-800 font-extrabold">{filteredRecords.length}</span> items
+                Gambar <span className="text-slate-800 font-extrabold">{reviewIndex + 1}</span> dari <span className="text-slate-800 font-extrabold">{reviewDeckRecords.length}</span> items
               </div>
 
             </div>
@@ -2463,7 +2925,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         ) : (
           <div className="text-center py-16 text-slate-400 space-y-2 border border-dashed border-slate-200 rounded-2xl">
             <Filter className="h-8 w-8 mx-auto opacity-30 text-slate-400" />
-            <h5 className="text-slate-600 font-bold text-sm">Tidak ada parcel yang sesuai filter</h5>
+            <h5 className="text-slate-650 font-bold text-sm">Tidak ada parcel yang sesuai filter</h5>
             <p className="text-xs text-slate-400 max-w-sm mx-auto font-medium">
               Cobalah mengubah kriteria pencarian atau status filter di bawah untuk memunculkan resep resi.
             </p>

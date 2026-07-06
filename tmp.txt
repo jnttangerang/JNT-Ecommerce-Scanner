@@ -1,0 +1,11 @@
+          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
+            * Perubahan sandi hanya disimpan di local storage peramban browser perangkat ini.
+          </p>
+        </div>
+
+      </div>
+      </div>
+    );
+  };
+
+  const renderIntegrationTab = () => {

@@ -120,6 +120,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [deletingResi, setDeletingResi] = useState<string | null>(null);
 
+  // Session scanned resis (starts empty on enter)
+  const [sessionScannedResis, setSessionScannedResis] = useState<string[]>([]);
+  // Active panel tab ("ACTIVE_SESSION" by default)
+  const [activePanelTab, setActivePanelTab] = useState<"ACTIVE_SESSION" | "LAPORAN_SCAN">("ACTIVE_SESSION");
+
   // Manual input and live real-time validation states
   const [manualInput, setManualInput] = useState("");
   const [liveWarning, setLiveWarning] = useState<{
@@ -313,24 +318,44 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     });
   }, [scannedRecords, filterSearchQuery]);
 
+  // Filtered records for the current active scan session (matching sessionScannedResis)
+  const filteredRecordsSession = React.useMemo(() => {
+    return filteredRecords.filter(r => sessionScannedResis.includes(r.Resi));
+  }, [filteredRecords, sessionScannedResis]);
+
+  // Filtered records for Laporan Scan (all scanned today by this operator combination)
+  const filteredRecordsLaporan = React.useMemo(() => {
+    const todayStr = getTodayLocalDateString();
+    return filteredRecords.filter(r => r.Tanggal === todayStr);
+  }, [filteredRecords]);
+
+  // Active records to display based on the selected tab
+  const activeRecordsList = React.useMemo(() => {
+    if (activePanelTab === "ACTIVE_SESSION") {
+      return filteredRecordsSession;
+    } else {
+      return filteredRecordsLaporan;
+    }
+  }, [activePanelTab, filteredRecordsSession, filteredRecordsLaporan]);
+
   // Check if any filters are actively set (other than default)
   const isFilterActive = !!(filterSearchQuery.trim());
 
   // Operator pagination calculations
-  const totalOperatorRecords = filteredRecords.length;
+  const totalOperatorRecords = activeRecordsList.length;
   const totalOperatorPages = Math.ceil(totalOperatorRecords / operatorPageSize) || 1;
   const operatorStartIndex = (operatorPage - 1) * operatorPageSize;
   const operatorEndIndex = Math.min(operatorStartIndex + operatorPageSize, totalOperatorRecords);
 
   const displayedRecords = React.useMemo(() => {
-    return filteredRecords.slice(operatorStartIndex, operatorEndIndex);
-  }, [filteredRecords, operatorStartIndex, operatorEndIndex]);
+    return activeRecordsList.slice(operatorStartIndex, operatorEndIndex);
+  }, [activeRecordsList, operatorStartIndex, operatorEndIndex]);
 
-  // Reset operator page to 1 on filter, query, or count change
+  // Reset operator page to 1 on filter, query, tab, or count change
   useEffect(() => {
     setOperatorPage(1);
     setOperatorJumpInput("");
-  }, [filterSearchQuery, scannedRecords.length]);
+  }, [filterSearchQuery, activePanelTab, scannedRecords.length]);
 
   // Apply a unified constraints block to prevent hardware features from overriding each other
   const applyCameraConstraints = async (overrides: { torch?: boolean; zoom?: number; focusMode?: string } = {}) => {
@@ -778,7 +803,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
     lastCaptureSharpnessRef.current = Infinity; // Not a real capture, so never flag it as blurry
-    const simulatedBarcode = scannedResi || `JX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+    
+    const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
+    const validPrefixes = validPrefixesStr.split(",").map(p => p.trim()).filter(Boolean);
+    const defaultPrefix = validPrefixes.length > 0 ? validPrefixes[0] : "JX";
+    
+    const simulatedBarcode = scannedResi || `${defaultPrefix}${Math.floor(1000000000 + Math.random() * 9000000000)}`;
     return createMockResiPhoto(simulatedBarcode, config.seller);
   };
 
@@ -792,7 +822,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (!rawCode) return;
 
     // VALIDASI FORMAT BARCODE J&T
-    const isValidFormat = /^(JX|JZ)\d{10}$/.test(rawCode);
+    const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
+    const validPrefixes = validPrefixesStr.split(",").map(p => p.trim()).filter(Boolean);
+    const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "(JX|JZ)";
+    const regex = new RegExp(`^${prefixRegexPart}\\d{10}$`);
+    const isValidFormat = regex.test(rawCode);
+
     if (!isValidFormat) {
       // Only surface a warning once the SAME unrecognized code has been read stably a
       // few times (avoids reacting to single-frame noise), and at most once every few
@@ -987,6 +1022,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       toast.success(`Resi tersimpan: ${result.record.Resi}`);
       
       setLatestResi(result.record.Resi);
+      setSessionScannedResis(prev => {
+        if (result.record && !prev.includes(result.record.Resi)) {
+          return [result.record.Resi, ...prev];
+        }
+        return prev;
+      });
       loadRecords();
       if (onRecordAdded) {
         onRecordAdded();
@@ -1063,6 +1104,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const handleDeleteRecord = (resi: string) => {
     const success = dbService.deleteRecord(resi);
     if (success) {
+      setSessionScannedResis(prev => prev.filter(r => r !== resi));
       loadRecords();
       setDeletingResi(null);
       if (onRecordAdded) {
@@ -1576,10 +1618,51 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         <div className="lg:col-span-5 flex flex-col h-full font-sans">
           <div className="bg-white border border-slate-200 rounded-3xl p-5 flex flex-col flex-grow shadow-sm">
             
+            {/* Segmented Tab Controls */}
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-4 border border-slate-200/50">
+              <button
+                type="button"
+                onClick={() => setActivePanelTab("ACTIVE_SESSION")}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5 ${
+                  activePanelTab === "ACTIVE_SESSION"
+                    ? "bg-white text-slate-900 shadow-sm border border-slate-200/20"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <span>Sesi Scan Aktif</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                  activePanelTab === "ACTIVE_SESSION" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
+                }`}>
+                  {sessionScannedResis.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivePanelTab("LAPORAN_SCAN")}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5 ${
+                  activePanelTab === "LAPORAN_SCAN"
+                    ? "bg-white text-slate-900 shadow-sm border border-slate-200/20"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <span>Laporan Scan</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                  activePanelTab === "LAPORAN_SCAN" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
+                }`}>
+                  {filteredRecordsLaporan.length}
+                </span>
+              </button>
+            </div>
+
             <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
               <div>
                 <h3 className="font-bold text-sm text-slate-800 uppercase tracking-tight flex items-center gap-2">
-                  {isFilterActive ? `HASIL FILTER (${filteredRecords.length})` : `DAFTAR RESI TERAKHIR (${scannedRecords.length})`}
+                  {isFilterActive 
+                    ? `HASIL FILTER (${filteredRecords.length})` 
+                    : activePanelTab === "ACTIVE_SESSION"
+                    ? `DAFTAR RESI TERAKHIR (${sessionScannedResis.length})`
+                    : `LAPORAN SCAN HARI INI (${filteredRecordsLaporan.length})`
+                  }
                   {(() => {
                     const isDataRealtime = !isOffline && pendingCount === 0 && isCloudDataFresh;
                     return isDataRealtime ? (
@@ -1600,7 +1683,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   })()}
                 </h3>
                 <p className="text-[10px] text-slate-500">
-                  {isFilterActive ? "Menampilkan seluruh data yang cocok dengan kriteria filter" : "Terbaru berada di urutan paling atas"}
+                  {isFilterActive 
+                    ? "Menampilkan seluruh data yang cocok dengan kriteria filter" 
+                    : activePanelTab === "ACTIVE_SESSION"
+                    ? "Resi yang berhasil di scan pada sesi aktif ini"
+                    : "Histori seluruh resi yang berhasil Anda scan hari ini"
+                  }
                 </p>
               </div>
               {isFilterActive && (
@@ -1616,56 +1704,67 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 </button>
               )}
             </div>
-
-            {/* Filter & Search Panel */}
-            <div className="mb-4 bg-slate-50 border border-slate-150 rounded-2xl p-3.5 space-y-3">
-              {/* Row 1: Search Input */}
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-450">
-                  <Search className="h-3.5 w-3.5" />
-                </span>
-                <input
-                  type="text"
-                  placeholder="Cari No. Resi..."
-                  value={filterSearchQuery}
-                  onChange={(e) => setFilterSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-8 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-450 focus:outline-none focus:border-red-550 focus:ring-1 focus:ring-red-550/20 font-mono transition-all"
-                />
-                {filterSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setFilterSearchQuery("")}
-                    className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    <XCircle className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Scanned Feed list box */}
-            <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1 flex-grow" id="recent-scans-feed">
-              {scannedRecords.length === 0 ? (
-                <div className="text-center py-16 text-slate-400 space-y-3">
-                  <ListRestart className="h-10 w-10 mx-auto opacity-30 text-slate-400" />
-                  <div>
-                    <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Belum Ada Paket</h5>
-                    <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
-                      Data scan terbaru oleh Anda ({config.operator}) untuk seller {config.seller} akan otomatis tertampil secara real-time di panel ini.
-                    </p>
-                  </div>
-                </div>
-              ) : filteredRecords.length === 0 ? (
-                <div className="text-center py-16 text-slate-400 space-y-3">
-                  <Filter className="h-10 w-10 mx-auto opacity-30 text-slate-400 animate-pulse" />
-                  <div>
-                    <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Hasil Filter Kosong</h5>
-                    <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
-                      Tidak ditemukan data resi yang cocok dengan kriteria filter aktif Anda. Harap ubah rentang tanggal atau hapus pencarian.
-                    </p>
-                  </div>
-                </div>
-              ) : (
+ 
+             {/* Filter & Search Panel */}
+             <div className="mb-4 bg-slate-50 border border-slate-150 rounded-2xl p-3.5 space-y-3">
+               {/* Row 1: Search Input */}
+               <div className="relative">
+                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-450">
+                   <Search className="h-3.5 w-3.5" />
+                 </span>
+                 <input
+                   type="text"
+                   placeholder="Cari No. Resi..."
+                   value={filterSearchQuery}
+                   onChange={(e) => setFilterSearchQuery(e.target.value)}
+                   className="w-full pl-9 pr-8 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder-slate-450 focus:outline-none focus:border-red-550 focus:ring-1 focus:ring-red-550/20 font-mono transition-all"
+                 />
+                 {filterSearchQuery && (
+                   <button
+                     type="button"
+                     onClick={() => setFilterSearchQuery("")}
+                     className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                   >
+                     <XCircle className="h-3.5 w-3.5" />
+                   </button>
+                 )}
+               </div>
+             </div>
+ 
+             {/* Scanned Feed list box */}
+             <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1 flex-grow" id="recent-scans-feed">
+               {activeRecordsList.length === 0 ? (
+                 <div className="text-center py-16 text-slate-400 space-y-3">
+                   <ListRestart className="h-10 w-10 mx-auto opacity-30 text-slate-400" />
+                   <div>
+                     {activePanelTab === "ACTIVE_SESSION" ? (
+                       <>
+                         <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Sesi Scan Kosong</h5>
+                         <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
+                           Daftar resi terakhir kosong. Silakan mulai memindai barcode paket seller <strong className="text-red-650">{config.seller}</strong>!
+                         </p>
+                       </>
+                     ) : (
+                       <>
+                         <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Tidak Ada Laporan Hari Ini</h5>
+                         <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
+                           Belum ada data resi yang berhasil Anda kumpulkan untuk hari ini di outlet ini.
+                         </p>
+                       </>
+                     )}
+                   </div>
+                 </div>
+               ) : filteredRecords.length === 0 && isFilterActive ? (
+                 <div className="text-center py-16 text-slate-400 space-y-3">
+                   <Filter className="h-10 w-10 mx-auto opacity-30 text-slate-400 animate-pulse" />
+                   <div>
+                     <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Hasil Filter Kosong</h5>
+                     <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
+                       Tidak ditemukan data resi yang cocok dengan kriteria pencarian Anda.
+                     </p>
+                   </div>
+                 </div>
+               ) : (
                 displayedRecords.map((r, i) => (
                   <div
                     key={r.Resi + r.ScanTimestamp}

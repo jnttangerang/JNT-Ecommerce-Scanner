@@ -1,0 +1,100 @@
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+              <button
+                onClick={handlePushMasters}
+                disabled={isPushingMasters || isPullingMasters}
+                className="w-full bg-slate-900 hover:bg-black text-white font-extrabold py-2.5 rounded-xl cursor-pointer text-xs flex items-center justify-center space-x-1 border border-slate-900 transition shadow-sm disabled:opacity-50 hover:shadow-md"
+              >
+                <Cloud className="h-3.5 w-3.5 text-red-500 mr-1" />
+                <span>Simpan Outlet ke Cloud</span>
+              </button>
+              <p className="text-[10px] text-slate-400 leading-normal italic">
+                * Klik "Simpan Outlet ke Cloud" setelah menambah/menghapus outlet untuk mensinkronkannya ke Google Sheets.
+              </p>
+            </div>
+          </div>
+
+        {/* Ganti Kata Sandi Owner Card */}
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div>
+                <h4 className="font-bold text-slate-900 flex items-center text-sm font-sans">
+                  <Key className="h-4 w-4 text-red-600 mr-2" />
+                  GANTI KATA SANDI OWNER
+                </h4>
+                <p className="text-[10px] text-slate-400">Ubah sandi login gateway administrator</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleUpdatePassword} className="space-y-4">
+              <div className="space-y-1.55">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Kata Sandi Lama:</label>
+                <input
+                  type="password"
+                  value={oldPassword}
+                  onChange={(e) => setOldPassword(e.target.value)}
+                  placeholder="Kata sandi lama owner..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-850 text-xs focus:outline-none focus:border-red-650 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.55">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Kata Sandi Baru:</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Minimal 4 karakter..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-850 text-xs focus:outline-none focus:border-red-650 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.55">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Konfirmasi Kata Sandi Baru:</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Ketik kembali kata sandi..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-850 text-xs focus:outline-none focus:border-red-650 font-mono"
+                />
+              </div>
+
+              {pwError && (
+                <p className="text-[10px] text-red-600 font-bold">{pwError}</p>
+              )}
+
+              {pwSuccess && (
+                <p className="text-[10px] text-emerald-600 font-bold">✓ Kata sandi berhasil diperbarui!</p>
+              )}
+
+              <button
+                type="submit"
+                className="w-full bg-slate-900 hover:bg-black text-white font-bold py-2.5 rounded-xl cursor-pointer text-xs flex items-center justify-center space-x-1 border border-slate-900 transition-all shadow-sm"
+              >
+                <Check className="h-3.5 w-3.5 text-emerald-500" />
+                <span>Simpan Sandi Baru</span>
+              </button>
+            </form>
+          </div>
+
+          <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
+            * Perubahan sandi hanya disimpan di local storage peramban browser perangkat ini.
+          </p>
+        </div>
+
+      </div>
+      </div>
+    );
+  };
+
