@@ -38,7 +38,9 @@ import {
   Calendar,
   Maximize2,
   Minimize2,
-  Tag
+  Tag,
+  Eye,
+  X
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
@@ -72,6 +74,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [selectedReviewSeller, setSelectedReviewSeller] = useState<string | null>(null);
+  const [detailRecordIndex, setDetailRecordIndex] = useState<number | null>(null);
   const [completedSellers, setCompletedSellers] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem("jt_completed_pickup_sellers");
@@ -2316,50 +2319,177 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
       </div>
 
-          {/* Chart Ringkasan (Recharts) */}
+          {/* Grafik Statistik Harian Terintegrasi (Recharts) */}
           {(() => {
-            const todayStr = getTodayLocalDateString();
-            const resiTodayCount = allRecords.filter(r => r.Tanggal === todayStr).length;
-            const retakeCount = allRecords.filter(r => r.RetakeStatus === "PENDING" || r.RetakeStatus === "RETAKEN").length;
-            const cancelledCount = allRecords.filter(r => r.Status === "CANCELLED").length;
+            const activeRecords = getFilteredSummaryRecords();
+            const totalCount = activeRecords.length;
+            
+            // 1. Data Status Scan
+            const scannedCount = activeRecords.filter(r => r.Status === "SCANNED").length;
+            const pickupCount = activeRecords.filter(r => r.Status === "PICKUP" || r.Status === "DISERAHKAN").length;
+            const cancelledCount = activeRecords.filter(r => r.Status === "CANCELLED").length;
+            
+            const statusChartData = [
+              { name: "Scanned (Siap Kirim)", value: scannedCount, color: "#2563eb" }, // Blue
+              { name: "Pickup / Selesai", value: pickupCount, color: "#059669" },   // Emerald Green
+              { name: "Cancelled (Batal)", value: cancelledCount, color: "#dc2626" }   // Red
+            ].filter(item => item.value > 0); // Only show statuses with values in the donut
 
-            const chartData = [
-              { name: "Scan Hari Ini", value: resiTodayCount, fill: "#3b82f6" },
-              { name: "Bermasalah (Retake)", value: retakeCount, fill: "#f59e0b" },
-              { name: "Status Cancelled", value: cancelledCount, fill: "#ef4444" }
+            // Fallback if no records at all
+            const statusChartFallbackData = [
+              { name: "Tidak ada data", value: 1, color: "#cbd5e1" }
             ];
 
+            // 2. Data Paket per Kurir / Operator
+            const operatorMap: Record<string, number> = {};
+            activeRecords.forEach(r => {
+              const opName = r.Operator ? r.Operator.trim() : "Unknown";
+              operatorMap[opName] = (operatorMap[opName] || 0) + 1;
+            });
+            const operatorChartData = Object.entries(operatorMap)
+              .map(([name, value]) => ({ name, value }))
+              .sort((a, b) => b.value - a.value)
+              .slice(0, 8); // Top 8 operators for cleaner look
+
             return (
-              <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
-                <div className="border-b border-slate-100 pb-3">
-                  <h3 className="font-bold text-sm text-slate-800 flex items-center">
-                    <BarChart3 className="h-4 w-4 text-blue-500 mr-2" />
-                    RINGKASAN STATUS RESI
-                  </h3>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Grafik perbandingan total resi yang discan hari ini, total resi bermasalah, dan total dibatalkan.
-                  </p>
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 
-                <div className="h-[250px] w-full mt-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} dy={10} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b' }} />
-                      <RechartsTooltip 
-                        cursor={{ fill: '#f1f5f9' }}
-                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
-                        itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
-                      />
-                      <Bar dataKey="value" radius={[6, 6, 0, 0]} barSize={40}>
-                        {chartData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.fill} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                {/* Chart 1: Visualisasi Status Scan */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div>
+                    <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                      <div>
+                        <h3 className="font-bold text-sm text-slate-800 flex items-center">
+                          <Layers className="h-4 w-4 text-blue-500 mr-2" />
+                          VISUALISASI STATUS SCAN
+                        </h3>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Pembagian proporsi status seluruh resi dalam filter waktu aktif.
+                        </p>
+                      </div>
+                      <span className="bg-slate-100 text-slate-700 text-[10px] font-mono font-bold px-2 py-0.5 rounded-md">
+                        {totalCount} Resi
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center justify-around gap-4 py-2">
+                    {/* Ring Donut Chart */}
+                    <div className="h-[180px] w-[180px] relative flex items-center justify-center shrink-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={statusChartData.length > 0 ? statusChartData : statusChartFallbackData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={75}
+                            paddingAngle={3}
+                            dataKey="value"
+                          >
+                            {(statusChartData.length > 0 ? statusChartData : statusChartFallbackData).map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <RechartsTooltip 
+                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                            itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="absolute flex flex-col items-center justify-center text-center">
+                        <span className="text-2xl font-black text-slate-800 font-mono">{totalCount}</span>
+                        <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Total Resi</span>
+                      </div>
+                    </div>
+
+                    {/* Custom Legend to make it neat */}
+                    <div className="space-y-2.5 text-xs w-full max-w-xs">
+                      {statusChartData.length > 0 ? (
+                        statusChartData.map((item, idx) => {
+                          const percentage = totalCount > 0 ? ((item.value / totalCount) * 100).toFixed(1) : "0.0";
+                          return (
+                            <div key={idx} className="flex items-center justify-between bg-slate-50 border border-slate-150 rounded-xl px-3 py-2">
+                              <div className="flex items-center space-x-2">
+                                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                                <span className="font-bold text-slate-700 text-[11px] truncate max-w-[120px]">{item.name}</span>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="font-bold text-slate-800 font-mono mr-1.5">{item.value}</span>
+                                <span className="text-[10px] text-slate-400 font-semibold font-mono">({percentage}%)</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="text-center text-slate-400 py-6 font-medium">
+                          Belum ada data resi terekam.
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {/* Chart 2: Produktivitas Operator / Kurir */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div>
+                    <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                      <div>
+                        <h3 className="font-bold text-sm text-slate-800 flex items-center">
+                          <BarChart3 className="h-4 w-4 text-[#f20000] mr-2" />
+                          BEBAN & PRODUKTIVITAS KURIR
+                        </h3>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Jumlah paket yang berhasil discan/diinput berdasarkan operator kurir aktif.
+                        </p>
+                      </div>
+                      <span className="bg-red-50 text-[#f20000] text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border border-red-100">
+                        {operatorChartData.length} Kurir
+                      </span>
+                    </div>
+                  </div>
+
+                  {operatorChartData.length > 0 ? (
+                    <div className="h-[200px] w-full mt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={operatorChartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis 
+                            dataKey="name" 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fontSize: 9, fill: '#64748b', fontWeight: 'bold' }} 
+                            dy={5}
+                          />
+                          <YAxis 
+                            axisLine={false} 
+                            tickLine={false} 
+                            tick={{ fontSize: 9, fill: '#64748b' }} 
+                          />
+                          <RechartsTooltip 
+                            cursor={{ fill: '#f8fafc' }}
+                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                            itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          />
+                          <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={28}>
+                            {operatorChartData.map((entry, index) => {
+                              // Cycle beautiful colors for differentiation
+                              const colors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"];
+                              const cellColor = colors[index % colors.length];
+                              return <Cell key={`cell-${index}`} fill={cellColor} />;
+                            })}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <Users className="h-8 w-8 text-slate-300 mb-2" />
+                      <p className="text-slate-400 text-xs font-semibold">Tidak ada aktivitas kurir pada filter waktu ini.</p>
+                    </div>
+                  )}
+                </div>
+
               </div>
             );
           })()}
@@ -3005,71 +3135,142 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
-                <th className="p-3.5">No.</th>
-                <th className="p-3.5">Aksi</th>
-                <th className="p-3.5">Resi</th>
-                <th className="p-3.5">Waktu</th>
-                <th className="p-3.5">Nama Seller</th>
-                <th className="p-3.5">Outlet</th>
-                <th className="p-3.5">Operator</th>
-                <th className="p-3.5 text-right">Status</th>
+                <th className="p-3.5 text-slate-800">No.</th>
+                <th className="p-3.5 text-slate-800">No. Resi</th>
+                <th className="p-3.5 text-slate-800">Seller Pengirim</th>
+                <th className="p-3.5 text-slate-800">Waktu & Operator</th>
+                <th className="p-3.5 text-slate-800">Status Cloud</th>
+                <th className="p-3.5 text-slate-800">Status Resi</th>
+                <th className="p-3.5 text-center text-slate-800">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white text-slate-705">
               {ownerPaginatedRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-500 font-bold">
+                  <td colSpan={7} className="p-8 text-center text-slate-500 font-bold">
                     Tidak ada data kecocokan log yang ditemukan.
                   </td>
                 </tr>
               ) : (
-                ownerPaginatedRecords.map((r, idx) => (
-                  <tr key={r.Resi + r.Jam} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-3.5 font-bold font-mono text-[11px] text-slate-500">{ownerStartIndex + idx + 1}</td>
-                    <td className="p-3.5">
-                      {r.Status === "SCANNED" ? (
-                        <button
-                          onClick={() => handleMarkCancelled(r.Resi)}
-                          className="bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-[10px] px-2.5 py-1 rounded-lg font-bold focus:outline-none transition-all cursor-pointer"
-                        >
-                          BATALKAN
-                        </button>
-                      ) : (
-                        <span className="bg-slate-100 text-slate-400 border border-slate-200 text-[10px] px-2.5 py-1 rounded-lg font-bold cursor-not-allowed">
-                          {r.Status === "CANCELLED" ? "BATAL" : r.Status}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3.5 font-bold font-mono text-slate-800 tracking-wider text-[12px]">
-                      <div>{r.Resi}</div>
-                      {r.RetakeStatus === "PENDING" && (
-                        <span className="inline-block bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-extrabold px-1.5 py-0.5 mt-1 rounded uppercase tracking-wider">
-                          ⚠️ Butuh Foto Ulang
-                        </span>
-                      )}
-                      {r.RetakeStatus === "RETAKEN" && (
-                        <span className="inline-block bg-sky-50 text-sky-700 border border-sky-250 text-[9px] font-extrabold px-1.5 py-0.5 mt-1 rounded uppercase tracking-wider">
-                          📸 Foto Ter-update
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3.5 font-mono text-[11px] text-slate-600 hover:text-slate-950 transition-colors duration-150">
-                      {r.Tanggal} <span className="text-slate-400 border border-slate-200 bg-slate-50/80 hover:bg-slate-100 hover:border-slate-300 px-1.5 py-0.5 rounded-md ml-1.5 transition-all duration-150">{r.Jam}</span>
-                    </td>
-                    <td className="p-3.5 font-bold text-slate-800">{r.Seller}</td>
-                    <td className="p-3.5 truncate max-w-[120px] text-slate-600">{r.Outlet}</td>
-                    <td className="p-3.5 text-slate-600">{r.Operator}</td>
-                    <td className="p-3.5 text-right font-semibold">
-                      <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${
-                        r.Status === "CANCELLED"
-                          ? "bg-red-50 text-red-650 border border-red-100"
-                          : "bg-green-50 text-green-700 border border-green-200"
-                      }`}>
-                        {r.Status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                ownerPaginatedRecords.map((r, idx) => {
+                  const globalIdx = filteredRecords.findIndex(item => item.ID === r.ID);
+                  const fileName = `PKT_${r.Tanggal.replace(/-/g, '')}_${r.Resi}.jpg`;
+                  
+                  return (
+                    <tr key={r.Resi + r.Jam} className="hover:bg-slate-50/50 transition-colors">
+                      {/* Column 1: No. */}
+                      <td className="p-3.5 font-bold font-mono text-[11px]" style={{ color: "#484848" }}>
+                        {ownerStartIndex + idx + 1}
+                      </td>
+                      
+                      {/* Column 2: No. Resi */}
+                      <td className="p-3.5 font-bold font-mono text-slate-900 tracking-wider text-[12px]">
+                        <div>{r.Resi}</div>
+                        <div className="text-[10px] text-slate-400 font-mono font-medium mt-0.5">
+                          {fileName}
+                        </div>
+                        {r.RetakeStatus === "PENDING" && (
+                          <span className="inline-block bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-extrabold px-1.5 py-0.5 mt-1 rounded uppercase tracking-wider">
+                            ⚠️ Butuh Foto Ulang
+                          </span>
+                        )}
+                        {r.RetakeStatus === "RETAKEN" && (
+                          <span className="inline-block bg-sky-50 text-sky-700 border border-sky-250 text-[9px] font-extrabold px-1.5 py-0.5 mt-1 rounded uppercase tracking-wider">
+                            📸 Foto Ter-update
+                          </span>
+                        )}
+                      </td>
+                      
+                      {/* Column 3: Seller Pengirim */}
+                      <td className="p-3.5 text-[11px]">
+                        <div className="font-extrabold text-slate-800">{r.Seller}</div>
+                        <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                          {r.Outlet}
+                        </div>
+                      </td>
+                      
+                      {/* Column 4: Waktu & Operator */}
+                      <td className="p-3.5 text-[11px]">
+                        <div className="font-mono text-[11px]" style={{ color: "#222222", fontWeight: "bold" }}>
+                          {r.Tanggal} <span className="text-slate-400 border border-slate-200 bg-slate-50/80 px-1.5 py-0.5 rounded-md ml-1 font-semibold">{r.Jam}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-medium mt-1">
+                          {r.Operator}
+                        </div>
+                      </td>
+                      
+                      {/* Column 5: Status Cloud */}
+                      <td className="p-3.5">
+                        {r.SyncStatus === "SYNCED" ? (
+                          <span className="inline-flex items-center text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider bg-green-50 text-green-700 border border-green-200">
+                            Synced
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+                            Desynced
+                          </span>
+                        )}
+                      </td>
+                      
+                      {/* Column 6: Status Resi */}
+                      <td className="p-3.5">
+                        {r.Status === "CANCELLED" ? (
+                          <span className="inline-flex items-center text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider bg-red-50 text-red-650 border border-red-150">
+                            Cancelled
+                          </span>
+                        ) : (r.Status === "PICKUP" || r.Status === "DISERAHKAN") ? (
+                          <span 
+                            className="inline-flex items-center text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider border border-emerald-200"
+                            style={{ color: "#007113", backgroundColor: "#edffed" }}
+                          >
+                            Pickup
+                          </span>
+                        ) : (
+                          <span 
+                            className="inline-flex items-center text-[9px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider border border-blue-200"
+                            style={{ color: "#007113", backgroundColor: "#edffed" }}
+                          >
+                            Scanned
+                          </span>
+                        )}
+                      </td>
+                      
+                      {/* Column 7: Aksi */}
+                      <td className="p-3.5 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => setDetailRecordIndex(globalIdx)}
+                            type="button"
+                            className="bg-slate-50 hover:bg-red-50 text-slate-650 hover:text-red-600 border border-slate-200 hover:border-red-200 p-2 rounded-xl transition-all cursor-pointer inline-flex items-center justify-center shadow-sm hover:scale-105 active:scale-95"
+                            title="Lihat Detail Foto Resi"
+                          >
+                            <Eye className="h-4.5 w-4.5" style={{ color: "#3f3f3f" }} />
+                          </button>
+                          
+                          {r.Status === "CANCELLED" ? (
+                            <button
+                              type="button"
+                              className="bg-slate-100 text-slate-400 border border-slate-200 p-2 rounded-xl inline-flex items-center justify-center shadow-sm cursor-not-allowed"
+                              title="Resi Sudah Dibatalkan"
+                              disabled
+                            >
+                              <Ban className="h-4.5 w-4.5" style={{ color: "#ff0000" }} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleMarkCancelled(r.Resi)}
+                              type="button"
+                              className="bg-red-50 hover:bg-red-600 text-red-650 hover:text-white border border-red-200 hover:border-red-600 p-2 rounded-xl transition-all cursor-pointer inline-flex items-center justify-center shadow-sm hover:scale-105 active:scale-95"
+                              title="Batalkan Resi / Dibatalkan Pembeli"
+                            >
+                              <Ban className="h-4.5 w-4.5" style={{ color: "#ff0000" }} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -3203,6 +3404,168 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               </div>
             </div>
           </div>
+        )}
+
+        {/* SLIDEABLE DETAILED RESI PHOTO MODAL OVERLAY */}
+        {detailRecordIndex !== null && (
+          (() => {
+            const r = filteredRecords[detailRecordIndex];
+            if (!r) return null;
+            
+            const fileName = `PKT_${r.Tanggal.replace(/-/g, '')}_${r.Resi}.jpg`;
+            
+            const handleNext = () => {
+              setDetailRecordIndex(prev => {
+                if (prev === null) return null;
+                return (prev + 1) % filteredRecords.length;
+              });
+            };
+            
+            const handlePrev = () => {
+              setDetailRecordIndex(prev => {
+                if (prev === null) return null;
+                return (prev - 1 + filteredRecords.length) % filteredRecords.length;
+              });
+            };
+            
+            return (
+              <div 
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200"
+                id="detail-resi-photo-modal"
+              >
+                <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 border border-slate-100">
+                  {/* Header */}
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                    <h4 className="font-extrabold text-sm text-slate-800 tracking-tight uppercase flex items-center">
+                      <Eye className="h-4 w-4 text-[#f20000] mr-2" />
+                      Detail Foto Resi
+                    </h4>
+                    <button
+                      onClick={() => setDetailRecordIndex(null)}
+                      type="button"
+                      className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors cursor-pointer border-none"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  
+                  {/* Content (Scrollable) */}
+                  <div className="p-5 overflow-y-auto flex-1 space-y-5">
+                    {/* Image Slider Stage */}
+                    <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 flex items-center justify-center group">
+                      <img 
+                        src={getDirectDriveImageUrl(r.PhotoURL)} 
+                        alt={`Foto Resi ${r.Resi}`}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain"
+                      />
+                      
+                      {/* Left Slide Button */}
+                      <button
+                        onClick={handlePrev}
+                        type="button"
+                        className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center"
+                        title="Sebelumnya"
+                      >
+                        <ChevronLeft className="h-5 w-5" />
+                      </button>
+                      
+                      {/* Right Slide Button */}
+                      <button
+                        onClick={handleNext}
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center"
+                        title="Selanjutnya"
+                      >
+                        <ChevronRight className="h-5 w-5" />
+                      </button>
+
+                      {/* Slider Position Counter Badge */}
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-900/70 text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full backdrop-blur-sm">
+                        {detailRecordIndex + 1} / {filteredRecords.length}
+                      </div>
+                    </div>
+                    
+                    {/* Detail Info Section */}
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-3">
+                      <h5 className="font-bold text-xs text-slate-400 uppercase tracking-wider">Detail Informasi Paket</h5>
+                      <div className="grid grid-cols-2 gap-y-3 text-xs">
+                        <div>
+                          <span className="text-slate-400 block font-medium">No. Resi</span>
+                          <span className="font-extrabold font-mono text-slate-800 tracking-wider text-sm">{r.Resi}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Nama File Drive</span>
+                          <span className="font-semibold font-mono text-slate-600 text-[10px] truncate block" title={fileName}>{fileName}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Seller Pengirim</span>
+                          <span className="font-extrabold text-slate-800">{r.Seller}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Outlet J&T</span>
+                          <span className="font-bold text-slate-700">{r.Outlet}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Operator Pencatat</span>
+                          <span className="font-bold text-slate-700">{r.Operator}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Waktu Record</span>
+                          <span className="font-semibold text-slate-700 font-mono">{r.Tanggal} {r.Jam}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Status Cloud</span>
+                          <span className={`inline-block font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 mt-0.5 rounded ${
+                            r.SyncStatus === "SYNCED" ? "bg-green-100 text-green-700 border border-green-200" : "bg-amber-100 text-amber-700 border border-amber-200"
+                          }`}>
+                            {r.SyncStatus === "SYNCED" ? "Synced" : "Desynced"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block font-medium">Status Resi</span>
+                          <span 
+                            className={`inline-block font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 mt-0.5 rounded border ${
+                              r.Status === "CANCELLED" 
+                                ? "bg-red-100 text-red-650 border-red-200" 
+                                : "border-emerald-200"
+                            }`}
+                            style={r.Status !== "CANCELLED" ? { color: "#007113", backgroundColor: "#edffed" } : undefined}
+                          >
+                            {r.Status}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Footer with Cancellation controls */}
+                  <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
+                    {r.Status === "CANCELLED" ? (
+                      <div className="w-full bg-red-50 border border-red-200 text-red-700 font-bold text-xs py-3.5 px-4 rounded-xl text-center flex items-center justify-center space-x-2">
+                        <Ban className="h-4 w-4 text-red-600" />
+                        <span>Resi Ini Sudah Dibatalkan / Batal Pembeli</span>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Red button: "Batalkan Resi (Pembeli Batal Pesanan)" */}
+                        <button
+                          onClick={() => {
+                            handleMarkCancelled(r.Resi);
+                          }}
+                          type="button"
+                          className="w-full bg-red-600 hover:bg-red-700 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center space-x-2 cursor-pointer border-none shadow-sm hover:scale-[1.01] active:scale-[0.99]"
+                        >
+                          <Ban className="h-4 w-4 text-white" />
+                          <span>Batalkan Resi (Pembeli Batal Pesanan)</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()
         )}
 
       </div>
