@@ -72,6 +72,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Lists
   const [scannedRecords, setScannedRecords] = useState<ScanRecord[]>([]);
   const [totalToday, setTotalToday] = useState(0);
+  const [dailyTarget, setDailyTarget] = useState(() => dbService.getDailyTarget());
 
   // Filter & Search states for the Scanned History Panel
   const [filterSearchQuery, setFilterSearchQuery] = useState("");
@@ -272,6 +273,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   }, [isSyncing, isPulling]);
 
   const loadRecords = () => {
+    setDailyTarget(dbService.getDailyTarget());
     const all = dbService.getRecords();
     
     // Filter records exclusively for the currently logged-in operator, seller, and outlet combination (current batch/session)
@@ -1171,20 +1173,36 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
         {/* Total stats card */}
         <div 
-          className="bg-red-50/65 border border-red-105 rounded-2xl p-4 flex items-center justify-between relative overflow-hidden"
-          style={{ backgroundColor: "#ffffff" }}
+          className="bg-white border border-red-105 rounded-2xl p-4 flex flex-col justify-center relative overflow-hidden space-y-1.5"
         >
-          <div className="absolute right-[-10px] bottom-[-20px] text-red-600/5 font-black text-7xl select-none font-mono">
+          <div className="absolute right-[-10px] bottom-[-20px] text-red-600/5 font-black text-7xl select-none font-mono z-0">
             SUM
           </div>
-          <div>
-            <span className="text-[10px] font-extrabold text-red-600 tracking-wider uppercase block">TOTAL SCAN</span>
-            <span className="text-3xl font-black text-red-600 font-mono tracking-tight" id="total-scan-ticker">
-              {totalToday}
-            </span>
-            <span className="text-[10px] text-slate-500 block font-medium">paket Anda hari ini</span>
+          
+          <div className="flex items-start justify-between w-full z-10">
+            <div>
+              <span className="text-[10px] font-extrabold text-red-600 tracking-wider uppercase block">TOTAL SCAN</span>
+              <div className="flex items-baseline space-x-1">
+                <span className="text-3xl font-black text-red-600 font-mono tracking-tight" id="total-scan-ticker">
+                  {totalToday}
+                </span>
+                <span className="text-xs font-bold text-slate-400 font-mono">/ {dailyTarget}</span>
+              </div>
+            </div>
+            <Target className="h-8 w-8 text-red-600/20 mt-1" />
           </div>
-          <CheckCircle className="h-10 w-10 text-red-600/20" />
+
+          {/* Progress Bar */}
+          <div className="w-full bg-slate-100 rounded-full h-1.5 z-10 overflow-hidden mt-1">
+            <div 
+              className="bg-red-500 h-full rounded-full transition-all duration-500 ease-out" 
+              style={{ width: `${Math.min((totalToday / Math.max(dailyTarget, 1)) * 100, 100)}%` }}
+            ></div>
+          </div>
+          <div className="flex justify-between items-center z-10 pt-0.5">
+             <span className="text-[9px] text-slate-400 font-medium">Target Harian</span>
+             <span className="text-[9px] font-bold text-slate-500 font-mono">{Math.round(Math.min((totalToday / Math.max(dailyTarget, 1)) * 100, 100))}%</span>
+          </div>
         </div>
       </div>
 

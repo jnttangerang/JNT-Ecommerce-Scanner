@@ -28,6 +28,7 @@ const RECORDS_KEY = "jt_pickup_records";
 const IMPORT_LOGS_KEY = "jt_pickup_import_logs";
 const OFFLINE_MODE_KEY = "jt_pickup_offline_mode";
 const CLOUD_CONFIG_KEY = "jt_pickup_cloud_config";
+const DAILY_TARGET_KEY = "jt_pickup_daily_target";
 
 export interface CloudConfig {
   coreFolderUrl: string;
@@ -648,6 +649,16 @@ export class DatabaseService {
 
   public setOfflinePreference(val: boolean) {
     localStorage.setItem(OFFLINE_MODE_KEY, String(val));
+  }
+
+  // Set and get daily target
+  public getDailyTarget(): number {
+    const raw = localStorage.getItem(DAILY_TARGET_KEY);
+    return raw ? parseInt(raw, 10) : 150; // Default target is 150
+  }
+
+  public setDailyTarget(target: number) {
+    localStorage.setItem(DAILY_TARGET_KEY, String(target));
   }
 
   /**

@@ -40,7 +40,8 @@ import {
   Minimize2,
   Tag,
   Eye,
-  X
+  X,
+  Target
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
@@ -127,6 +128,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [tempFotoFolderId, setTempFotoFolderId] = useState("");
   const [tempSpreadsheetId, setTempSpreadsheetId] = useState("");
   const [tempFaviconUrl, setTempFaviconUrl] = useState("");
+  const [tempDailyTarget, setTempDailyTarget] = useState(String(dbService.getDailyTarget()));
   const [saveSuccessFields, setSaveSuccessFields] = useState<Record<string, boolean>>({});
 
   // Sync saved cloudConfig to local field states when loaded/updated
@@ -459,6 +461,20 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     setTimeout(() => {
       setSaveSuccessFields(prev => ({ ...prev, [field]: false }));
     }, 2000);
+  };
+
+  const handleSaveDailyTarget = () => {
+    const val = parseInt(tempDailyTarget, 10);
+    if (!isNaN(val) && val > 0) {
+      dbService.setDailyTarget(val);
+      setSaveSuccessFields(prev => ({ ...prev, dailyTarget: true }));
+      toast.success("Target Harian berhasil disimpan!");
+      setTimeout(() => {
+        setSaveSuccessFields(prev => ({ ...prev, dailyTarget: false }));
+      }, 2000);
+    } else {
+      toast.error("Target harus berupa angka positif!");
+    }
   };
 
   const handleTestConnection = () => {
@@ -936,8 +952,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
         
-        {/* 4 Integration Columns with Favicon added */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* 5 Integration Columns with Target Harian added */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
           
           {/* Column 1: Core Folder */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
@@ -1148,6 +1164,51 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   Tidak ada URL ikon terpilih
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Column 5: Target Harian */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-red-650" />
+            <div>
+              <div className="bg-slate-50 border border-slate-100 h-10 w-10 rounded-xl flex items-center justify-center mb-4">
+                <Target className="h-5 w-5 text-red-600" />
+              </div>
+              <h4 className="font-bold text-slate-800 text-sm">5. TARGET HARIAN</h4>
+              <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                Tentukan target jumlah paket harian untuk memotivasi tim operasional.
+              </p>
+              
+              <div className="mt-4 space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Jumlah Paket / Hari:</label>
+                <div className="space-y-2">
+                  <input
+                    type="number"
+                    value={tempDailyTarget}
+                    onChange={(e) => setTempDailyTarget(e.target.value)}
+                    placeholder="Contoh: 150"
+                    min="1"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 text-xs focus:outline-none focus:border-red-650 font-mono"
+                  />
+                  <button
+                    onClick={handleSaveDailyTarget}
+                    className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm ${
+                      saveSuccessFields["dailyTarget"]
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        : "bg-red-600 hover:bg-red-750 text-white"
+                    }`}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    <span>{saveSuccessFields["dailyTarget"] ? "Tersimpan!" : "Simpan Target"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center">
+                <div className="text-[10px] text-slate-400 font-medium text-center">
+                  Target Saat Ini: <span className="font-bold text-slate-700">{dbService.getDailyTarget()} Paket</span>
+                </div>
             </div>
           </div>
 
