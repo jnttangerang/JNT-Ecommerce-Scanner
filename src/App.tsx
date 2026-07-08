@@ -245,16 +245,6 @@ export default function App() {
   const handleOwnerUpdatedStatus = () => {
     const allRecords = dbService.getRecords();
     
-    // Check for cancelled records
-    const cancelledRecords = allRecords.filter(r => r.Status === "CANCELLED");
-    if (cancelledRecords.length > 0) {
-      const topCancelled = cancelledRecords[0];
-      const time = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-      toast.error("ORDER CANCELLED ALERT", {
-        description: `Dibatalkan: Resi ${topCancelled.Resi} (Seller: ${topCancelled.Seller}) diubah menjadi CANCELLED oleh Owner! Jangan dikirim, kembalikan ke seller.`,
-        duration: 8000,
-      });
-    }
 
     // Check for retake requests
     const retakeRequests = allRecords.filter(r => r.RetakeStatus === "PENDING");

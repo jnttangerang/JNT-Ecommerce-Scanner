@@ -19,6 +19,9 @@ export interface ScanRecord {
   SyncStatus: SyncStatusType;
   ScanTimestamp: number; // for sorting
   RetakeStatus?: "PENDING" | "RETAKEN";
+  alertStatus?: "PENDING" | "CONFIRMED";
+  confirmedBy?: string;
+  confirmedAt?: string;
 }
 
 export interface ImportLog {

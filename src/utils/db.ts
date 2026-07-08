@@ -751,12 +751,37 @@ export class DatabaseService {
       SyncStatus: "PENDING" // Always mark as PENDING to queue for syncing immediately
     };
     
+    // Set alertStatus to PENDING when order becomes CANCELLED
+    if (newStatus === "CANCELLED") {
+      records[index].alertStatus = "PENDING";
+    }
+    
     const saveSuccess = await this.saveRecords(records);
     if (saveSuccess) {
       return { success: true };
     }
     
     return { success: false, error: "Gagal menyimpan perubahan status" };
+  }
+
+  /**
+   * Confirm an order cancelled alert
+   */
+  public async confirmAlert(resi: string, operatorName: string): Promise<boolean> {
+    const records = [ ...this.getRecords() ];
+    const index = records.findIndex(r => r.Resi === resi);
+    
+    if (index === -1) return false;
+
+    records[index] = { 
+      ...records[index], 
+      alertStatus: "CONFIRMED",
+      confirmedBy: operatorName,
+      confirmedAt: new Date().toISOString(),
+      SyncStatus: "PENDING" // Sync this change to the cloud
+    };
+    
+    return await this.saveRecords(records);
   }
 
   /**

@@ -120,6 +120,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [deletingResi, setDeletingResi] = useState<string | null>(null);
+  
+  // ORDER CANCELLED ALERT states
+  const [pendingAlerts, setPendingAlerts] = useState<ScanRecord[]>([]);
+  const [currentAlertIndex, setCurrentAlertIndex] = useState(0);
 
   // Session scanned resis (starts empty on enter)
   const [sessionScannedResis, setSessionScannedResis] = useState<string[]>([]);
@@ -289,6 +293,19 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     
     setScannedRecords(operatorRecords); // Store full list for robust, multi-day, on-demand filtering
     setTotalToday(filteredToday.length);
+
+    // Get pending CANCELLED alerts for this outlet
+    const alerts = all.filter(r => 
+      r.Status === "CANCELLED" && 
+      r.alertStatus === "PENDING" &&
+      r.Outlet && r.Outlet.trim().toLowerCase() === config.outlet.trim().toLowerCase()
+    );
+    setPendingAlerts(alerts);
+    if (alerts.length === 0) {
+      setCurrentAlertIndex(0);
+    } else {
+      setCurrentAlertIndex(prev => Math.min(prev, alerts.length - 1));
+    }
 
     // Get pending retake tasks specifically for this operator
     const pendingTasks = all.filter(r => 
@@ -1115,6 +1132,35 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       toast.success(`Data resi ${resi} berhasil dihapus dari local database.`);
     } else {
       toast.error(`Gagal menghapus data resi ${resi}.`);
+    }
+  };
+
+  const handleConfirmAlert = async () => {
+    if (pendingAlerts.length > 0) {
+      const alert = pendingAlerts[currentAlertIndex];
+      await dbService.confirmAlert(alert.Resi, config.operator);
+      
+      const newAlerts = [...pendingAlerts];
+      newAlerts.splice(currentAlertIndex, 1);
+      setPendingAlerts(newAlerts);
+      
+      if (currentAlertIndex >= newAlerts.length) {
+        setCurrentAlertIndex(Math.max(0, newAlerts.length - 1));
+      }
+      
+      if (!isOffline && triggerSync) {
+        triggerSync();
+      }
+    }
+  };
+
+  const handleCloseAlert = () => {
+    const newAlerts = [...pendingAlerts];
+    newAlerts.splice(currentAlertIndex, 1);
+    setPendingAlerts(newAlerts);
+    
+    if (currentAlertIndex >= newAlerts.length) {
+      setCurrentAlertIndex(Math.max(0, newAlerts.length - 1));
     }
   };
 
@@ -2111,6 +2157,56 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         </div>
       )}
 
+      {/* ORDER CANCELLED ALERT Modal */}
+      {pendingAlerts.length > 0 && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white border-2 border-red-500 rounded-3xl w-full max-w-md p-6 text-left space-y-6 shadow-[0_0_40px_rgba(239,68,68,0.3)] animate-in zoom-in-95 duration-200 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-600" />
+            <div className="flex items-center space-x-3 text-red-600 border-b border-slate-100 pb-4">
+              <AlertTriangle className="h-7 w-7 animate-pulse" />
+              <h2 className="font-black text-lg tracking-wider">ORDER CANCELLED</h2>
+            </div>
+            <div className="bg-red-50 rounded-2xl p-4 border border-red-100 space-y-2">
+              <div className="flex justify-between items-center border-b border-red-100/50 pb-2">
+                <span className="text-xs font-semibold text-slate-500">Resi</span>
+                <span className="text-sm font-black text-slate-800 font-mono">{pendingAlerts[currentAlertIndex]?.Resi}</span>
+              </div>
+              <div className="flex justify-between items-center border-b border-red-100/50 py-2">
+                <span className="text-xs font-semibold text-slate-500">Seller</span>
+                <span className="text-sm font-bold text-slate-700">{pendingAlerts[currentAlertIndex]?.Seller}</span>
+              </div>
+              <div className="flex justify-between items-center border-b border-red-100/50 py-2">
+                <span className="text-xs font-semibold text-slate-500">Waktu Scan</span>
+                <span className="text-xs font-bold text-slate-700 font-mono">{pendingAlerts[currentAlertIndex]?.Jam}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2">
+                <span className="text-xs font-semibold text-slate-500">Status Alert</span>
+                <span className="inline-flex items-center text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider bg-orange-100 text-orange-700 border border-orange-200">
+                  Belum Dikonfirmasi
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 font-medium text-center">
+              Peringatan {currentAlertIndex + 1} dari {pendingAlerts.length}. Harap pisahkan paket ini.
+            </p>
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button 
+                onClick={handleCloseAlert}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+              >
+                Tutup
+              </button>
+              <button 
+                onClick={handleConfirmAlert}
+                className="bg-red-600 hover:bg-red-700 text-white font-black py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.3)] active:scale-95 cursor-pointer flex items-center justify-center space-x-2"
+              >
+                <Check className="h-4 w-4" />
+                <span>Konfirmasi</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
