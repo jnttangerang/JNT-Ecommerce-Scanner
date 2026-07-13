@@ -917,67 +917,27 @@ export class DatabaseService {
       const processedPending = [];
       for (const r of pending) {
         let finalPhotoUrl = r.PhotoURL;
-        if (accessToken && r.PhotoURL && r.PhotoURL.startsWith("data:image")) {
-          try {
-            const base64Data = r.PhotoURL.split(',')[1];
-            // Decode base64 to Uint8Array
-            const binaryStr = atob(base64Data);
-            const len = binaryStr.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryStr.charCodeAt(i);
-            }
-
-            const metadata: any = {
-              name: `${r.Resi}.jpg`,
-              mimeType: 'image/jpeg'
-            };
-
-            let parentId = "";
-            if (config.fotoFolderId) {
-               const match = config.fotoFolderId.match(/folders\/([a-zA-Z0-9_-]+)/);
-               if (match) parentId = match[1];
-               else parentId = config.fotoFolderId;
-            }
-            if (parentId) metadata.parents = [parentId];
-
-            const form = new FormData();
-            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-            form.append('file', new Blob([bytes], { type: 'image/jpeg' }));
-
-            const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${accessToken}` },
-              body: form
-            });
-
-            if (uploadRes.ok) {
-               const data = await uploadRes.json();
-               finalPhotoUrl = `https://drive.google.com/thumbnail?sz=w1000&id=${data.id}`;
-               
-               // Make it publicly viewable
-               await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
-                 method: 'POST',
-                 headers: { 
-                   Authorization: `Bearer ${accessToken}`,
-                   'Content-Type': 'application/json'
-                 },
-                 body: JSON.stringify({ type: 'anyone', role: 'reader' })
-               });
-            }
-          } catch (e) {
-            console.warn("Direct Drive upload failed, falling back to Apps Script", e);
-          }
-        }
+        // DISABLED DRIVE INTEGRATION
         processedPending.push({ ...r, PhotoURL: finalPhotoUrl });
       }
+
+      // Immediately persist Drive URLs to avoid re-uploading if Sheets sync fails
+      // Use getRecords() to get the freshest data and avoid overwriting concurrent scans
+      const recordsWithDriveUrls = this.getRecords().map(r => {
+        const processed = processedPending.find(p => p.ID === r.ID);
+        if (processed && processed.PhotoURL !== r.PhotoURL) {
+          return { ...r, PhotoURL: processed.PhotoURL };
+        }
+        return r;
+      });
+      await this.saveRecords(recordsWithDriveUrls);
 
       if (accessToken && config.spreadsheetId) {
         try {
           const { directSyncRecords } = await import("./sheets");
           const res = await directSyncRecords(processedPending as any, config.spreadsheetId, accessToken);
           const failedIdsSet = new Set(res.failedIds || []);
-          const updated = records.map(r => {
+          const updated = this.getRecords().map(r => {
             if (r.SyncStatus === "PENDING" && !failedIdsSet.has(r.ID)) {
               return { ...r, SyncStatus: "SYNCED" as const };
             }
@@ -996,7 +956,7 @@ export class DatabaseService {
 
       if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
         // Simulate/fallback sync locally if actual cloud API is not configured
-        const updated = records.map(r => {
+        const updated = this.getRecords().map(r => {
           if (r.SyncStatus === "PENDING") {
             return { ...r, SyncStatus: "SYNCED" as const };
           }
@@ -1101,7 +1061,7 @@ export class DatabaseService {
       }
 
       if (syncedIds.size > 0) {
-        const updated = records.map(r => syncedIds.has(r.ID) ? { ...r, SyncStatus: "SYNCED" as const } : r);
+        const updated = this.getRecords().map(r => syncedIds.has(r.ID) ? { ...r, SyncStatus: "SYNCED" as const } : r);
         this.saveRecords(updated);
       }
 
