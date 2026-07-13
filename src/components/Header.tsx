@@ -7,6 +7,8 @@ import React, { useState, useEffect } from "react";
 import { Shield, Truck, Wifi, WifiOff, RefreshCw, Layers } from "lucide-react";
 import { AppView } from "../types";
 import { dbService } from "../utils/db";
+import { initAuth, googleSignIn, getAccessToken, logout } from "../utils/auth";
+import { User } from "firebase/auth";
 
 interface HeaderProps {
   currentView: AppView;
@@ -36,6 +38,9 @@ export const Header: React.FC<HeaderProps> = ({
   isCloudDataFresh = false
 }) => {
   const [currentTime, setCurrentTime] = useState("");
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -53,10 +58,39 @@ export const Header: React.FC<HeaderProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (userObj, token) => {
+        setUser(userObj);
+        setNeedsAuth(false);
+      },
+      () => {
+        setUser(null);
+        setNeedsAuth(true);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
   const handleToggleOffline = () => {
     const nextState = !isOffline;
     setIsOffline(nextState);
     dbService.setOfflinePreference(nextState);
+  };
+
+  const handleLogin = async () => {
+    setIsLoggingIn(true);
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setUser(result.user);
+        setNeedsAuth(false);
+      }
+    } catch (err) {
+      console.error('Login failed:', err);
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   return (
@@ -86,6 +120,25 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="text-slate-400 text-[10px] font-bold">TIME</span>
             <span className="font-semibold text-slate-700">{currentTime}</span>
           </div>
+
+          {/* Drive Auth Button */}
+          {needsAuth ? (
+            <button 
+              onClick={handleLogin}
+              disabled={isLoggingIn}
+              className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1.5 rounded-lg text-xs font-semibold select-none transition-all shadow-sm"
+            >
+              {isLoggingIn ? "Signing in..." : "Sign in to Workspace"}
+            </button>
+          ) : (
+            <button 
+              onClick={logout}
+              className="flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1.5 rounded-lg text-[10px] font-semibold select-none transition-all border border-slate-200"
+              title={user?.email || "Signed in"}
+            >
+              <span>Drive & Sheets: OK</span>
+            </button>
+          )}
 
           {/* Sync Button for Offline Storage */}
           {pendingCount > 0 && (

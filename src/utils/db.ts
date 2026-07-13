@@ -501,12 +501,23 @@ export class DatabaseService {
     // Try background sync to Spreadsheet if available
     const config = this.getCloudConfig();
     if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
-      fetch(config.appsScriptUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "add_outlet", outletName: cleanName })
-      }).catch(err => console.warn("Background cloud add_outlet error", err));
+      if (config.spreadsheetId) {
+        import("./auth").then(async ({ getAccessToken }) => {
+          const token = await getAccessToken();
+          if (token) {
+            import("./sheets").then(({ directAddMaster }) => {
+              directAddMaster("Daftar Outlet", "Nama Outlet", cleanName, config.spreadsheetId, token);
+            });
+          }
+        });
+      } else {
+        fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action: "add_outlet", outletName: cleanName })
+        }).catch(err => console.warn("Background cloud add_outlet error", err));
+      }
     }
 
     return true;
@@ -564,12 +575,23 @@ export class DatabaseService {
     // Try background sync to Spreadsheet if available
     const config = this.getCloudConfig();
     if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
-      fetch(config.appsScriptUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "add_seller", sellerName: cleanName })
-      }).catch(err => console.warn("Background cloud add_seller error", err));
+      if (config.spreadsheetId) {
+        import("./auth").then(async ({ getAccessToken }) => {
+          const token = await getAccessToken();
+          if (token) {
+            import("./sheets").then(({ directAddMaster }) => {
+              directAddMaster("Seller List", "Nama Seller", cleanName, config.spreadsheetId, token);
+            });
+          }
+        });
+      } else {
+        fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action: "add_seller", sellerName: cleanName })
+        }).catch(err => console.warn("Background cloud add_seller error", err));
+      }
     }
 
     return true;
@@ -596,12 +618,23 @@ export class DatabaseService {
     // Try background sync to Spreadsheet if available
     const config = this.getCloudConfig();
     if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
-      fetch(config.appsScriptUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "add_operator", operatorName: cleanName })
-      }).catch(err => console.warn("Background cloud add_operator error", err));
+      if (config.spreadsheetId) {
+        import("./auth").then(async ({ getAccessToken }) => {
+          const token = await getAccessToken();
+          if (token) {
+            import("./sheets").then(({ directAddMaster }) => {
+              directAddMaster("Data Operator", "Nama Operator", cleanName, config.spreadsheetId, token);
+            });
+          }
+        });
+      } else {
+        fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action: "add_operator", operatorName: cleanName })
+        }).catch(err => console.warn("Background cloud add_operator error", err));
+      }
     }
 
     return true;
@@ -874,6 +907,93 @@ export class DatabaseService {
         return { successCount: 0, failedCount: 0 };
       }
 
+      // Try to get Access Token for native Google Drive upload
+      let accessToken = null;
+      try {
+        const { getAccessToken } = await import("./auth");
+        accessToken = await getAccessToken();
+      } catch(e) {}
+
+      const processedPending = [];
+      for (const r of pending) {
+        let finalPhotoUrl = r.PhotoURL;
+        if (accessToken && r.PhotoURL && r.PhotoURL.startsWith("data:image")) {
+          try {
+            const base64Data = r.PhotoURL.split(',')[1];
+            // Decode base64 to Uint8Array
+            const binaryStr = atob(base64Data);
+            const len = binaryStr.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+            }
+
+            const metadata: any = {
+              name: `${r.Resi}.jpg`,
+              mimeType: 'image/jpeg'
+            };
+
+            let parentId = "";
+            if (config.fotoFolderId) {
+               const match = config.fotoFolderId.match(/folders\/([a-zA-Z0-9_-]+)/);
+               if (match) parentId = match[1];
+               else parentId = config.fotoFolderId;
+            }
+            if (parentId) metadata.parents = [parentId];
+
+            const form = new FormData();
+            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+            form.append('file', new Blob([bytes], { type: 'image/jpeg' }));
+
+            const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${accessToken}` },
+              body: form
+            });
+
+            if (uploadRes.ok) {
+               const data = await uploadRes.json();
+               finalPhotoUrl = `https://drive.google.com/thumbnail?sz=w1000&id=${data.id}`;
+               
+               // Make it publicly viewable
+               await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
+                 method: 'POST',
+                 headers: { 
+                   Authorization: `Bearer ${accessToken}`,
+                   'Content-Type': 'application/json'
+                 },
+                 body: JSON.stringify({ type: 'anyone', role: 'reader' })
+               });
+            }
+          } catch (e) {
+            console.warn("Direct Drive upload failed, falling back to Apps Script", e);
+          }
+        }
+        processedPending.push({ ...r, PhotoURL: finalPhotoUrl });
+      }
+
+      if (accessToken && config.spreadsheetId) {
+        try {
+          const { directSyncRecords } = await import("./sheets");
+          const res = await directSyncRecords(processedPending as any, config.spreadsheetId, accessToken);
+          const failedIdsSet = new Set(res.failedIds || []);
+          const updated = records.map(r => {
+            if (r.SyncStatus === "PENDING" && !failedIdsSet.has(r.ID)) {
+              return { ...r, SyncStatus: "SYNCED" as const };
+            }
+            return r;
+          });
+          this.saveRecords(updated);
+          return {
+            successCount: res.added,
+            failedCount: res.failedIds.length,
+            error: res.failedIds.length > 0 ? `${res.failedIds.length} failed to sync` : undefined
+          };
+        } catch (e: any) {
+          return { successCount: 0, failedCount: processedPending.length, error: e.toString() };
+        }
+      }
+
       if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
         // Simulate/fallback sync locally if actual cloud API is not configured
         const updated = records.map(r => {
@@ -883,13 +1003,13 @@ export class DatabaseService {
           return r;
         });
         this.saveRecords(updated);
-        return { successCount: pending.length, failedCount: 0 };
+        return { successCount: processedPending.length, failedCount: 0 };
       }
 
       // Split into small chunks so one problematic record/chunk can't block the rest
-      const chunks: (typeof pending)[] = [];
-      for (let i = 0; i < pending.length; i += this.SYNC_CHUNK_SIZE) {
-        chunks.push(pending.slice(i, i + this.SYNC_CHUNK_SIZE));
+      const chunks: (typeof processedPending)[] = [];
+      for (let i = 0; i < processedPending.length; i += this.SYNC_CHUNK_SIZE) {
+        chunks.push(processedPending.slice(i, i + this.SYNC_CHUNK_SIZE));
       }
 
       let totalSuccess = 0;
@@ -1000,39 +1120,51 @@ export class DatabaseService {
    */
   public async pullMasters(): Promise<{ success: boolean; error?: string }> {
     const config = this.getCloudConfig();
-    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
-      return { success: false, error: "Apps Script URL is not configured." };
-    }
-
+    
     try {
-      let data: any = null;
-      
-      // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
+      let accessToken = null;
       try {
-        const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_masters`;
-        const response = await fetch(getUrl, {
-          method: "GET",
-          mode: "cors"
-        });
-        const resJson = await response.json();
-        if (resJson && resJson.success) {
-          data = resJson;
-        }
-      } catch (getErr) {
-        console.warn("GET pullMasters failed, trying POST fallback", getErr);
-      }
+        const { getAccessToken } = await import("./auth");
+        accessToken = await getAccessToken();
+      } catch(e) {}
 
-      if (!data) {
-        // Fallback to original POST method if GET is not supported by the deployed Apps Script
-        const response = await fetch(config.appsScriptUrl, {
-          method: "POST",
-          mode: "cors",
-          headers: {
-            "Content-Type": "text/plain;charset=utf-8"
-          },
-          body: JSON.stringify({ action: "get_masters" })
-        });
-        data = await response.json();
+      let data: any = null;
+
+      if (accessToken && config.spreadsheetId) {
+        const { directGetMasters } = await import("./sheets");
+        data = await directGetMasters(config.spreadsheetId, accessToken);
+      } else {
+        if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+          return { success: false, error: "Apps Script URL or Google Sheets integration is not configured." };
+        }
+        
+        // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
+        try {
+          const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_masters`;
+          const response = await fetch(getUrl, {
+            method: "GET",
+            mode: "cors"
+          });
+          const resJson = await response.json();
+          if (resJson && resJson.success) {
+            data = resJson;
+          }
+        } catch (getErr) {
+          console.warn("GET pullMasters failed, trying POST fallback", getErr);
+        }
+
+        if (!data) {
+          // Fallback to original POST method if GET is not supported by the deployed Apps Script
+          const response = await fetch(config.appsScriptUrl, {
+            method: "POST",
+            mode: "cors",
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify({ action: "get_masters" })
+          });
+          data = await response.json();
+        }
       }
 
       if (data && data.success) {
@@ -1057,39 +1189,51 @@ export class DatabaseService {
    */
   public async pullRecords(): Promise<{ success: boolean; error?: string }> {
     const config = this.getCloudConfig();
-    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
-      return { success: false, error: "Apps Script URL is not configured." };
-    }
 
     try {
+      let accessToken = null;
+      try {
+        const { getAccessToken } = await import("./auth");
+        accessToken = await getAccessToken();
+      } catch(e) {}
+
       let data: any = null;
 
-      // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
-      try {
-        const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_records`;
-        const response = await fetch(getUrl, {
-          method: "GET",
-          mode: "cors"
-        });
-        const resJson = await response.json();
-        if (resJson && resJson.success) {
-          data = resJson;
+      if (accessToken && config.spreadsheetId) {
+        const { directGetRecords } = await import("./sheets");
+        data = await directGetRecords(config.spreadsheetId, accessToken);
+      } else {
+        if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+          return { success: false, error: "Apps Script URL or Google Sheets integration is not configured." };
         }
-      } catch (getErr) {
-        console.warn("GET pullRecords failed, trying POST fallback", getErr);
-      }
+        
+        // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
+        try {
+          const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_records`;
+          const response = await fetch(getUrl, {
+            method: "GET",
+            mode: "cors"
+          });
+          const resJson = await response.json();
+          if (resJson && resJson.success) {
+            data = resJson;
+          }
+        } catch (getErr) {
+          console.warn("GET pullRecords failed, trying POST fallback", getErr);
+        }
 
-      if (!data) {
-        // Fallback to original POST method if GET is not supported by the deployed Apps Script
-        const response = await fetch(config.appsScriptUrl, {
-          method: "POST",
-          mode: "cors",
-          headers: {
-            "Content-Type": "text/plain;charset=utf-8"
-          },
-          body: JSON.stringify({ action: "get_records" })
-        });
-        data = await response.json();
+        if (!data) {
+          // Fallback to original POST method if GET is not supported by the deployed Apps Script
+          const response = await fetch(config.appsScriptUrl, {
+            method: "POST",
+            mode: "cors",
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify({ action: "get_records" })
+          });
+          data = await response.json();
+        }
       }
 
       if (data && data.success) {
