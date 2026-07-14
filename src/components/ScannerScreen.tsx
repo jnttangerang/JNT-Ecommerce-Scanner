@@ -839,7 +839,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     lastCaptureSharpnessRef.current = Infinity; // Not a real capture, so never flag it as blurry
     
     const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
-    const validPrefixes = validPrefixesStr.split(",").map(p => p.trim()).filter(Boolean);
+    // Parse prefixes safely using a regex separator for robustness
+    const validPrefixes = validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean);
     const defaultPrefix = validPrefixes.length > 0 ? validPrefixes[0] : "JX";
     
     const simulatedBarcode = scannedResi || `${defaultPrefix}${Math.floor(1000000000 + Math.random() * 9000000000)}`;
@@ -855,14 +856,29 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const rawCode = scannedResi.trim().toUpperCase();
     if (!rawCode) return;
 
-    // VALIDASI FORMAT BARCODE J&T
+    // VALIDASI FORMAT BARCODE J&T (Robust parsing supports any prefix dynamically)
     const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
-    const validPrefixes = validPrefixesStr.split(",").map(p => p.trim()).filter(Boolean);
+    const validPrefixes = validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean);
     const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "(JX|JZ)";
     const regex = new RegExp(`^${prefixRegexPart}\\d{10,12}$`);
+
+    console.group("Barcode Validation");
+    console.log("Raw barcode:", scannedResi);
+    console.log("Normalized barcode:", rawCode);
+    console.log("localStorage:", localStorage.getItem("jt_resi_prefixes"));
+    console.log("Parsed prefixes:", validPrefixes);
+    console.log("Regex:", regex);
+    console.log("Regex source:", regex.source);
+    console.log("Regex test:", regex.test(rawCode));
+    console.groupEnd();
+
     const isValidFormat = regex.test(rawCode);
 
     if (!isValidFormat) {
+      toast.error(`Raw:\n${rawCode}\n\nRegex:\n${regex.source}\n\nPrefixes:\n${validPrefixes.join(", ")}\n\nResult:\nFAIL`, {
+        duration: 5000
+      });
+
       // Only surface a warning once the SAME unrecognized code has been read stably a
       // few times (avoids reacting to single-frame noise), and at most once every few
       // seconds (avoids spamming toasts while the camera keeps re-reading it).
