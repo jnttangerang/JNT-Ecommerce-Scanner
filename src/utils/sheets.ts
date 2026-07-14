@@ -282,9 +282,15 @@ export async function directGetRecords(spreadsheetId: string, accessToken: strin
             Outlet: row[4] || "",
             Seller: row[5] || "",
             Operator: row[6] || "",
-            Status: row[7] || "SCANNED",
+            Status: row[7] || "SCANNED", ScanTimestamp: Date.now(),
             PhotoURL: row[8] || "",
-            SyncStatus: "SYNCED"
+            SyncStatus: "SYNCED",
+            PackageStatus: "NONE",
+            WaybillStatus: "NONE",
+            ReviewStatus: "NONE",
+            RetakeStatus: "NONE",
+            AlertStatus: "NONE",
+            CancelStatus: "NONE",
           });
         }
       }

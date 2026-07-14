@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -18,10 +19,20 @@ export interface ScanRecord {
   PhotoURL: string; // Base64 data-uri or simulated URL
   SyncStatus: SyncStatusType;
   ScanTimestamp: number; // for sorting
-  RetakeStatus?: "PENDING" | "RETAKEN";
-  alertStatus?: "PENDING" | "CONFIRMED";
+  RetakeStatus?: string;
+  alertStatus?: string;
   confirmedBy?: string;
   confirmedAt?: string;
+  PackageStatus?: string;
+  WaybillStatus?: string;
+  WaktuSerahTerima?: string;
+  ReviewStatus?: string;
+  AlertStatus?: string;
+  CancelStatus?: string;
+  CancelEvidencePhoto?: string;
+  CancelHandledBy?: string;
+  CancelHandledAt?: string;
+  CancelRemark?: string;
 }
 
 export interface ImportLog {

@@ -107,6 +107,12 @@ function generateHistoricalData(): ScanRecord[] {
       Status: i % 15 === 0 ? "CANCELLED" : "SCANNED", // occasional cancel for testing
       PhotoURL: createMockResiPhoto(resi, seller),
       SyncStatus: "SYNCED",
+      PackageStatus: "NONE",
+      WaybillStatus: "NONE",
+      ReviewStatus: "NONE",
+      RetakeStatus: "NONE",
+      AlertStatus: "NONE",
+      CancelStatus: "NONE",
       ScanTimestamp: new Date(`${yesterday}T${hour}:${min}:${sec}`).getTime()
     });
   }
@@ -740,7 +746,13 @@ export class DatabaseService {
       Status: "SCANNED",
       PhotoURL: photo,
       SyncStatus: syncStatus,
-      ScanTimestamp: now.getTime()
+      ScanTimestamp: now.getTime(),
+      PackageStatus: "NONE",
+      WaybillStatus: "NONE",
+      ReviewStatus: "PENDING",
+      RetakeStatus: "NONE",
+      AlertStatus: "NONE",
+      CancelStatus: "NONE",
     };
 
     records.unshift(newRecord);
@@ -762,6 +774,35 @@ export class DatabaseService {
   /**
    * Updates package status (e.g. from SCANNED to DISERAHKAN) with strict state machine validation
    */
+    public async updateYoYiData(resi: string, packageStatus: string, waybillStatus: string, waktuSerahTerima: string): Promise<boolean> {
+    const records = [...this.getRecords()];
+    const index = records.findIndex(r => r.Resi === resi);
+    if (index === -1) return false;
+    
+    let legacyStatus = records[index].Status;
+    const pStat = packageStatus.toLowerCase();
+    const wStat = waybillStatus.toLowerCase();
+    
+    if (wStat === "sudah pickup") {
+      legacyStatus = "PICKUP";
+    } else if (pStat === "diserahkan") {
+      legacyStatus = "DISERAHKAN";
+    } else if (pStat === "untuk diserahkan") {
+      legacyStatus = "SCANNED";
+    }
+
+    records[index] = {
+      ...records[index],
+      PackageStatus: packageStatus,
+      WaybillStatus: waybillStatus,
+      WaktuSerahTerima: waktuSerahTerima,
+      Status: legacyStatus,
+      SyncStatus: "PENDING"
+    };
+
+    return await this.saveRecords(records);
+  }
+
   public async updateRecordStatus(resi: string, newStatus: StatusType): Promise<{ success: boolean; error?: string }> {
     const records = [ ...this.getRecords() ];
     const index = records.findIndex(r => r.Resi === resi);
@@ -787,6 +828,8 @@ export class DatabaseService {
     // Set alertStatus to PENDING when order becomes CANCELLED
     if (newStatus === "CANCELLED") {
       records[index].alertStatus = "PENDING";
+      records[index].CancelStatus = "CANCELLED";
+      records[index].AlertStatus = "PENDING";
     }
     
     const saveSuccess = await this.saveRecords(records);
@@ -818,8 +861,56 @@ export class DatabaseService {
   }
 
   /**
+   * Resolve order cancelled alert with photo evidence and optional remark
+   */
+  public async resolveCancelAlert(
+    resi: string, 
+    photo: string, 
+    handledBy: string, 
+    remark: string
+  ): Promise<boolean> {
+    const records = [ ...this.getRecords() ];
+    const index = records.findIndex(r => r.Resi === resi);
+    if (index === -1) return false;
+
+    records[index] = {
+      ...records[index],
+      CancelEvidencePhoto: photo,
+      CancelHandledBy: handledBy,
+      CancelHandledAt: new Date().toISOString(),
+      CancelRemark: remark,
+      AlertStatus: "RESOLVED",
+      alertStatus: "RESOLVED" // keep alertStatus synchronized for compatibility
+    };
+
+    return await this.saveRecords(records);
+  }
+
+  /**
    * Deletes a specific scan record/resi from local database
    */
+
+  public async completeReviews(ids: string[]): Promise<boolean> {
+    const records = [...this.getRecords()];
+    let updatedCount = 0;
+    const idSet = new Set(ids);
+    
+    for (let i = 0; i < records.length; i++) {
+      if (idSet.has(records[i].ID)) {
+        records[i] = {
+          ...records[i],
+          ReviewStatus: "COMPLETED"
+        };
+        updatedCount++;
+      }
+    }
+    
+    if (updatedCount > 0) {
+      return await this.saveRecords(records);
+    }
+    return true;
+  }
+
   public deleteRecord(resi: string): boolean {
     const originalLength = this.recordsCache.length;
     const updated = this.recordsCache.filter(r => r.Resi.toLowerCase() !== resi.toLowerCase());
@@ -1230,7 +1321,19 @@ export class DatabaseService {
                 ...localRec,
                 ...cloudRec,
                 SyncStatus: "SYNCED",
-                RetakeStatus: cloudRec.RetakeStatus || localRec.RetakeStatus,
+                // Preserve business states if they have been locally initialized/changed
+                PackageStatus: (localRec.PackageStatus && localRec.PackageStatus !== "NONE") ? localRec.PackageStatus : (cloudRec.PackageStatus || "NONE"),
+                WaybillStatus: (localRec.WaybillStatus && localRec.WaybillStatus !== "NONE") ? localRec.WaybillStatus : (cloudRec.WaybillStatus || "NONE"),
+                ReviewStatus: (localRec.ReviewStatus && localRec.ReviewStatus !== "NONE") ? localRec.ReviewStatus : (cloudRec.ReviewStatus || "NONE"),
+                RetakeStatus: (localRec.RetakeStatus && localRec.RetakeStatus !== "NONE") ? localRec.RetakeStatus : (cloudRec.RetakeStatus || "NONE"),
+                AlertStatus: (localRec.AlertStatus && localRec.AlertStatus !== "NONE") ? localRec.AlertStatus : (cloudRec.AlertStatus || "NONE"),
+                alertStatus: (localRec.alertStatus && localRec.alertStatus !== "NONE") ? localRec.alertStatus : (cloudRec.alertStatus || "NONE"),
+                CancelStatus: (localRec.CancelStatus && localRec.CancelStatus !== "NONE") ? localRec.CancelStatus : (cloudRec.CancelStatus || "NONE"),
+                // Preserve new local-only cancel evidence fields
+                CancelEvidencePhoto: localRec.CancelEvidencePhoto || cloudRec.CancelEvidencePhoto,
+                CancelHandledBy: localRec.CancelHandledBy || cloudRec.CancelHandledBy,
+                CancelHandledAt: localRec.CancelHandledAt || cloudRec.CancelHandledAt,
+                CancelRemark: localRec.CancelRemark || cloudRec.CancelRemark,
                 PhotoURL: (localRec.PhotoURL && localRec.PhotoURL.startsWith("data:image")) ? localRec.PhotoURL : (cloudRec.PhotoURL || localRec.PhotoURL)
               });
             }
@@ -1556,7 +1659,13 @@ function handleGetRecords() {
             Operator: row[6] ? row[6].toString() : "",
             Status: row[7] ? row[7].toString() : "SCANNED",
             PhotoURL: row[8] ? row[8].toString() : "",
-            SyncStatus: "SYNCED"
+            SyncStatus: "SYNCED",
+      PackageStatus: "NONE",
+      WaybillStatus: "NONE",
+      ReviewStatus: "NONE",
+      RetakeStatus: "NONE",
+      AlertStatus: "NONE",
+      CancelStatus: "NONE",
           });
         }
       }

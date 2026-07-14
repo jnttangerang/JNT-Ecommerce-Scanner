@@ -128,7 +128,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Session scanned resis (starts empty on enter)
   const [sessionScannedResis, setSessionScannedResis] = useState<string[]>([]);
   // Active panel tab ("ACTIVE_SESSION" by default)
-  const [activePanelTab, setActivePanelTab] = useState<"ACTIVE_SESSION" | "LAPORAN_SCAN">("ACTIVE_SESSION");
+  const [activePanelTab, setActivePanelTab] = useState<"ACTIVE_SESSION" | "LAPORAN_SCAN" | "CANCEL_QUEUE">("ACTIVE_SESSION");
+
+  // Cancel queue processing states
+  const [activeCancelItem, setActiveCancelItem] = useState<ScanRecord | null>(null);
+  const [cancelPhotoData, setCancelPhotoData] = useState<string>("");
+  const [cancelRemark, setCancelRemark] = useState<string>("");
 
   // Manual input and live real-time validation states
   const [manualInput, setManualInput] = useState("");
@@ -348,14 +353,24 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     return filteredRecords.filter(r => r.Tanggal === todayStr);
   }, [filteredRecords]);
 
+  // Filtered records for Cancel Queue (CancelStatus === "CANCELLED" and AlertStatus === "PENDING" or "IN_PROGRESS")
+  const filteredRecordsCancelQueue = React.useMemo(() => {
+    return filteredRecords.filter(r => 
+      r.CancelStatus === "CANCELLED" && 
+      (r.AlertStatus === "PENDING" || r.AlertStatus === "IN_PROGRESS" || r.alertStatus === "PENDING" || r.alertStatus === "IN_PROGRESS")
+    );
+  }, [filteredRecords]);
+
   // Active records to display based on the selected tab
   const activeRecordsList = React.useMemo(() => {
     if (activePanelTab === "ACTIVE_SESSION") {
       return filteredRecordsSession;
+    } else if (activePanelTab === "CANCEL_QUEUE") {
+      return filteredRecordsCancelQueue;
     } else {
       return filteredRecordsLaporan;
     }
-  }, [activePanelTab, filteredRecordsSession, filteredRecordsLaporan]);
+  }, [activePanelTab, filteredRecordsSession, filteredRecordsLaporan, filteredRecordsCancelQueue]);
 
   // Check if any filters are actively set (other than default)
   const isFilterActive = !!(filterSearchQuery.trim());
@@ -1575,6 +1590,184 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 </div>
               )}
 
+              {/* Cancel Item Processing Modal overlay */}
+              {activeCancelItem && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+                  <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                    {/* Header */}
+                    <div className="bg-slate-950 text-white p-4 flex items-center justify-between">
+                      <div>
+                        <span className="text-[9px] bg-red-600 text-white font-black px-2 py-0.5 rounded uppercase tracking-wider block w-max mb-1">PROSES PEMBATALAN</span>
+                        <h4 className="font-extrabold text-sm tracking-wide font-mono">{activeCancelItem.Resi}</h4>
+                      </div>
+                      <button 
+                        onClick={() => setActiveCancelItem(null)}
+                        className="text-slate-400 hover:text-white p-1 rounded-lg transition"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+
+                    {/* Content Scroll Area */}
+                    <div className="p-5 overflow-y-auto space-y-4 text-xs text-slate-700 flex-1">
+                      {/* Meta Information Cards */}
+                      <div className="grid grid-cols-2 gap-3 bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                        <div>
+                          <span className="text-slate-400 font-medium block text-[9px] uppercase">Seller</span>
+                          <span className="font-bold text-slate-800">{activeCancelItem.Seller}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-medium block text-[9px] uppercase">Outlet / Cabang</span>
+                          <span className="font-bold text-slate-800">{activeCancelItem.Outlet}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-medium block text-[9px] uppercase">Operator Scan</span>
+                          <span className="font-bold text-slate-800">{activeCancelItem.Operator}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-medium block text-[9px] uppercase">Waktu Scan</span>
+                          <span className="font-mono text-slate-800 font-semibold">{activeCancelItem.Tanggal} {activeCancelItem.Jam}</span>
+                        </div>
+                      </div>
+
+                      {/* Photo original if exists */}
+                      {activeCancelItem.PhotoURL && (
+                        <div>
+                          <span className="text-slate-400 font-bold block text-[10px] uppercase mb-1.5">Foto Scan Awal</span>
+                          <div className="relative h-28 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                            <img
+                              src={getDirectDriveImageUrl(activeCancelItem.PhotoURL)}
+                              alt="Scan awal"
+                              referrerPolicy="no-referrer"
+                              className="h-full w-full object-contain"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Camera Evidence Capture Stage */}
+                      <div>
+                        <span className="text-slate-500 font-bold block text-[10px] uppercase mb-1.5 flex items-center gap-1.5">
+                          FOTO BUKTI PEMISAHAN PAKET <span className="text-red-500 font-black">*</span>
+                        </span>
+
+                        {cancelPhotoData ? (
+                          <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 flex items-center justify-center">
+                            <img 
+                              src={cancelPhotoData} 
+                              alt="Bukti pemisahan" 
+                              className="w-full h-full object-cover" 
+                            />
+                            <button
+                              onClick={() => setCancelPhotoData("")}
+                              className="absolute bottom-3 right-3 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black px-3 py-1.5 rounded-xl shadow-lg flex items-center space-x-1 uppercase cursor-pointer"
+                            >
+                              <Camera className="h-3 w-3" />
+                              <span>Foto Ulang</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="border-2 border-dashed border-slate-300 hover:border-slate-400 rounded-2xl p-6 bg-slate-50/50 text-center space-y-3 transition-colors">
+                            <Camera className="h-8 w-8 text-slate-400 mx-auto animate-pulse" />
+                            <div className="space-y-1">
+                              <h6 className="font-extrabold text-slate-700 text-xs">Posisikan paket di depan kamera aktif di sebelah kiri</h6>
+                              <p className="text-[10px] text-slate-500">Kamera harus dalam keadaan menyala agar dapat mengambil gambar secara langsung.</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const captured = captureFrame(activeCancelItem.Resi);
+                                if (captured) {
+                                  setCancelPhotoData(captured);
+                                } else {
+                                  toast.error("Gagal mengambil foto. Pastikan kamera di sebelah kiri menyala!", {
+                                    id: "cancel-photo-error"
+                                  });
+                                }
+                              }}
+                              className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-black uppercase px-4 py-2 rounded-xl shadow-md cursor-pointer inline-flex items-center space-x-1.5"
+                            >
+                              <Camera className="h-3.5 w-3.5" />
+                              <span>AMBIL FOTO BUKTI</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Note / Remark Area */}
+                      <div>
+                        <label className="text-slate-500 font-bold block text-[10px] uppercase mb-1.5">
+                          CATATAN OPERATOR (OPSIONAL)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Contoh: Paket sudah dipisahkan ke keranjang cancel"
+                          value={cancelRemark}
+                          onChange={(e) => setCancelRemark(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-red-600 text-xs font-semibold text-slate-700 placeholder-slate-400"
+                        />
+                        {/* Quick tags */}
+                        <div className="flex flex-wrap gap-1.5 mt-2 select-none">
+                          {[
+                            "Paket berhasil dipisahkan.",
+                            "Menunggu pickup seller.",
+                            "Barang sudah di rak khusus."
+                          ].map(tag => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => setCancelRemark(tag)}
+                              className="text-[9px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded-lg border border-slate-200/50 transition cursor-pointer"
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Actions */}
+                    <div className="bg-slate-50 p-4 border-t border-slate-200 flex items-center justify-end space-x-3 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setActiveCancelItem(null)}
+                        className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs uppercase tracking-wider cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!cancelPhotoData}
+                        onClick={async () => {
+                          const res = await dbService.resolveCancelAlert(activeCancelItem.Resi, cancelPhotoData, config.operator, cancelRemark);
+                          if (res) {
+                            audioService.playSuccess();
+                            toast.success(`Paket ${activeCancelItem.Resi} berhasil dipisahkan!`, {
+                              id: "cancel-resolved-success"
+                            });
+                            // Force state update to refresh local lists
+                            setScannedRecords(dbService.getRecords());
+                            setActiveCancelItem(null);
+                          } else {
+                            toast.error("Gagal memperbarui status di database.", {
+                              id: "cancel-resolved-error"
+                            });
+                          }
+                        }}
+                        className={`px-5 py-2.5 font-black rounded-xl text-xs uppercase tracking-wider flex items-center space-x-1.5 border-none cursor-pointer ${
+                          cancelPhotoData
+                            ? "bg-green-600 hover:bg-green-700 text-white shadow-md shadow-green-600/10"
+                            : "bg-slate-300 text-slate-500 cursor-not-allowed"
+                        }`}
+                      >
+                        <Check className="h-4 w-4" />
+                        <span>PAKET SUDAH DIPISAHKAN</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Active Special Retake Overlay */}
               {activeRetakeResi && (
                 <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-[1.5px] flex flex-col justify-between p-4 z-30 border-4 border-amber-500 animate-in fade-in duration-200">
@@ -1683,17 +1876,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           <div className="bg-white border border-slate-200 rounded-3xl p-5 flex flex-col flex-grow shadow-sm">
             
             {/* Segmented Tab Controls */}
-            <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-4 border border-slate-200/50">
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-4 border border-slate-200/50 gap-1 select-none">
               <button
                 type="button"
                 onClick={() => setActivePanelTab("ACTIVE_SESSION")}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5 ${
+                className={`flex-1 py-2 px-2.5 rounded-xl text-[11px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 ${
                   activePanelTab === "ACTIVE_SESSION"
                     ? "bg-white text-slate-900 shadow-sm border border-slate-200/20"
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                <span>Sesi Scan Aktif</span>
+                <span>Sesi</span>
                 <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
                   activePanelTab === "ACTIVE_SESSION" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
                 }`}>
@@ -1703,17 +1896,35 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               <button
                 type="button"
                 onClick={() => setActivePanelTab("LAPORAN_SCAN")}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1.5 ${
+                className={`flex-1 py-2 px-2.5 rounded-xl text-[11px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 ${
                   activePanelTab === "LAPORAN_SCAN"
                     ? "bg-white text-slate-900 shadow-sm border border-slate-200/20"
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                <span>Laporan Scan</span>
+                <span>Laporan</span>
                 <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
                   activePanelTab === "LAPORAN_SCAN" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
                 }`}>
                   {filteredRecordsLaporan.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivePanelTab("CANCEL_QUEUE")}
+                className={`flex-1 py-2 px-2.5 rounded-xl text-[11px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 ${
+                  activePanelTab === "CANCEL_QUEUE"
+                    ? "bg-red-600 text-white shadow-sm font-bold"
+                    : filteredRecordsCancelQueue.length > 0
+                    ? "bg-red-100 text-red-700 animate-pulse font-extrabold"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <span>Cancel</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                  activePanelTab === "CANCEL_QUEUE" ? "bg-red-700 text-white font-bold" : "bg-slate-200 text-slate-600"
+                }`}>
+                  {filteredRecordsCancelQueue.length}
                 </span>
               </button>
             </div>
@@ -1725,6 +1936,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     ? `HASIL FILTER (${filteredRecords.length})` 
                     : activePanelTab === "ACTIVE_SESSION"
                     ? `DAFTAR RESI TERAKHIR (${sessionScannedResis.length})`
+                    : activePanelTab === "CANCEL_QUEUE"
+                    ? `DAFTAR PAKET CANCEL (${filteredRecordsCancelQueue.length})`
                     : `LAPORAN SCAN HARI INI (${filteredRecordsLaporan.length})`
                   }
                   {(() => {
@@ -1806,6 +2019,13 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                          <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Sesi Scan Kosong</h5>
                          <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold">
                            Daftar resi terakhir kosong. Silakan mulai memindai barcode paket seller <strong className="text-red-650">{config.seller}</strong>!
+                         </p>
+                       </>
+                     ) : activePanelTab === "CANCEL_QUEUE" ? (
+                       <>
+                         <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Antrean Cancel Bersih</h5>
+                         <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold text-emerald-600">
+                           Tidak ada order cancel tertunda! Kerja bagus, semua paket aman.
                          </p>
                        </>
                      ) : (
@@ -1892,9 +2112,22 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                         </span>
                       </div>
 
-                      {/* Delete Actions */}
+                      {/* Action Button: Delete or Cancel Handling */}
                       <div className="flex items-center">
-                        {deletingResi === r.Resi ? (
+                        {activePanelTab === "CANCEL_QUEUE" ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveCancelItem(r);
+                              setCancelPhotoData("");
+                              setCancelRemark("");
+                            }}
+                            className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-[10px] py-1.5 px-3 rounded-lg flex items-center space-x-1 uppercase cursor-pointer transition-colors"
+                          >
+                            <Camera className="h-3.5 w-3.5" />
+                            <span>Proses</span>
+                          </button>
+                        ) : deletingResi === r.Resi ? (
                           <div className="flex items-center bg-red-50 border border-red-200 rounded-lg p-1 space-x-1 animate-fadeIn">
                             <button
                               onClick={() => handleDeleteRecord(r.Resi)}

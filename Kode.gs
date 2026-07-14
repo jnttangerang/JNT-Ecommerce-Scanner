@@ -10,6 +10,30 @@
 const SPREADSHEET_ID = "12ly2pM3Vof9IKTwjselkLUX6sMdcdI6rcb_KvbjcQ_Y";
 const FOTO_FOLDER_ID = "19peJr4JWqKA6Ei4AwuXgohhF2C59ugyp";
 
+// BUSINESS_STATE v2 Header Definition (Columns A:S)
+// Menggunakan pemisahan state bisnis independen sesuai arsitektur baru.
+const RESI_HEADERS = [
+  "ID",                   // A: ID
+  "Tanggal",              // B: Tanggal Scan
+  "Jam",                  // C: Jam Scan
+  "Resi",                 // D: No Resi
+  "Outlet",               // E: Outlet Penjemputan
+  "Seller",               // F: Nama Seller
+  "Operator",             // G: Operator Scanner
+  "Status",               // H: Status (Legacy Compatibility)
+  "PhotoURL",             // I: Link Foto Resi Utama
+  "PackageStatus",        // J: Status Paket (NONE, Untuk Diserahkan, Diserahkan)
+  "WaybillStatus",        // K: Status Waybill (NONE, Belum Diambil, Sudah Pickup)
+  "ReviewStatus",         // L: Status Review Foto (PENDING, COMPLETED)
+  "RetakeStatus",         // M: Status Retake Foto (NONE, PENDING, COMPLETED)
+  "AlertStatus",          // N: Status Alur Pembatalan (NONE, PENDING, IN_PROGRESS, RESOLVED)
+  "CancelStatus",         // O: Status Pembatalan (NONE, CANCELLED)
+  "CancelEvidencePhoto",  // P: Link Foto Bukti Pemisahan Paket Batal
+  "CancelHandledBy",      // Q: Operator yang memisahkan paket batal
+  "CancelHandledAt",      // R: Waktu pemisahan paket batal
+  "CancelRemark"          // S: Catatan pembatalan paket
+];
+
 function doGet(e) {
   try {
     const action = e.parameter.action;
@@ -83,8 +107,8 @@ function handleSyncBatch(records) {
       
       // Set headers jika kosong
       if (sheet.getLastRow() === 0) {
-        sheet.appendRow(["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"]);
-        sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#f1f5f9");
+        sheet.appendRow(RESI_HEADERS);
+        sheet.getRange(1, 1, 1, RESI_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
       }
       
       // Load existing resis for this sheet from cache, or query and cache if not loaded yet
@@ -95,7 +119,7 @@ function handleSyncBatch(records) {
       
       // Update status jika resi sudah ada (proteksi duplikat & memproses pembatalan)
       if (existingResis.indexOf(r.Resi) !== -1) {
-        updateRowStatus(sheet, r.Resi, r.Status);
+        updateRowStatus(sheet, r.Resi, r.Status, r);
         continue;
       }
       
@@ -112,17 +136,41 @@ function handleSyncBatch(records) {
           finalPhotoUrl = "Upload error: " + uploadErr.toString();
         }
       }
+
+      // Konversi base64 image dan upload ke Google Drive (FOTO PEMISAHAN PAKET BATAL)
+      let finalCancelEvidencePhoto = r.CancelEvidencePhoto;
+      if (r.CancelEvidencePhoto && r.CancelEvidencePhoto.indexOf("data:image") === 0) {
+        try {
+          const rawBase64 = r.CancelEvidencePhoto.split(",")[1];
+          const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", r.Resi + "_cancel.jpg");
+          const file = driveFolder.createFile(blob);
+          file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          finalCancelEvidencePhoto = file.getUrl();
+        } catch (uploadErr) {
+          finalCancelEvidencePhoto = "Upload error: " + uploadErr.toString();
+        }
+      }
       
       sheet.appendRow([
-        r.ID,
-        r.Tanggal,
-        r.Jam,
-        r.Resi,
-        r.Outlet,
-        r.Seller,
-        r.Operator,
-        r.Status,
-        finalPhotoUrl
+        r.ID || "",
+        r.Tanggal || "",
+        r.Jam || "",
+        r.Resi || "",
+        r.Outlet || "",
+        r.Seller || "",
+        r.Operator || "",
+        r.Status || "SCANNED",
+        finalPhotoUrl || "",
+        r.PackageStatus || "",
+        r.WaybillStatus || "",
+        r.ReviewStatus || "",
+        r.RetakeStatus || "",
+        r.AlertStatus || "",
+        r.CancelStatus || "",
+        finalCancelEvidencePhoto || "",
+        r.CancelHandledBy || "",
+        r.CancelHandledAt || "",
+        r.CancelRemark || ""
       ]);
       
       // Track newly added Resi in our local cache list so duplicates within the same batch are resolved without slow sheet re-reads
@@ -244,10 +292,19 @@ function handleGetRecords() {
     const sName = sheets[i].getName();
     if (sName.indexOf("Data Resi J&T") === 0 || sName.indexOf("Data Resi") === 0) {
       const lastRow = sheets[i].getLastRow();
+      const lastCol = sheets[i].getLastColumn();
       if (lastRow > 1) {
-        const data = sheets[i].getRange(2, 1, lastRow - 1, 9).getValues();
+        // Read up to 19 columns, but clip to actual lastCol if it is smaller to prevent errors
+        const colsToRead = Math.min(19, lastCol);
+        const data = sheets[i].getRange(2, 1, lastRow - 1, colsToRead).getValues();
         for (let j = 0; j < data.length; j++) {
-          const row = data[j];
+          const rawRow = data[j];
+          // Pad row with empty strings up to 19 elements
+          const row = [];
+          for (let colIdx = 0; colIdx < 19; colIdx++) {
+            row.push(colIdx < rawRow.length ? rawRow[colIdx] : "");
+          }
+          
           let tglStr = "";
           if (row[1] instanceof Date) {
             const d = row[1];
@@ -270,6 +327,13 @@ function handleGetRecords() {
             jamStr = row[2] ? row[2].toString() : "";
           }
 
+          let cancelHandledAtStr = "";
+          if (row[17] instanceof Date) {
+            cancelHandledAtStr = row[17].toISOString();
+          } else {
+            cancelHandledAtStr = row[17] ? row[17].toString() : "";
+          }
+
           records.push({
             ID: row[0] ? row[0].toString() : "",
             Tanggal: tglStr,
@@ -280,6 +344,16 @@ function handleGetRecords() {
             Operator: row[6] ? row[6].toString() : "",
             Status: row[7] ? row[7].toString() : "SCANNED",
             PhotoURL: row[8] ? row[8].toString() : "",
+            PackageStatus: row[9] ? row[9].toString() : "",
+            WaybillStatus: row[10] ? row[10].toString() : "",
+            ReviewStatus: row[11] ? row[11].toString() : "",
+            RetakeStatus: row[12] ? row[12].toString() : "",
+            AlertStatus: row[13] ? row[13].toString() : "",
+            CancelStatus: row[14] ? row[14].toString() : "",
+            CancelEvidencePhoto: row[15] ? row[15].toString() : "",
+            CancelHandledBy: row[16] ? row[16].toString() : "",
+            CancelHandledAt: cancelHandledAtStr,
+            CancelRemark: row[18] ? row[18].toString() : "",
             SyncStatus: "SYNCED"
           });
         }
@@ -354,13 +428,43 @@ function getExistingResiList(sheet) {
   return range.getValues().map(row => row[0].toString());
 }
 
-function updateRowStatus(sheet, resi, status) {
+function updateRowStatus(sheet, resi, status, record) {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return;
   const data = sheet.getRange(2, 4, lastRow - 1, 1).getValues();
   for (let i = 0; i < data.length; i++) {
     if (data[i][0].toString() === resi) {
-      sheet.getRange(i + 2, 8).setValue(status); // Kolom 8 adalah 'Status'
+      const rowNum = i + 2;
+      sheet.getRange(rowNum, 8).setValue(status); // Kolom 8 adalah 'Status'
+      
+      // Jika ada objek record lengkap, update kolom-kolom baru tanpa merusak kolom lain
+      if (record && typeof record === "object") {
+        if (record.PackageStatus !== undefined) sheet.getRange(rowNum, 10).setValue(record.PackageStatus);
+        if (record.WaybillStatus !== undefined) sheet.getRange(rowNum, 11).setValue(record.WaybillStatus);
+        if (record.ReviewStatus !== undefined) sheet.getRange(rowNum, 12).setValue(record.ReviewStatus);
+        if (record.RetakeStatus !== undefined) sheet.getRange(rowNum, 13).setValue(record.RetakeStatus);
+        if (record.AlertStatus !== undefined) sheet.getRange(rowNum, 14).setValue(record.AlertStatus);
+        if (record.CancelStatus !== undefined) sheet.getRange(rowNum, 15).setValue(record.CancelStatus);
+        
+        let evidencePhotoUrl = record.CancelEvidencePhoto;
+        if (evidencePhotoUrl && evidencePhotoUrl.indexOf("data:image") === 0) {
+          try {
+            const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
+            const rawBase64 = evidencePhotoUrl.split(",")[1];
+            const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", resi + "_cancel.jpg");
+            const file = driveFolder.createFile(blob);
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+            evidencePhotoUrl = file.getUrl();
+          } catch (uploadErr) {
+            evidencePhotoUrl = "Upload error: " + uploadErr.toString();
+          }
+        }
+        
+        if (evidencePhotoUrl !== undefined) sheet.getRange(rowNum, 16).setValue(evidencePhotoUrl);
+        if (record.CancelHandledBy !== undefined) sheet.getRange(rowNum, 17).setValue(record.CancelHandledBy);
+        if (record.CancelHandledAt !== undefined) sheet.getRange(rowNum, 18).setValue(record.CancelHandledAt);
+        if (record.CancelRemark !== undefined) sheet.getRange(rowNum, 19).setValue(record.CancelRemark);
+      }
       break;
     }
   }
@@ -390,10 +494,16 @@ function updateDashboardSheet(ss) {
     const sName = sheets[i].getName();
     if (sName.indexOf("Data Resi J&T") === 0 || sName.indexOf("Data Resi") === 0) {
       const lastRow = sheets[i].getLastRow();
+      const lastCol = sheets[i].getLastColumn();
       if (lastRow > 1) {
-        const data = sheets[i].getRange(2, 1, lastRow - 1, 9).getValues();
+        const colsToRead = Math.min(9, lastCol);
+        const data = sheets[i].getRange(2, 1, lastRow - 1, colsToRead).getValues();
         for (let j = 0; j < data.length; j++) {
-          const row = data[j];
+          const rawRow = data[j];
+          const row = [];
+          for (let colIdx = 0; colIdx < 9; colIdx++) {
+            row.push(colIdx < rawRow.length ? rawRow[colIdx] : "");
+          }
           const outlet = row[4] ? row[4].toString().trim() : "";
           const seller = row[5] ? row[5].toString().trim() : "";
           const status = row[7] ? row[7].toString().trim() : "";
@@ -491,15 +601,15 @@ function setupSheetHeaders() {
   const setupTargets = [
     { 
       name: "Data Resi J&T Pasir Jaha Balaraja", 
-      headers: ["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"] 
+      headers: RESI_HEADERS 
     },
     { 
       name: "Data Resi J&T Jayanti", 
-      headers: ["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"] 
+      headers: RESI_HEADERS 
     },
     { 
       name: "Data Resi J&T Cikupa Mas", 
-      headers: ["ID", "Tanggal", "Jam", "Resi", "Outlet", "Seller", "Operator", "Status", "PhotoURL"] 
+      headers: RESI_HEADERS 
     },
     { 
       name: "Seller List", 
@@ -547,7 +657,27 @@ function setupSheetHeaders() {
       
       resultMsg += "✓ " + target.name + " (Berhasil di-setup dengan Header & Template)\\n";
     } else {
-      resultMsg += "• " + target.name + " (Sudah berisi data - Dilewati)\\n";
+      // Sheet sudah ada dan berisi data -> Lakukan Migrasi Kolom/Header Baru
+      const existingHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => h.toString().trim());
+      const missingHeaders = [];
+      
+      for (let hIdx = 0; hIdx < target.headers.length; hIdx++) {
+        const hName = target.headers[hIdx];
+        // Jika header di index ini tidak cocok dengan existingHeaders, atau existingHeaders lebih pendek
+        if (hIdx >= existingHeaders.length || existingHeaders[hIdx] !== hName) {
+          missingHeaders.push(hName);
+        }
+      }
+      
+      if (missingHeaders.length > 0) {
+        const startCol = existingHeaders.length + 1;
+        sheet.getRange(1, startCol, 1, missingHeaders.length).setValues([missingHeaders])
+          .setFontWeight("bold")
+          .setBackground("#f1f5f9");
+        resultMsg += "✓ " + target.name + " (Berhasil di-migrasi: Ditambahkan " + missingHeaders.length + " kolom baru)\\n";
+      } else {
+        resultMsg += "• " + target.name + " (Sudah up-to-date - Dilewati)\\n";
+      }
     }
   }
   
@@ -558,7 +688,7 @@ function setupSheetHeaders() {
   } catch (dashE) {}
 
   try {
-    SpreadsheetApp.getUi().alert("Inisialisasi Selesai!\\n\\n" + resultMsg + "\\nLangkah ini aman dijalankan dan hanya menulis header bila sheet masih kosong.");
+    SpreadsheetApp.getUi().alert("Inisialisasi Selesai!\\n\\n" + resultMsg + "\\nLangkah ini aman dijalankan dan hanya menulis header bila sheet masih kosong atau menambahkan kolom baru yang kurang.");
   } catch (e) {
     Logger.log("Setup Selesai: " + resultMsg);
   }

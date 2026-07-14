@@ -76,9 +76,16 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [selectedReviewSeller, setSelectedReviewSeller] = useState<string | null>(null);
   const [detailRecordIndex, setDetailRecordIndex] = useState<number | null>(null);
-  const [completedSellers, setCompletedSellers] = useState<string[]>(() => {
+  const [completedRecordIds, setCompletedRecordIds] = useState<string[]>(() => {
     try {
-      const stored = localStorage.getItem("jt_completed_pickup_sellers");
+      const todayStr = getTodayLocalDateString();
+      const savedDate = localStorage.getItem("jt_review_completed_date");
+      if (savedDate !== todayStr) {
+        localStorage.removeItem("jt_completed_review_records");
+        localStorage.setItem("jt_review_completed_date", todayStr);
+        return [];
+      }
+      const stored = localStorage.getItem("jt_completed_review_records");
       return stored ? JSON.parse(stored) : [];
     } catch (e) {
       return [];
@@ -1623,6 +1630,19 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const ownerEndIndex = Math.min(ownerStartIndex + ownerPageSize, totalOwnerRecords);
   const ownerPaginatedRecords = filteredRecords.slice(ownerStartIndex, ownerEndIndex);
 
+  // Cancel tracking lists
+  const cancelledRecords = React.useMemo(() => {
+    return allRecords.filter(r => r.CancelStatus === "CANCELLED" || r.Status === "CANCELLED");
+  }, [allRecords]);
+
+  const pendingCancelRecords = React.useMemo(() => {
+    return cancelledRecords.filter(r => r.AlertStatus !== "RESOLVED");
+  }, [cancelledRecords]);
+
+  const resolvedCancelRecords = React.useMemo(() => {
+    return cancelledRecords.filter(r => r.AlertStatus === "RESOLVED");
+  }, [cancelledRecords]);
+
   // Cancel order trigger function (marks status to CANCELLED)
   const handleMarkCancelled = async (targetResi: string) => {
     const result = await dbService.updateRecordStatus(targetResi, "CANCELLED");
@@ -1661,7 +1681,6 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       toast.error("Data YoYi tidak boleh kosong!");
       return;
     }
-
     setIsImporting(true);
     try {
       const lines = yoyiInput.trim().split('\n');
@@ -1669,60 +1688,41 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         toast.error("Format tidak valid: Harus ada header dan minimal 1 data.");
         return;
       }
-
       const headers = lines[0].split('\t').map(h => h.trim().toLowerCase());
       const idxResi = headers.findIndex(h => h === "nomor resi");
       const idxStatusPaket = headers.findIndex(h => h === "status paket");
       const idxStatusWaybill = headers.findIndex(h => h === "status waybill");
-
-      if (idxResi === -1 || idxStatusPaket === -1 || idxStatusWaybill === -1) {
-        toast.error("Header tidak valid! Pastikan ada kolom 'Nomor Resi', 'Status Paket', dan 'Status Waybill'.");
+      const idxWaktu = headers.findIndex(h => h === "waktu serah terima");
+      if (idxResi === -1 || idxStatusPaket === -1 || idxStatusWaybill === -1 || idxWaktu === -1) {
+        toast.error("Header tidak valid! Pastikan ada kolom 'Nomor Resi', 'Status Paket', 'Status Waybill', dan 'Waktu Serah Terima'.");
         return;
       }
-
       let successCount = 0;
       let failedCount = 0;
-
+      let totalPasted = lines.length - 1;
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split('\t').map(c => c.trim());
-        if (cols.length < Math.max(idxResi, idxStatusPaket, idxStatusWaybill)) continue;
-
+        if (cols.length <= Math.max(idxResi, idxStatusPaket, idxStatusWaybill, idxWaktu)) continue;
         const resi = cols[idxResi];
-        const statusPaket = cols[idxStatusPaket].toLowerCase();
-        const statusWaybill = cols[idxStatusWaybill].toLowerCase();
-        
-        let targetStatus: import("../types").StatusType = "SCANNED";
-        
-        if (statusWaybill === "sudah pickup") {
-          targetStatus = "PICKUP";
-        } else if (statusPaket === "diserahkan") {
-          targetStatus = "DISERAHKAN";
-        } else if (statusPaket === "untuk diserahkan") {
-          targetStatus = "SCANNED";
-        } else {
-          // Unhandled status mapping, skip
-          failedCount++;
-          continue;
-        }
-
-        const res = await dbService.updateRecordStatus(resi, targetStatus);
-        if (res.success) {
+        const statusPaket = cols[idxStatusPaket];
+        const statusWaybill = cols[idxStatusWaybill];
+        const waktu = cols[idxWaktu];
+        const res = await dbService.updateYoYiData(resi, statusPaket, statusWaybill, waktu);
+        if (res) {
           successCount++;
         } else {
           failedCount++;
         }
       }
-
       const now = new Date();
       dbService.addImportLog({
         timestamp: now.getTime(),
         dateStr: now.toLocaleString('id-ID'),
-        importedBy: "Owner", // Could be from logged in user if auth exists
+        importedBy: "Owner",
         successCount,
         failedCount
       });
-
-      toast.success(`Import selesai! Berhasil: ${successCount}, Gagal/Skip: ${failedCount}`);
+      toast.success(`Import selesai! Total Pasted: ${totalPasted}, Matched/Updated: ${successCount}, Not Found: ${failedCount}`);
       setYoyiInput("");
       loadData();
       onStatusChanged();
@@ -1783,8 +1783,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const deckEligibleRecords = React.useMemo(() => {
     const todayStr = getTodayLocalDateString();
     return filteredRecords.filter(r => {
-      // Must NOT display: sellers already marked "Selesai Scan"
-      if (completedSellers.includes(r.Seller)) return false;
+      // Must NOT display: records already marked "Selesai Scan"
+      if (completedRecordIds.includes(r.ID)) return false;
 
       const requiresAction = r.RetakeStatus === "PENDING" || r.alertStatus === "PENDING";
       const isCompleted = r.Status === "DISERAHKAN" || r.Status === "PICKUP" || r.Status === "CANCELLED";
@@ -1802,7 +1802,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       // Show: seller scanned today, packages that still require Sprinter processing (SCANNED)
       return true;
     });
-  }, [filteredRecords, completedSellers]);
+  }, [filteredRecords, completedRecordIds]);
 
   // Get records specifically for the currently selected review seller
   const reviewDeckRecords = React.useMemo(() => {
@@ -1833,19 +1833,23 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     return Object.values(map).sort((a, b) => b.lastScanTime.localeCompare(a.lastScanTime));
   }, [deckEligibleRecords]);
 
-  // Toggle seller completed scan pickup
-  const toggleSellerPickupCompleted = (sellerName: string) => {
-    const isCompleted = completedSellers.includes(sellerName);
-    let newList: string[];
-    if (isCompleted) {
-      newList = completedSellers.filter(s => s !== sellerName);
-      toast.success(`Seller ${sellerName} ditandai Belum Scan Pickup`);
-    } else {
-      newList = [...completedSellers, sellerName];
-      toast.success(`Seller ${sellerName} ditandai Selesai Scan Pickup!`);
+  // Mark seller's current eligible records as completed
+  const completeSellerRecords = (sellerName: string) => {
+    const sellerRecordsInDeck = deckEligibleRecords.filter(r => r.Seller === sellerName);
+    if (sellerRecordsInDeck.length === 0) return;
+
+    const newIds = sellerRecordsInDeck.map(r => r.ID);
+    const newList = Array.from(new Set([...completedRecordIds, ...newIds]));
+    
+    setCompletedRecordIds(newList);
+    localStorage.setItem("jt_completed_review_records", JSON.stringify(newList));
+    dbService.completeReviews(newIds);
+    toast.success(`${newIds.length} resi dari ${sellerName} ditandai Selesai!`);
+
+    if (selectedReviewSeller === sellerName) {
+      setSelectedReviewSeller(null);
+      setReviewIndex(0);
     }
-    setCompletedSellers(newList);
-    localStorage.setItem("jt_completed_pickup_sellers", JSON.stringify(newList));
   };
 
   // Render Gate passcode if not authenticated
@@ -1935,16 +1939,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
             {selectedReviewSeller && (
               <button
-                onClick={() => toggleSellerPickupCompleted(selectedReviewSeller)}
+                onClick={() => completeSellerRecords(selectedReviewSeller)}
                 type="button"
-                className={`font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer ${
-                  completedSellers.includes(selectedReviewSeller)
-                    ? "bg-emerald-950 text-emerald-400 border-emerald-900"
-                    : "bg-green-600 hover:bg-green-700 text-white border-none"
-                }`}
+                className="font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer bg-green-600 hover:bg-green-700 text-white border-none"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>{completedSellers.includes(selectedReviewSeller) ? "✓ Selesai Pickup" : "Selesai Scan Pickup"}</span>
+                <span>Selesai Scan Pickup</span>
               </button>
             )}
             <button
@@ -1969,27 +1969,18 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 </div>
               ) : (
                 sellersInFilteredSet.map((s) => {
-                  const isCompleted = completedSellers.includes(s.name);
                   return (
                     <div 
                       key={s.name}
-                      className={`border rounded-2xl p-6 transition-all flex flex-col justify-between hover:border-slate-700 ${
-                        isCompleted 
-                          ? "bg-slate-900/40 border-emerald-900/50 hover:bg-slate-900/60" 
-                          : "bg-slate-900 border-slate-850 hover:bg-slate-850/50"
-                      }`}
+                      className="border rounded-2xl p-6 transition-all flex flex-col justify-between hover:border-slate-700 bg-slate-900 border-slate-850 hover:bg-slate-850/50"
                     >
                       <div>
                         <div className="flex items-start justify-between">
                           <span className="font-extrabold text-white text-base truncate max-w-[180px]" title={s.name}>
                             {s.name}
                           </span>
-                          <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                            isCompleted 
-                              ? "bg-emerald-950 text-emerald-400 font-bold border border-emerald-900/40" 
-                              : "bg-slate-800 text-slate-400 font-medium"
-                          }`}>
-                            {isCompleted ? "✓ Selesai" : "Belum Scan"}
+                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider bg-slate-800 text-slate-400 font-medium">
+                            Belum Scan
                           </span>
                         </div>
                         
@@ -2013,16 +2004,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
                       <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between gap-3">
                         <button
-                          onClick={() => toggleSellerPickupCompleted(s.name)}
+                          onClick={() => completeSellerRecords(s.name)}
                           type="button"
-                          className={`px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center space-x-1.5 border cursor-pointer ${
-                            isCompleted
-                              ? "bg-emerald-950/40 hover:bg-emerald-950/80 border-emerald-900 text-emerald-400"
-                              : "bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-300"
-                          }`}
+                          className="px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center space-x-1.5 border cursor-pointer bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-300"
                         >
                           <Check className="h-4 w-4" />
-                          <span>{isCompleted ? "Ubah Belum" : "Selesai Scan"}</span>
+                          <span>Selesai Scan</span>
                         </button>
 
                         <button
@@ -2348,62 +2335,157 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       {activeTab === "RECAP" && (
         <div className="space-y-6">
           {/* Counters layout metrics */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">TOTAL SELURUH SCAN</span>
-          <div className="flex items-baseline space-x-2 mt-1">
-            <span className="text-3xl font-black text-slate-800 font-mono">{allRecords.length}</span>
-            <span className="text-xs text-red-600 font-bold">paket</span>
-          </div>
-          <span className="text-[10px] text-slate-400 block mt-1">lintas seluruh outlet J&T</span>
-        </div>
+          {(() => {
+            const activeSummaryRecords = getFilteredSummaryRecords();
+            const kpiOperatorScan = activeSummaryRecords.filter(r => r.PackageStatus === "NONE" || !r.PackageStatus).length;
+            const kpiUploadedToYoYi = activeSummaryRecords.filter(r => r.PackageStatus === "Untuk Diserahkan").length;
+            const kpiDiserahkan = activeSummaryRecords.filter(r => r.PackageStatus === "Diserahkan").length;
+            const kpiSudahPickup = activeSummaryRecords.filter(r => r.WaybillStatus === "Sudah Pickup").length;
+            const kpiCancelled = activeSummaryRecords.filter(r => r.CancelStatus === "CANCELLED").length;
+            const kpiRetake = activeSummaryRecords.filter(r => r.RetakeStatus === "PENDING").length;
+            const kpiAlert = activeSummaryRecords.filter(r => r.AlertStatus === "PENDING").length;
+            const kpiReviewPending = activeSummaryRecords.filter(r => r.ReviewStatus === "PENDING").length;
+            const kpiReviewCompleted = activeSummaryRecords.filter(r => r.ReviewStatus === "COMPLETED").length;
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">PAKET SCANNED EXITO</span>
-          <div className="flex items-baseline space-x-2 mt-1">
-            <span className="text-3xl font-black text-green-600 font-mono">{statsTotalScanned}</span>
-            <span className="text-xs text-slate-500 font-medium">verified</span>
-          </div>
-          <span className="text-[10px] text-slate-400 block mt-1">siap dipickup Sprinter</span>
-        </div>
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                {/* 1. Operator Scan */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">OPERATOR SCAN</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-slate-800 font-mono">{kpiOperatorScan}</span>
+                      <span className="text-xs text-slate-500 font-bold">paket</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-slate-400 block mt-2 border-t border-slate-100 pt-1.5 font-medium">PackageStatus: NONE</span>
+                </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">ORDER CANCELLED</span>
-          <div className="flex items-baseline space-x-2 mt-1">
-            <span className="text-3xl font-black text-red-650 font-mono" style={{ color: "#ff0000" }}>{statsTotalCancelled}</span>
-            <span className="text-xs text-slate-500 font-medium">ditolak</span>
-          </div>
-          <span className="text-[10px] text-red-600 font-bold block mt-1">harus dikembalikan ke seller</span>
-        </div>
+                {/* 2. Uploaded to YoYi */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">UPLOADED TO YOYI</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-blue-600 font-mono">{kpiUploadedToYoYi}</span>
+                      <span className="text-xs text-slate-500 font-bold">paket</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-blue-500 block mt-2 border-t border-blue-50 pt-1.5 font-semibold">Untuk Diserahkan</span>
+                </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">KONTROL REKAP DATA</span>
-          <div className="flex gap-2 mt-2 w-full">
-            <button
-              onClick={handleExportCSV}
-              className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1 border border-slate-900 cursor-pointer shadow-sm"
-              title="Unduh seluruh riwayat scan sebagai file CSV"
-            >
-              <Download className="h-3.5 w-3.5 text-blue-200" />
-              <span>EXPORT CSV</span>
-            </button>
-            <button
-              onClick={handleClearAllLocalResi}
-              className={`flex-1 py-2 px-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1 border cursor-pointer shadow-sm ${
-                showCleanConfirm 
-                  ? "bg-red-600 hover:bg-red-750 text-white border-red-700 animate-pulse font-black" 
-                  : "bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
-              }`}
-              title="Kosongkan seluruh database resi / hilangkan data contoh"
-            >
-              <Ban className={`h-3.5 w-3.5 ${showCleanConfirm ? "text-white animate-spin" : "text-red-500"}`} />
-              <span>{showCleanConfirm ? "KLIK LAGI: HAPUS?" : "BERSIHKAN"}</span>
-            </button>
-          </div>
-        </div>
+                {/* 3. Diserahkan */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">DISERAHKAN</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-indigo-600 font-mono">{kpiDiserahkan}</span>
+                      <span className="text-xs text-slate-500 font-bold">paket</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-indigo-500 block mt-2 border-t border-indigo-50 pt-1.5 font-semibold">Diserahkan</span>
+                </div>
 
-      </div>
+                {/* 4. Sudah Pickup */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">SUDAH PICKUP</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-emerald-600 font-mono">{kpiSudahPickup}</span>
+                      <span className="text-xs text-slate-500 font-bold">paket</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-emerald-600 block mt-2 border-t border-emerald-50 pt-1.5 font-semibold">Sudah Pickup</span>
+                </div>
+
+                {/* 5. Cancelled */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">CANCELLED</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-red-650 font-mono" style={{ color: "#ff0000" }}>{kpiCancelled}</span>
+                      <span className="text-xs text-slate-500 font-bold">paket</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-red-500 block mt-2 border-t border-red-50 pt-1.5 font-semibold">CancelStatus: CANCELLED</span>
+                </div>
+
+                {/* 6. Retake */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">RETAKE PENDING</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-amber-600 font-mono">{kpiRetake}</span>
+                      <span className="text-xs text-slate-500 font-bold">foto</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-amber-600 block mt-2 border-t border-amber-50 pt-1.5 font-semibold">RetakeStatus: PENDING</span>
+                </div>
+
+                {/* 7. Alert */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">ALERT PENDING</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-orange-600 font-mono">{kpiAlert}</span>
+                      <span className="text-xs text-slate-500 font-bold">notifikasi</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-orange-500 block mt-2 border-t border-orange-50 pt-1.5 font-semibold">AlertStatus: PENDING</span>
+                </div>
+
+                {/* 8. Review Pending */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">REVIEW PENDING</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-yellow-600 font-mono">{kpiReviewPending}</span>
+                      <span className="text-xs text-slate-500 font-bold">resi</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-yellow-600 block mt-2 border-t border-yellow-50 pt-1.5 font-semibold">ReviewStatus: PENDING</span>
+                </div>
+
+                {/* 9. Review Completed */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">REVIEW COMPLETED</span>
+                    <div className="flex items-baseline space-x-2 mt-1">
+                      <span className="text-3xl font-black text-teal-600 font-mono">{kpiReviewCompleted}</span>
+                      <span className="text-xs text-slate-500 font-bold">resi</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-teal-600 block mt-2 border-t border-teal-50 pt-1.5 font-semibold">ReviewStatus: COMPLETED</span>
+                </div>
+
+                {/* 10. Kontrol Rekap Data */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">KONTROL REKAP DATA</span>
+                  <div className="flex gap-2 mt-2 w-full">
+                    <button
+                      onClick={handleExportCSV}
+                      className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-2 px-2 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center space-x-1 border border-slate-900 cursor-pointer shadow-sm"
+                      title="Unduh seluruh riwayat scan sebagai file CSV"
+                    >
+                      <Download className="h-3.5 w-3.5 text-blue-200" />
+                      <span>EXPORT CSV</span>
+                    </button>
+                    <button
+                      onClick={handleClearAllLocalResi}
+                      className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center space-x-1 border cursor-pointer shadow-sm ${
+                        showCleanConfirm 
+                          ? "bg-red-600 hover:bg-red-750 text-white border-red-700 animate-pulse font-black" 
+                          : "bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
+                      }`}
+                      title="Kosongkan seluruh database resi / hilangkan data contoh"
+                    >
+                      <Ban className={`h-3.5 w-3.5 ${showCleanConfirm ? "text-white animate-spin" : "text-red-500"}`} />
+                      <span>{showCleanConfirm ? "HAPUS?" : "BERSIHKAN"}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Grafik Statistik Harian Terintegrasi (Recharts) */}
           {(() => {
@@ -2878,16 +2960,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <div className="flex items-center space-x-2 self-start sm:self-center">
             {selectedReviewSeller && (
               <button
-                onClick={() => toggleSellerPickupCompleted(selectedReviewSeller)}
+                onClick={() => completeSellerRecords(selectedReviewSeller)}
                 type="button"
-                className={`font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer ${
-                  completedSellers.includes(selectedReviewSeller)
-                    ? "bg-green-100 text-green-700 border-green-200"
-                    : "bg-green-600 hover:bg-green-700 text-white border-none"
-                }`}
+                className="font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer bg-green-600 hover:bg-green-700 text-white border-none"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>{completedSellers.includes(selectedReviewSeller) ? "Selesai Scan" : "Selesai Scan Pickup"}</span>
+                <span>Selesai Scan Pickup</span>
               </button>
             )}
 
@@ -2919,27 +2997,18 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               </div>
             ) : (
               sellersInFilteredSet.map((s) => {
-                const isCompleted = completedSellers.includes(s.name);
                 return (
                   <div 
                     key={s.name}
-                    className={`border rounded-2xl p-4 transition-all flex flex-col justify-between hover:shadow-md ${
-                      isCompleted 
-                        ? "bg-green-50/40 border-green-200/60" 
-                        : "bg-white border-slate-200/80 hover:border-red-200"
-                    }`}
+                    className="border rounded-2xl p-4 transition-all flex flex-col justify-between hover:shadow-md bg-white border-slate-200/80 hover:border-red-200"
                   >
                     <div>
                       <div className="flex items-start justify-between">
                         <span className="font-extrabold text-slate-800 text-sm md:text-base truncate max-w-[170px]" title={s.name}>
                           {s.name}
                         </span>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                          isCompleted 
-                            ? "bg-green-100 text-green-700 font-bold border border-green-200" 
-                            : "bg-slate-100 text-slate-500 font-medium"
-                        }`}>
-                          {isCompleted ? "✓ Selesai" : "Belum Scan"}
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-slate-100 text-slate-500 font-medium">
+                          Belum Scan
                         </span>
                       </div>
                       
@@ -2963,13 +3032,13 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
                     <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                       <button
-                        onClick={() => toggleSellerPickupCompleted(s.name)}
+                        onClick={() => completeSellerRecords(s.name)}
                         type="button"
                         className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center space-x-1 border border-transparent cursor-pointer text-white hover:opacity-90"
                         style={{ backgroundColor: "#ff0000" }}
                       >
                         <Check className="h-3.5 w-3.5" />
-                        <span>{isCompleted ? "Ubah Belum" : "Selesai Scan"}</span>
+                        <span>Selesai Scan</span>
                       </button>
 
                       <button
@@ -3148,6 +3217,109 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           </div>
         )}
 
+      </div>
+
+      {/* MANAJEMEN ALUR PEMBATALAN (CANCEL WORKFLOW) */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
+        <div>
+          <h3 className="font-bold text-sm text-slate-800 flex items-center uppercase">
+            <Ban className="h-4 w-4 text-red-650 mr-2" />
+            MANAJEMEN PAKET BATAL (CANCEL WORKFLOW)
+          </h3>
+          <p className="text-[10px] text-slate-500">
+            Daftar order yang dibatalkan pembeli sebelum Sprinter J&T melakukan pickup. Operator harus memisahkan fisik paket dan mengunggah bukti foto.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Column 1: Pending Separations */}
+          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col h-[300px]">
+            <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+              <span className="text-xs font-black tracking-wide text-red-700 uppercase flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-red-600 animate-ping" />
+                MENUNGGU PEMISAHAN ({pendingCancelRecords.length})
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase">Pending</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {pendingCancelRecords.length === 0 ? (
+                <div className="text-center py-16 text-slate-400 text-xs font-semibold">
+                  Tidak ada paket batal yang perlu dipisahkan.
+                </div>
+              ) : (
+                pendingCancelRecords.map(r => (
+                  <div key={r.Resi} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                    <div className="text-xs space-y-1">
+                      <span className="font-mono font-bold text-slate-800 block tracking-wider">{r.Resi}</span>
+                      <div className="text-[10px] text-slate-500 font-medium">
+                        Seller: {r.Seller} • Operator: {r.Operator}
+                      </div>
+                    </div>
+                    <span className="bg-red-50 text-red-600 border border-red-100 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                      Pending
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Column 2: Resolved Separations */}
+          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col h-[300px]">
+            <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+              <span className="text-xs font-black tracking-wide text-emerald-700 uppercase flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                BERHASIL DIPISAHKAN ({resolvedCancelRecords.length})
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase">Resolved</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {resolvedCancelRecords.length === 0 ? (
+                <div className="text-center py-16 text-slate-400 text-xs font-semibold">
+                  Belum ada paket batal yang berhasil dipisahkan hari ini.
+                </div>
+              ) : (
+                resolvedCancelRecords.map(r => (
+                  <div key={r.Resi} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                    <div className="text-xs space-y-1 min-w-0 flex-1 pr-2">
+                      <span className="font-mono font-bold text-slate-800 block tracking-wider">{r.Resi}</span>
+                      <div className="text-[10px] text-slate-500 font-medium truncate">
+                        Seller: {r.Seller} • Pemisah: {r.CancelHandledBy || r.Operator}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium truncate italic">
+                        Catatan: "{r.CancelRemark || "-"}"
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2 shrink-0">
+                      {r.CancelEvidencePhoto && (
+                        <button
+                          onClick={() => {
+                            const idx = filteredRecords.findIndex(item => item.ID === r.ID);
+                            if (idx !== -1) setDetailRecordIndex(idx);
+                          }}
+                          className="h-10 w-10 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer"
+                          title="Lihat Bukti Foto Pemisahan"
+                        >
+                          <img
+                            src={getDirectDriveImageUrl(r.CancelEvidencePhoto)}
+                            alt="Bukti"
+                            className="h-full w-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        </button>
+                      )}
+                      <span className="bg-green-50 text-green-700 border border-green-100 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        Selesai
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Main filter query and full records directory catalog */}
@@ -3538,38 +3710,57 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   {/* Content (Scrollable) */}
                   <div className="p-5 overflow-y-auto flex-1 space-y-5">
                     {/* Image Slider Stage */}
-                    <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 flex items-center justify-center group">
-                      <img 
-                        src={getDirectDriveImageUrl(r.PhotoURL)} 
-                        alt={`Foto Resi ${r.Resi}`}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-contain"
-                      />
-                      
-                      {/* Left Slide Button */}
-                      <button
-                        onClick={handlePrev}
-                        type="button"
-                        className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center"
-                        title="Sebelumnya"
-                      >
-                        <ChevronLeft className="h-5 w-5" />
-                      </button>
-                      
-                      {/* Right Slide Button */}
-                      <button
-                        onClick={handleNext}
-                        type="button"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center"
-                        title="Selanjutnya"
-                      >
-                        <ChevronRight className="h-5 w-5" />
-                      </button>
+                    <div className="space-y-4">
+                      <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 flex items-center justify-center group">
+                        <img 
+                          src={getDirectDriveImageUrl(r.PhotoURL)} 
+                          alt={`Foto Resi ${r.Resi}`}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-contain"
+                        />
+                        <div className="absolute top-2 left-2 bg-slate-900/80 text-white font-mono text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                          Foto Scan Awal
+                        </div>
+                        
+                        {/* Left Slide Button */}
+                        <button
+                          onClick={handlePrev}
+                          type="button"
+                          className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center"
+                          title="Sebelumnya"
+                        >
+                          <ChevronLeft className="h-5 w-5" />
+                        </button>
+                        
+                        {/* Right Slide Button */}
+                        <button
+                          onClick={handleNext}
+                          type="button"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-white text-slate-800 p-2 rounded-full shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center"
+                          title="Selanjutnya"
+                        >
+                          <ChevronRight className="h-5 w-5" />
+                        </button>
 
-                      {/* Slider Position Counter Badge */}
-                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-900/70 text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full backdrop-blur-sm">
-                        {detailRecordIndex + 1} / {filteredRecords.length}
+                        {/* Slider Position Counter Badge */}
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-900/70 text-white font-mono text-[10px] font-bold px-3 py-1 rounded-full backdrop-blur-sm">
+                          {detailRecordIndex + 1} / {filteredRecords.length}
+                        </div>
                       </div>
+
+                      {r.CancelEvidencePhoto && (
+                        <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-100 bg-slate-50 flex items-center justify-center">
+                          <img 
+                            src={getDirectDriveImageUrl(r.CancelEvidencePhoto)} 
+                            alt={`Foto Bukti Pemisahan ${r.Resi}`}
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-contain"
+                          />
+                          <div className="absolute top-2 left-2 bg-green-700 text-white font-mono text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                            Bukti Pemisahan (Evidence)
+                          </div>
+                        </div>
+                      )}
                     </div>
                     
                     {/* Detail Info Section */}
@@ -3621,6 +3812,38 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                             {r.Status}
                           </span>
                         </div>
+
+                        {r.CancelStatus === "CANCELLED" && (
+                          <>
+                            <div className="col-span-2 border-t border-slate-200 pt-2 mt-1">
+                              <span className="text-red-650 font-bold uppercase tracking-wider text-[10px]">Alur Pemisahan Paket Batal</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block font-medium">Status Alur</span>
+                              <span className={`inline-block font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 mt-0.5 rounded ${
+                                r.AlertStatus === "RESOLVED" ? "bg-green-100 text-green-700 border border-green-200" : "bg-red-100 text-red-700 border border-red-200 animate-pulse"
+                              }`}>
+                                {r.AlertStatus || "PENDING"}
+                              </span>
+                            </div>
+                            {r.AlertStatus === "RESOLVED" && (
+                              <>
+                                <div>
+                                  <span className="text-slate-400 block font-medium">Operator Pemisah</span>
+                                  <span className="font-bold text-slate-700">{r.CancelHandledBy || r.Operator}</span>
+                                </div>
+                                <div className="col-span-2">
+                                  <span className="text-slate-400 block font-medium">Waktu Dipisahkan</span>
+                                  <span className="font-semibold text-slate-700 font-mono text-[11px]">{r.CancelHandledAt ? new Date(r.CancelHandledAt).toLocaleString() : "-"}</span>
+                                </div>
+                                <div className="col-span-2">
+                                  <span className="text-slate-400 block font-medium">Catatan Pemisahan</span>
+                                  <span className="font-semibold text-slate-700 italic">"{r.CancelRemark || "(Tidak ada catatan)"}"</span>
+                                </div>
+                              </>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
