@@ -1100,7 +1100,7 @@ export class DatabaseService {
         
         // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
         try {
-          const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_masters`;
+          const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_masters&_t=${Date.now()}`;
           const response = await fetch(getUrl, {
             method: "GET",
             mode: "cors"
@@ -1169,7 +1169,7 @@ export class DatabaseService {
         
         // Try GET first as it avoids CORS preflight issues on production deployments (like Vercel)
         try {
-          const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_records`;
+          const getUrl = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_records&_t=${Date.now()}`;
           const response = await fetch(getUrl, {
             method: "GET",
             mode: "cors"

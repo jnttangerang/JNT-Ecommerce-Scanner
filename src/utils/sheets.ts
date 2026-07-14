@@ -89,7 +89,7 @@ export async function directSyncRecords(
       for (const r of sheetRecords) {
         const resi = r.Resi.toUpperCase();
         if (existingResis.has(resi)) {
-          // Update status
+          // Update status and photo
           const rowIndex = existingResis.get(resi)!; // 0-based
           updateRequests.push({
             updateCells: {
@@ -98,9 +98,14 @@ export async function directSyncRecords(
                 startRowIndex: rowIndex,
                 endRowIndex: rowIndex + 1,
                 startColumnIndex: 7, // H column is 7 (0-based)
-                endColumnIndex: 8
+                endColumnIndex: 9  // I column is 8 (0-based), end index is exclusive
               },
-              rows: [{ values: [{ userEnteredValue: { stringValue: r.Status } }] }],
+              rows: [{
+                values: [
+                  { userEnteredValue: { stringValue: r.Status } },
+                  { userEnteredValue: { stringValue: r.PhotoURL || "" } }
+                ]
+              }],
               fields: "userEnteredValue"
             }
           });

@@ -1779,21 +1779,46 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const uniqueOutlets = Array.from(new Set(allRecords.map(r => r.Outlet)));
   const uniqueSellers = Array.from(new Set(allRecords.map(r => r.Seller)));
 
+  // Business logic: Filter records specifically for the Review Deck
+  const deckEligibleRecords = React.useMemo(() => {
+    const todayStr = getTodayLocalDateString();
+    return filteredRecords.filter(r => {
+      // Must NOT display: sellers already marked "Selesai Scan"
+      if (completedSellers.includes(r.Seller)) return false;
+
+      const requiresAction = r.RetakeStatus === "PENDING" || r.alertStatus === "PENDING";
+      const isCompleted = r.Status === "DISERAHKAN" || r.Status === "PICKUP" || r.Status === "CANCELLED";
+      
+      // Show: packages requiring owner action
+      if (requiresAction) return true;
+
+      // Must NOT display: already processed Sprinter records (unless it requires action)
+      if (isCompleted) return false;
+
+      // Must NOT display: yesterday's completed work / historical records
+      const isToday = r.Tanggal === todayStr;
+      if (!isToday) return false;
+
+      // Show: seller scanned today, packages that still require Sprinter processing (SCANNED)
+      return true;
+    });
+  }, [filteredRecords, completedSellers]);
+
   // Get records specifically for the currently selected review seller
   const reviewDeckRecords = React.useMemo(() => {
     if (!selectedReviewSeller) return [];
-    return filteredRecords.filter(r => r.Seller === selectedReviewSeller);
-  }, [filteredRecords, selectedReviewSeller]);
+    return deckEligibleRecords.filter(r => r.Seller === selectedReviewSeller);
+  }, [deckEligibleRecords, selectedReviewSeller]);
 
   // Retrieve current active record for Review Deck
   const activeReviewRecord = selectedReviewSeller
     ? (reviewDeckRecords[reviewIndex] || null)
     : null;
 
-  // Get unique list of sellers present in filteredRecords with stats
+  // Get unique list of sellers present in deckEligibleRecords with stats
   const sellersInFilteredSet = React.useMemo(() => {
     const map: Record<string, { name: string; total: number; cancelled: number; lastScanTime: string }> = {};
-    filteredRecords.forEach(r => {
+    deckEligibleRecords.forEach(r => {
       if (!map[r.Seller]) {
         map[r.Seller] = { name: r.Seller, total: 0, cancelled: 0, lastScanTime: r.Jam };
       }
@@ -1806,7 +1831,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       }
     });
     return Object.values(map).sort((a, b) => b.lastScanTime.localeCompare(a.lastScanTime));
-  }, [filteredRecords]);
+  }, [deckEligibleRecords]);
 
   // Toggle seller completed scan pickup
   const toggleSellerPickupCompleted = (sellerName: string) => {
