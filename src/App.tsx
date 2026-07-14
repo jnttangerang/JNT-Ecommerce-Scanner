@@ -440,8 +440,34 @@ export default function App() {
               </button>
               <button
                 onClick={() => {
+                  // Save crucial configurations and customized master data before clearing cache
+                  const prefixes = localStorage.getItem("jt_resi_prefixes");
+                  const password = localStorage.getItem("jt_owner_password");
+                  const cloudConfig = localStorage.getItem("jt_pickup_cloud_config");
+                  const auth = localStorage.getItem("jt_owner_authenticated");
+                  const outlets = localStorage.getItem("jt_pickup_outlets");
+                  const operators = localStorage.getItem("jt_pickup_operators");
+                  const savedOutlet = localStorage.getItem("jt_saved_outlet");
+                  const savedOperator = localStorage.getItem("jt_saved_operator");
+                  const dailyTarget = localStorage.getItem("jt_pickup_daily_target");
+                  const offlineMode = localStorage.getItem("jt_pickup_offline_mode");
+
+                  // Clear transaction cache
                   dbService.clearAllRecords();
                   localStorage.clear();
+
+                  // Restore crucial configurations and customized master data
+                  if (prefixes) localStorage.setItem("jt_resi_prefixes", prefixes);
+                  if (password) localStorage.setItem("jt_owner_password", password);
+                  if (cloudConfig) localStorage.setItem("jt_pickup_cloud_config", cloudConfig);
+                  if (auth) localStorage.setItem("jt_owner_authenticated", auth);
+                  if (outlets) localStorage.setItem("jt_pickup_outlets", outlets);
+                  if (operators) localStorage.setItem("jt_pickup_operators", operators);
+                  if (savedOutlet) localStorage.setItem("jt_saved_outlet", savedOutlet);
+                  if (savedOperator) localStorage.setItem("jt_saved_operator", savedOperator);
+                  if (dailyTarget) localStorage.setItem("jt_pickup_daily_target", dailyTarget);
+                  if (offlineMode) localStorage.setItem("jt_pickup_offline_mode", offlineMode);
+
                   window.location.reload();
                 }}
                 className="bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.25)] active:scale-95 cursor-pointer uppercase"

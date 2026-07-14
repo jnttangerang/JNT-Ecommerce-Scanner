@@ -859,7 +859,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
     const validPrefixes = validPrefixesStr.split(",").map(p => p.trim()).filter(Boolean);
     const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "(JX|JZ)";
-    const regex = new RegExp(`^${prefixRegexPart}\\d{10}$`);
+    const regex = new RegExp(`^${prefixRegexPart}\\d{10,12}$`);
     const isValidFormat = regex.test(rawCode);
 
     if (!isValidFormat) {
