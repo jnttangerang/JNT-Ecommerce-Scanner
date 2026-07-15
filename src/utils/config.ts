@@ -1,5 +1,5 @@
 import { fetchWithAuth } from './sheets';
-import { db } from './db';
+
 
 // DATA_MASTER schema keys as constants
 export const CONFIG_KEYS = {
@@ -12,6 +12,7 @@ export const CONFIG_KEYS = {
   DAILY_TARGET: 'DAILY_TARGET',
   GOOGLE_SHEET_ID: 'GOOGLE_SHEET_ID',
   GOOGLE_DRIVE_FOLDER: 'GOOGLE_DRIVE_FOLDER',
+  APPS_SCRIPT_URL: 'APPS_SCRIPT_URL',
   OFFLINE_MODE: 'OFFLINE_MODE',
   AUTO_SYNC_INTERVAL: 'AUTO_SYNC_INTERVAL',
   CAMERA_QUALITY: 'CAMERA_QUALITY',
@@ -51,6 +52,7 @@ const DEFAULT_CONFIG: Record<string, string> = {
   [CONFIG_KEYS.DAILY_TARGET]: '150',
   [CONFIG_KEYS.GOOGLE_SHEET_ID]: '12ly2pM3Vof9IKTwjselkLUX6sMdcdI6rcb_KvbjcQ_Y',
   [CONFIG_KEYS.GOOGLE_DRIVE_FOLDER]: '19peJr4JWqKA6Ei4AwuXgohhF2C59ugyp',
+  [CONFIG_KEYS.APPS_SCRIPT_URL]: 'https://script.google.com/macros/s/AKfycbxHsd-wqkrjRxHvasCZ6_a-G0T36x5nZIXJ1fVn18C56TUU0lD3Hm45AHNNxdMIrxsw/exec',
   [CONFIG_KEYS.OFFLINE_MODE]: 'false',
   [CONFIG_KEYS.SAVED_OUTLET]: '',
   [CONFIG_KEYS.SAVED_SELLER]: '',
@@ -154,26 +156,60 @@ class ConfigurationService {
         return;
       }
 
-      // Try reading DATA_MASTER
-      const res = await fetchWithAuth(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/DATA_MASTER!A2:B`,
-        { method: 'GET' },
-        accessToken
-      );
+      let success = false;
+      let values: any[][] = [];
 
-      if (res.ok) {
-        const data = await res.json();
-        const values = data.values || [];
+      // Try reading DATA_MASTER via Sheets API if accessToken is available
+      if (accessToken) {
+        try {
+          const res = await fetchWithAuth(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/DATA_MASTER!A2:B`,
+            { method: 'GET' },
+            accessToken
+          );
+
+          if (res.ok) {
+            const data = await res.json();
+            values = data.values || [];
+            success = true;
+          } else if (res.status === 400) {
+            // Sheet might not exist, let's create it
+            await this.createDataMaster(spreadsheetId, accessToken);
+          }
+        } catch (apiErr) {
+          console.warn("Direct Sheets API sync failed, will try fallback", apiErr);
+        }
+      }
+
+      // Fallback: Try reading via Apps Script Web App
+      if (!success) {
+        const appsScriptUrl = this.get(CONFIG_KEYS.APPS_SCRIPT_URL);
+        if (appsScriptUrl && !appsScriptUrl.includes("Example_Apps_Script_Web_App") && !appsScriptUrl.includes("AKfycbz_Example")) {
+          try {
+            const getUrl = `${appsScriptUrl}${appsScriptUrl.includes("?") ? "&" : "?"}action=get_data_master&_t=${Date.now()}`;
+            const response = await fetch(getUrl, {
+              method: "GET",
+              mode: "cors"
+            });
+            const resJson = await response.json();
+            if (resJson && resJson.success) {
+              values = resJson.values || [];
+              success = true;
+            }
+          } catch (scriptErr) {
+            console.warn("Config sync via Apps Script failed:", scriptErr);
+          }
+        }
+      }
+
+      if (success && values.length > 0) {
         for (const row of values) {
           const key = row[0];
           const val = row[1];
           if (key && val !== undefined) {
-            this.set(key, val);
+            this.set(key, String(val));
           }
         }
-      } else if (res.status === 400 && accessToken) {
-        // Sheet might not exist, let's create it
-        await this.createDataMaster(spreadsheetId, accessToken);
       }
     } catch (e) {
       console.error("Failed to sync config:", e);
@@ -182,7 +218,7 @@ class ConfigurationService {
     }
   }
   
-  async saveToSheet(accessToken: string) {
+  async saveToSheet(accessToken?: string) {
     const spreadsheetId = this.get(CONFIG_KEYS.GOOGLE_SHEET_ID);
     if (!spreadsheetId) return;
 
@@ -197,6 +233,7 @@ class ConfigurationService {
       CONFIG_KEYS.DAILY_TARGET,
       CONFIG_KEYS.GOOGLE_SHEET_ID,
       CONFIG_KEYS.GOOGLE_DRIVE_FOLDER,
+      CONFIG_KEYS.APPS_SCRIPT_URL,
       CONFIG_KEYS.OFFLINE_MODE,
       CONFIG_KEYS.AUTO_SYNC_INTERVAL,
       CONFIG_KEYS.CAMERA_QUALITY,
@@ -216,20 +253,22 @@ class ConfigurationService {
 
     const values = masterKeys.map(k => [k, this.get(k), ""]);
 
-    try {
-      const res = await fetchWithAuth(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/DATA_MASTER!A2:C?valueInputOption=USER_ENTERED`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ values })
-        },
-        accessToken
-      );
-      
-      if (res.status === 400) {
-        await this.createDataMaster(spreadsheetId, accessToken);
-        await fetchWithAuth(
+    // If no accessToken is provided, try to dynamically fetch it
+    if (!accessToken) {
+      try {
+        const { getAccessToken } = await import("./auth");
+        accessToken = (await getAccessToken()) || undefined;
+      } catch (authErr) {
+        console.warn("Failed to get accessToken for config saving", authErr);
+      }
+    }
+
+    let success = false;
+
+    // Try direct Sheets API PUT if accessToken is available
+    if (accessToken) {
+      try {
+        const res = await fetchWithAuth(
           `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/DATA_MASTER!A2:C?valueInputOption=USER_ENTERED`,
           {
             method: 'PUT',
@@ -238,9 +277,52 @@ class ConfigurationService {
           },
           accessToken
         );
+        
+        if (res.ok) {
+          success = true;
+        } else if (res.status === 400) {
+          await this.createDataMaster(spreadsheetId, accessToken);
+          const retryRes = await fetchWithAuth(
+            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/DATA_MASTER!A2:C?valueInputOption=USER_ENTERED`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ values })
+            },
+            accessToken
+          );
+          if (retryRes.ok) success = true;
+        }
+      } catch (apiErr) {
+        console.warn("Failed to save config via Sheets API, trying fallback", apiErr);
       }
-    } catch (e) {
-      console.error("Failed to save config to sheet:", e);
+    }
+
+    // Fallback: Try saving via Apps Script Web App
+    if (!success) {
+      const appsScriptUrl = this.get(CONFIG_KEYS.APPS_SCRIPT_URL);
+      if (appsScriptUrl && !appsScriptUrl.includes("Example_Apps_Script_Web_App") && !appsScriptUrl.includes("AKfycbz_Example")) {
+        const keysValues = masterKeys.map(k => ({ key: k, value: this.get(k) }));
+        try {
+          const response = await fetch(appsScriptUrl, {
+            method: "POST",
+            mode: "cors",
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify({
+              action: "save_data_master",
+              keysValues
+            })
+          });
+          const resJson = await response.json();
+          if (resJson && resJson.success) {
+            success = true;
+          }
+        } catch (scriptErr) {
+          console.warn("Failed to save config via Apps Script:", scriptErr);
+        }
+      }
     }
   }
 

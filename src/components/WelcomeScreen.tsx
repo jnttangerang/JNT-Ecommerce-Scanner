@@ -1,3 +1,4 @@
+import { SellerService } from '../utils/sellerService';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -62,7 +63,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     // Load metadata lists
     const outs = dbService.getOutlets();
     const ops = dbService.getOperators();
-    const sels = dbService.getSellers();
+    const sels = SellerService.getAll();
 
     setOutlets(outs);
     setOperators(ops);
@@ -85,10 +86,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       return;
     }
 
-    const added = dbService.addSeller(name);
+    const added = true; SellerService.create({ kodeSeller: "KS-" + Date.now(), nama: name, statusAktif: "ACTIVE" });
     if (added) {
       // Reload list
-      const updatedSellers = dbService.getSellers();
+      const updatedSellers = SellerService.getAll();
       setSellers(updatedSellers);
       
       // Select the newly added seller automatically
@@ -257,8 +258,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             >
               <option value="" disabled>--- Pilih Seller ---</option>
               {sellers.map((s) => (
-                <option key={s.NamaSeller} value={s.NamaSeller}>
-                  {s.NamaSeller}
+                <option key={s.nama} value={s.nama}>
+                  {s.nama}
                 </option>
               ))}
             </select>

@@ -59,13 +59,7 @@ const DEFAULT_OPERATORS: Operator[] = [
   { NamaOperator: "M. DANANG" }
 ];
 
-const DEFAULT_SELLERS: Seller[] = [
-  { NamaSeller: "Skincare A" },
-  { NamaSeller: "Fashion B" },
-  { NamaSeller: "Elektronik C" },
-  { NamaSeller: "Hijab Trend" },
-  { NamaSeller: "Glow Cosmetics" }
-];
+
 
 // Generate fake scanned records for the past 2 days to populate analytics out of the box
 function generateHistoricalData(): ScanRecord[] {
@@ -477,6 +471,7 @@ export class DatabaseService {
       }
     }
     
+    window.dispatchEvent(new Event("jt_db_updated"));
     return idbSuccess;
   }
 
@@ -552,65 +547,11 @@ export class DatabaseService {
     return JSON.parse(raw);
   }
 
-  public getSellers(): Seller[] {
-    const raw = Config.get(CONFIG_KEYS.SELLERS);
-    if (!raw) {
-      const config = this.getCloudConfig();
-      const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
-      if (hasAppsScript) {
-        return [];
-      }
-      Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(DEFAULT_SELLERS));
-      return DEFAULT_SELLERS;
-    }
-    return JSON.parse(raw);
-  }
+  
 
-  public addSeller(name: string): boolean {
-    const sellers = this.getSellers();
-    const cleanName = name.trim();
-    if (!cleanName) return false;
-    
-    // Duplicate check
-    if (sellers.some(s => s.NamaSeller.toLowerCase() === cleanName.toLowerCase())) {
-      return false; // already exists
-    }
+  
 
-    sellers.push({ NamaSeller: cleanName });
-    Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(sellers));
-
-    // Try background sync to Spreadsheet if available
-    const config = this.getCloudConfig();
-    if (config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example")) {
-      if (config.spreadsheetId) {
-        import("./auth").then(async ({ getAccessToken }) => {
-          const token = await getAccessToken();
-          if (token) {
-            import("./sheets").then(({ directAddMaster }) => {
-              directAddMaster("Seller List", "Nama Seller", cleanName, config.spreadsheetId, token);
-            });
-          }
-        });
-      } else {
-        fetch(config.appsScriptUrl, {
-          method: "POST",
-          mode: "cors",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify({ action: "add_seller", sellerName: cleanName })
-        }).catch(err => console.warn("Background cloud add_seller error", err));
-      }
-    }
-
-    return true;
-  }
-
-  public deleteSeller(name: string): boolean {
-    const sellers = this.getSellers();
-    const filtered = sellers.filter(s => s.NamaSeller.trim().toLowerCase() !== name.trim().toLowerCase());
-    if (sellers.length === filtered.length) return false;
-    Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(filtered));
-    return true;
-  }
+  
 
   public addOperator(name: string): boolean {
     const operators = this.getOperators();
@@ -656,18 +597,31 @@ export class DatabaseService {
   }
 
   public getCloudConfig(): CloudConfig {
-    const raw = JSON.stringify({spreadsheetId: Config.get(CONFIG_KEYS.GOOGLE_SHEET_ID), fotoFolderId: Config.get(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER), appsScriptUrl: ''});
-    if (!raw) {
-      Config.set(CONFIG_KEYS.GOOGLE_SHEET_ID, DEFAULT_CLOUD_CONFIG.spreadsheetId); Config.set(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER, DEFAULT_CLOUD_CONFIG.fotoFolderId);
-      return DEFAULT_CLOUD_CONFIG;
-    }
-    return JSON.parse(raw);
+    const spreadsheetId = Config.get(CONFIG_KEYS.GOOGLE_SHEET_ID) || DEFAULT_CLOUD_CONFIG.spreadsheetId;
+    const fotoFolderId = Config.get(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER) || DEFAULT_CLOUD_CONFIG.fotoFolderId;
+    const appsScriptUrl = Config.get(CONFIG_KEYS.APPS_SCRIPT_URL) || DEFAULT_CLOUD_CONFIG.appsScriptUrl;
+    const coreFolderUrl = Config.get('CORE_FOLDER_URL') || DEFAULT_CLOUD_CONFIG.coreFolderUrl;
+    const faviconUrl = Config.get('FAVICON_URL') || DEFAULT_CLOUD_CONFIG.faviconUrl;
+
+    return {
+      spreadsheetId,
+      fotoFolderId,
+      appsScriptUrl,
+      coreFolderUrl,
+      faviconUrl
+    };
   }
 
   public saveCloudConfig(config: Partial<CloudConfig>) {
     const current = this.getCloudConfig();
     const updated = { ...current, ...config };
-    Config.set(CONFIG_KEYS.GOOGLE_SHEET_ID, updated.spreadsheetId); Config.set(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER, updated.fotoFolderId);
+    Config.set(CONFIG_KEYS.GOOGLE_SHEET_ID, updated.spreadsheetId);
+    Config.set(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER, updated.fotoFolderId);
+    Config.set(CONFIG_KEYS.APPS_SCRIPT_URL, updated.appsScriptUrl);
+    if (updated.coreFolderUrl) Config.set('CORE_FOLDER_URL', updated.coreFolderUrl);
+    if (updated.faviconUrl) Config.set('FAVICON_URL', updated.faviconUrl);
+    
+    Config.saveToSheet();
   }
 
   // Get active scanned records
@@ -1220,11 +1174,11 @@ export class DatabaseService {
       }
 
       if (data && data.success) {
-        const fetchedSellers = (data.sellers || []).map((name: string) => ({ NamaSeller: name.trim() })).filter((x: any) => x.NamaSeller);
+        
         const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
         const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
 
-        Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(fetchedSellers));
+        
         Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(fetchedOperators));
         Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(fetchedOutlets));
         return { success: true };

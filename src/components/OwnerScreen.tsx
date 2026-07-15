@@ -1,3 +1,4 @@
+import { SellerService } from '../utils/sellerService';
 import { Config, CONFIG_KEYS } from '../utils/config';
 /**
  * @license
@@ -222,6 +223,19 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     }
   }, [isAuthenticated, isPulling]);
 
+  // Listen for database updates and reload local records automatically
+  useEffect(() => {
+    const handleDbUpdated = () => {
+      if (isAuthenticated) {
+        loadData();
+      }
+    };
+    window.addEventListener("jt_db_updated", handleDbUpdated);
+    return () => {
+      window.removeEventListener("jt_db_updated", handleDbUpdated);
+    };
+  }, [isAuthenticated]);
+
   const loadData = () => {
     const records = dbService.getRecords();
     setAllRecords(records);
@@ -232,7 +246,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     setImportLogs(dbService.getImportLogs());
 
     // Load configurations and masters
-    setSellers(dbService.getSellers());
+    setSellers(SellerService.getAll());
     setOperators(dbService.getOperators());
     setOutlets(dbService.getOutlets());
     
@@ -261,9 +275,9 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     setSellerError("");
     const name = newSeller.trim();
     if (!name) return;
-    const success = dbService.addSeller(name);
+    let success = true; try { SellerService.create({ kodeSeller: "KS-" + Date.now(), nama: name, statusAktif: "ACTIVE" }); } catch(e) { success = false; }
     if (success) {
-      setSellers(dbService.getSellers());
+      setSellers(SellerService.getAll());
       setNewSeller("");
     } else {
       setSellerError("Seller sudah terdaftar atau tidak valid");
@@ -271,8 +285,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   };
 
   const handleDeleteSeller = (name: string) => {
-    dbService.deleteSeller(name);
-    setSellers(dbService.getSellers());
+    const target = sellers.find(s => s.nama === name); if(target) SellerService.delete(target.id);
+    setSellers(SellerService.getAll());
   };
 
   const handleAddOutletAndSave = (e: React.FormEvent) => {
@@ -332,7 +346,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       const data = await response.json();
       if (data && data.success) {
         // Map raw strings to objects
-        const fetchedSellers = (data.sellers || []).map((name: string) => ({ NamaSeller: name.trim() })).filter((x: any) => x.NamaSeller);
+        const fetchedSellers: any[] = [];
         const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
         const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
 
@@ -341,12 +355,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         } else {
           // Save to local storage
           Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(fetchedOperators));
-          Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(fetchedSellers));
+          
           if (fetchedOutlets.length > 0) {
             Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(fetchedOutlets));
           }
           
-          setSellers(fetchedSellers);
+          setSellers(SellerService.getAll());
           setOperators(fetchedOperators);
           if (fetchedOutlets.length > 0) {
             setOutlets(fetchedOutlets);
@@ -354,7 +368,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           
           setSyncFeedback({ 
             type: "success", 
-            message: `Berhasil menarik ${fetchedSellers.length} Seller, ${fetchedOperators.length} Operator, dan ${fetchedOutlets.length || 3} Outlet dari Spreadsheet!` 
+            message: `Berhasil menarik Seller Master tersinkron secara terpisah, ${fetchedOperators.length} Operator, dan ${fetchedOutlets.length || 3} Outlet dari Spreadsheet!` 
           });
           onStatusChanged(); // Notify parent of refresh if needed
         }
@@ -388,7 +402,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         },
         body: JSON.stringify({
           action: "sync_masters",
-          sellers: sellers.map(s => s.NamaSeller),
+          sellers: [], // Handled by SellerService
           operators: operators.map(o => o.NamaOperator),
           outlets: outlets.map(o => o.NamaOutlet)
         })
@@ -427,6 +441,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     const formattedStr = currentPrefixes.join(", ");
     setSavedPrefixes(currentPrefixes);
     Config.set(CONFIG_KEYS.RESI_PREFIXES, formattedStr);
+    Config.saveToSheet();
     
     setNewPrefixInput("");
     setResiPrefixSuccess(true);
@@ -441,6 +456,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     const formatted = currentPrefixes.join(", ");
     setSavedPrefixes(currentPrefixes);
     Config.set(CONFIG_KEYS.RESI_PREFIXES, formatted);
+    Config.saveToSheet();
   };
 
   const handleSaveCloudConfigField = (field: string, value: string) => {
@@ -475,6 +491,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     const val = parseInt(tempDailyTarget, 10);
     if (!isNaN(val) && val > 0) {
       dbService.setDailyTarget(val);
+      Config.saveToSheet();
       setSaveSuccessFields(prev => ({ ...prev, dailyTarget: true }));
       toast.success("Target Harian berhasil disimpan!");
       setTimeout(() => {
@@ -693,11 +710,11 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {sellers.map((s) => (
-                      <tr key={s.NamaSeller} className="hover:bg-slate-50/50">
-                        <td className="p-3 font-semibold text-slate-800">{s.NamaSeller}</td>
+                      <tr key={s.nama} className="hover:bg-slate-50/50">
+                        <td className="p-3 font-semibold text-slate-800">{s.nama}</td>
                         <td className="p-3 text-right">
                           <button
-                            onClick={() => handleDeleteSeller(s.NamaSeller)}
+                            onClick={() => handleDeleteSeller(s.nama)}
                             className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
                             title="Hapus Seller"
                           >
@@ -1583,6 +1600,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
     // Save
     Config.set(CONFIG_KEYS.OWNER_PASSWORD, newPassword);
+    Config.saveToSheet();
     setPwSuccess(true);
     setOldPassword("");
     setNewPassword("");
@@ -2202,7 +2220,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       
       {/* Navigation Tabs & Logout Row for Owner Workspace */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-        <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-1 select-none w-full max-w-2xl">
+        <div className="grid grid-cols-2 sm:flex sm:flex-row bg-slate-100 p-1.5 rounded-2xl border border-slate-200 gap-1 select-none w-full max-w-2xl">
           <button
             onClick={() => setActiveTab("RECAP")}
             className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${

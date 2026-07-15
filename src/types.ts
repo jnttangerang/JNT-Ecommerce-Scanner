@@ -44,9 +44,7 @@ export interface ImportLog {
   failedCount: number;
 }
 
-export interface Seller {
-  NamaSeller: string;
-}
+
 
 export interface Outlet {
   NamaOutlet: string;
@@ -61,4 +59,20 @@ export type AppView = "WELCOME" | "SCANNER" | "OWNER_LOGIN" | "OWNER_DASHBOARD";
 export interface DashboardStats {
   sellerDaily: Record<string, { count: number; totalWeight?: number }>;
   outletDaily: Record<string, number>;
+}
+
+export interface Seller {
+  id: string;
+  kodeSeller: string;
+  nama: string;
+  kategoriProduk?: string;
+  noHp?: string;
+  alamat?: string;
+  gps?: string;
+  statusAktif: 'ACTIVE' | 'INACTIVE';
+  targetHarian?: number;
+  catatan?: string;
+  updatedAt?: string;
+  createdAt?: string;
+  syncStatus?: 'SYNCED' | 'PENDING' | 'ERROR';
 }

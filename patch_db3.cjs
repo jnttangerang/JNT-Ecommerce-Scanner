@@ -1,37 +1,18 @@
 const fs = require('fs');
 let code = fs.readFileSync('src/utils/db.ts', 'utf8');
 
-const defaultFields = `      PackageStatus: "NONE",
-      WaybillStatus: "NONE",
-      ReviewStatus: "NONE",
-      RetakeStatus: "NONE",
-      AlertStatus: "NONE",
-      CancelStatus: "NONE",`;
+// We can just stub getSellers() and addSeller() etc if they are still there
+// But they shouldn't be used now.
+// I will just let them be, except remove them from pullMasters.
 
-// Mock record 1
 code = code.replace(
-  /      SyncStatus: "SYNCED",\n      ScanTimestamp: new Date/g,
-  `      SyncStatus: "SYNCED",
-${defaultFields}
-      ScanTimestamp: new Date`
+  /results\.sellers = await getSheetData\(lists\[0\]\.name, lists\[0\]\.alt\);/,
+  `results.sellers = []; // Handled by SellerService`
 );
 
-// addRecord
 code = code.replace(
-  /      SyncStatus: syncStatus,\n      ScanTimestamp: now\.getTime\(\)\n    \};/g,
-  `      SyncStatus: syncStatus,
-      ScanTimestamp: now.getTime(),
-${defaultFields}
-    };`
-);
-
-// directGetRecords fallback
-code = code.replace(
-  /      SyncStatus: "SYNCED"\n          \}\);/g,
-  `      SyncStatus: "SYNCED",
-${defaultFields}
-          });`
+  /const fetchedSellers = data\.sellers\.map\(\(s: any\) => \(\{ NamaSeller: s \}\)\);/,
+  `const fetchedSellers: any[] = [];`
 );
 
 fs.writeFileSync('src/utils/db.ts', code);
-console.log("Success");

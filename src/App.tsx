@@ -1,3 +1,4 @@
+import { SellerService } from './utils/sellerService';
 import { Config, CONFIG_KEYS } from './utils/config';
 /**
  * @license
@@ -103,13 +104,17 @@ export default function App() {
     const handleOnline = () => {
       setIsOffline(false);
       Config.sync();
+      SellerService.sync();
     };
     const handleOffline = () => setIsOffline(true);
     
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     
-    if (window.navigator.onLine) Config.sync();
+    if (window.navigator.onLine) {
+      Config.sync();
+      SellerService.sync();
+    }
 
     // Retrieve previous selected batch setup
     const savedOut = Config.get(CONFIG_KEYS.SAVED_OUTLET) || "";
@@ -133,6 +138,7 @@ export default function App() {
         setIsPulling(true);
         try {
           await Config.sync(); // Also sync DATA_MASTER
+          await SellerService.sync(); // Load Seller Master
           await dbService.pullMasters();
           await dbService.pullRecords();
           updatePendingCount();
@@ -191,6 +197,11 @@ export default function App() {
     }
   };
 
+  const handleRecordAdded = () => {
+    setIsCloudDataFresh(false);
+    updatePendingCount();
+  };
+
   // Handles manual batch upload trigger ("Upload Sekarang")
   const triggerSync = async () => {
     if (isSyncing || pendingCount === 0) return;
@@ -208,6 +219,7 @@ export default function App() {
 
       const stats = await dbService.syncPendingRecords();
       setSyncStatusText(`Sukses mensinkronkan ${stats.successCount} data paket pickup!`);
+      setIsCloudDataFresh(true);
       
       // Keep successful prompt briefly
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -226,7 +238,10 @@ export default function App() {
     if (isSilentSyncingRef.current) return;
     isSilentSyncingRef.current = true;
     try {
-      await dbService.syncPendingRecords();
+      const stats = await dbService.syncPendingRecords();
+      if (stats && stats.successCount > 0) {
+        setIsCloudDataFresh(true);
+      }
     } catch (e) {
       console.warn("Silent background sync failed, will retry", e);
     } finally {
@@ -346,7 +361,7 @@ export default function App() {
                 pendingCount={pendingCount}
                 triggerSync={triggerSync}
                 isSyncing={isSyncing}
-                onRecordAdded={updatePendingCount}
+                onRecordAdded={handleRecordAdded}
                 isPulling={isPulling}
                 isCloudDataFresh={isCloudDataFresh}
               />

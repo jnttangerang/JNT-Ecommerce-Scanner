@@ -37,7 +37,9 @@ const RESI_HEADERS = [
 function doGet(e) {
   try {
     const action = e.parameter.action;
-    if (action === "get_data_master") {
+    if (action === "get_master_seller") {
+      return handleGetMasterSeller();
+    } else if (action === "get_data_master") {
       return handleGetDataMaster();
     } else if (action === "get_masters") {
       return handleGetMasters();
@@ -57,7 +59,15 @@ function doPost(e) {
     const payload = JSON.parse(e.postData.contents);
     const action = payload.action;
 
-    if (action === "save_data_master") {
+    if (action === "sync_master_seller") {
+      return handleSyncMasterSeller(payload);
+    } else if (action === "save_master_seller") {
+      return handleSaveMasterSeller(payload);
+    } else if (action === "update_master_seller") {
+      return handleUpdateMasterSeller(payload);
+    } else if (action === "delete_master_seller") {
+      return handleDeleteMasterSeller(payload);
+    } else if (action === "save_data_master") {
       return handleSaveDataMaster(payload.keysValues);
     } else if (action === "sync_batch") {
       return handleSyncBatch(payload.records);
@@ -744,5 +754,193 @@ function handleSaveDataMaster(keysValues) {
   }
   
   return ContentService.createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+
+function handleGetMasterSeller() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName("MASTER_SELLER");
+  if (!sheet) {
+    sheet = ss.insertSheet("MASTER_SELLER");
+    sheet.appendRow(["ID", "Kode Seller", "Nama", "Kategori Produk", "No. HP Admin Seller", "Alamat", "Titik GPS", "Status Aktif", "Jumlah Paket Harian", "Catatan", "updatedAt"]);
+  }
+  const lastRow = sheet.getLastRow();
+  let values = [];
+  if (lastRow > 1) {
+    values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  }
+  return ContentService.createTextOutput(JSON.stringify({ success: true, values: values }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleSaveMasterSeller(payload) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName("MASTER_SELLER");
+  if (!sheet) {
+    sheet = ss.insertSheet("MASTER_SELLER");
+    sheet.appendRow(["ID", "Kode Seller", "Nama", "Kategori Produk", "No. HP Admin Seller", "Alamat", "Titik GPS", "Status Aktif", "Jumlah Paket Harian", "Catatan", "updatedAt"]);
+  }
+  
+  const seller = payload.seller;
+  const now = new Date().toISOString();
+  
+  // Check if kode seller already exists
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    const data = sheet.getRange(2, 1, lastRow - 1, 2).getValues(); // [ID, Kode Seller]
+    for (let i = 0; i < data.length; i++) {
+      if (data[i][1] === seller.kodeSeller) {
+        return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Kode Seller already exists" })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+  }
+
+  sheet.appendRow([
+    seller.id,
+    seller.kodeSeller,
+    seller.nama,
+    seller.kategoriProduk || "",
+    seller.noHp || "",
+    seller.alamat || "",
+    seller.gps || "",
+    seller.statusAktif || "ACTIVE",
+    seller.targetHarian || 0,
+    seller.catatan || "",
+    now
+  ]);
+  
+  return ContentService.createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleUpdateMasterSeller(payload) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName("MASTER_SELLER");
+  if (!sheet) return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Sheet not found" })).setMimeType(ContentService.MimeType.JSON);
+
+  const seller = payload.seller;
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i][0] === seller.id) {
+        const row = i + 2;
+        // Check for duplicate kodeSeller
+        if (seller.kodeSeller) {
+           const allKodes = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+           for (let j = 0; j < allKodes.length; j++) {
+               if (j !== i && allKodes[j][0] === seller.kodeSeller) {
+                   return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Kode Seller already exists" })).setMimeType(ContentService.MimeType.JSON);
+               }
+           }
+        }
+        
+        const now = new Date().toISOString();
+        sheet.getRange(row, 2, 1, 10).setValues([[
+          seller.kodeSeller,
+          seller.nama,
+          seller.kategoriProduk || "",
+          seller.noHp || "",
+          seller.alamat || "",
+          seller.gps || "",
+          seller.statusAktif || "ACTIVE",
+          seller.targetHarian || 0,
+          seller.catatan || "",
+          now
+        ]]);
+        return ContentService.createTextOutput(JSON.stringify({ success: true })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+  }
+  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Seller not found" })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleDeleteMasterSeller(payload) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName("MASTER_SELLER");
+  if (!sheet) return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Sheet not found" })).setMimeType(ContentService.MimeType.JSON);
+  
+  const id = payload.id;
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i][0] === id) {
+        sheet.deleteRow(i + 2);
+        return ContentService.createTextOutput(JSON.stringify({ success: true })).setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+  }
+  return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Seller not found" })).setMimeType(ContentService.MimeType.JSON);
+}
+
+
+function handleSyncMasterSeller(payload) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName("MASTER_SELLER");
+  if (!sheet) {
+    sheet = ss.insertSheet("MASTER_SELLER");
+    sheet.appendRow(["ID", "Kode Seller", "Nama", "Kategori Produk", "No. HP Admin Seller", "Alamat", "Titik GPS", "Status Aktif", "Jumlah Paket Harian", "Catatan", "updatedAt"]);
+  }
+  
+  const sellers = payload.sellers || [];
+  if (sellers.length === 0) return ContentService.createTextOutput(JSON.stringify({ success: true })).setMimeType(ContentService.MimeType.JSON);
+  
+  const lastRow = sheet.getLastRow();
+  let existingData = [];
+  if (lastRow > 1) {
+    existingData = sheet.getRange(2, 1, lastRow - 1, 2).getValues(); // [ID, Kode Seller]
+  }
+  
+  const idToRow = {};
+  const kodeSet = {};
+  for (let i = 0; i < existingData.length; i++) {
+    if (existingData[i][0]) idToRow[existingData[i][0]] = i + 2;
+    if (existingData[i][1]) kodeSet[existingData[i][1]] = existingData[i][0];
+  }
+  
+  const updates = []; // { range, values }
+  const appends = [];
+  const now = new Date().toISOString();
+  const errors = [];
+  
+  for (let i = 0; i < sellers.length; i++) {
+    const seller = sellers[i];
+    const rowIdx = idToRow[seller.id];
+    
+    // Check kode conflict
+    if (kodeSet[seller.kodeSeller] && kodeSet[seller.kodeSeller] !== seller.id) {
+       errors.push("Kode Seller " + seller.kodeSeller + " already exists.");
+       continue;
+    }
+    
+    const rowData = [
+       seller.kodeSeller,
+       seller.nama,
+       seller.kategoriProduk || "",
+       seller.noHp || "",
+       seller.alamat || "",
+       seller.gps || "",
+       seller.statusAktif || "ACTIVE",
+       seller.targetHarian || 0,
+       seller.catatan || "",
+       now
+    ];
+    
+    if (rowIdx) {
+       // Update
+       sheet.getRange(rowIdx, 2, 1, 10).setValues([rowData]);
+    } else {
+       // Append
+       appends.push([seller.id, ...rowData]);
+    }
+  }
+  
+  if (appends.length > 0) {
+     sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, 11).setValues(appends);
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({ success: errors.length === 0, errors: errors }))
     .setMimeType(ContentService.MimeType.JSON);
 }
