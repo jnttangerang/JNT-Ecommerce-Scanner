@@ -92,7 +92,6 @@ class ConfigurationService {
 
   private migrateLegacyKeys() {
     const legacyMap: Record<string, string> = {
-      'jt_resi_prefixes': CONFIG_KEYS.RESI_PREFIXES,
       'jt_owner_password': CONFIG_KEYS.OWNER_PASSWORD,
       'jt_saved_outlet': CONFIG_KEYS.SAVED_OUTLET,
       'jt_saved_operator': CONFIG_KEYS.SAVED_OPERATOR,

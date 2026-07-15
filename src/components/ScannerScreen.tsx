@@ -854,7 +854,24 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const handleBarcodeScanned = (scannedResi: string) => {
     if (isScanningLocked.current) return;
 
+    console.log("html5-qrcode decodedText:", JSON.stringify(scannedResi));
+
     const rawCode = scannedResi.trim().toUpperCase();
+    console.group("=== CAMERA BARCODE AUDIT ===");
+    console.log("Original scannedResi:", scannedResi);
+    console.log("Normalized rawCode:", rawCode);
+    console.log("JSON:", JSON.stringify(rawCode));
+    console.log("Length:", rawCode.length);
+    console.table(
+      Array.from(rawCode).map((c, index) => ({
+        index,
+        character: c,
+        charCode: c.charCodeAt(0),
+        hex: "0x" + c.charCodeAt(0).toString(16).toUpperCase()
+      }))
+    );
+    console.groupEnd();
+
     if (!rawCode) return;
 
     // VALIDASI FORMAT BARCODE J&T (Robust parsing supports any prefix dynamically)
@@ -862,6 +879,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const validPrefixes = validPrefixesStr ? validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean) : [];
     const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "";
     const regex = new RegExp(`^${prefixRegexPart}\\d{10,12}$`);
+
+    console.group("=== REGEX AUDIT ===");
+    console.log("Prefixes:", validPrefixes);
+    console.log("Regex:", regex.source);
+    console.log("Regex Result:", regex.test(rawCode));
+    console.groupEnd();
 
     console.group("Barcode Validation");
     console.log("Raw barcode:", scannedResi);
