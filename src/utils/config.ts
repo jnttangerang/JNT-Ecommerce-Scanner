@@ -52,7 +52,7 @@ const DEFAULT_CONFIG: Record<string, string> = {
   [CONFIG_KEYS.DAILY_TARGET]: '150',
   [CONFIG_KEYS.GOOGLE_SHEET_ID]: '12ly2pM3Vof9IKTwjselkLUX6sMdcdI6rcb_KvbjcQ_Y',
   [CONFIG_KEYS.GOOGLE_DRIVE_FOLDER]: '19peJr4JWqKA6Ei4AwuXgohhF2C59ugyp',
-  [CONFIG_KEYS.APPS_SCRIPT_URL]: 'https://script.google.com/macros/s/AKfycbxHsd-wqkrjRxHvasCZ6_a-G0T36x5nZIXJ1fVn18C56TUU0lD3Hm45AHNNxdMIrxsw/exec',
+  [CONFIG_KEYS.APPS_SCRIPT_URL]: 'https://script.google.com/macros/s/AKfycbyzfjJ-bamk6Vnmbk_Q-HCzlJFy12K5JSqNeAqvh4JFWWbFLEEvYts9tTP4cXhCleLu/exec',
   [CONFIG_KEYS.OFFLINE_MODE]: 'false',
   [CONFIG_KEYS.SAVED_OUTLET]: '',
   [CONFIG_KEYS.SAVED_SELLER]: '',
@@ -171,7 +171,7 @@ class ConfigurationService {
             const data = await res.json();
             values = data.values || [];
             success = true;
-                        } else if (res.status === 400) {
+          } else if (res.status === 400) {
             // Sheet might not exist, let's create it
             await this.createDataMaster(spreadsheetId, accessToken);
           }
