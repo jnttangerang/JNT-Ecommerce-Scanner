@@ -45,7 +45,7 @@ export const CONFIG_KEYS = {
 const DEFAULT_CONFIG: Record<string, string> = {
   [CONFIG_KEYS.APP_VERSION]: '1.0.0',
   [CONFIG_KEYS.OWNER_PASSWORD]: 'jntowner',
-  [CONFIG_KEYS.RESI_PREFIXES]: 'JX,JZ',
+  [CONFIG_KEYS.RESI_PREFIXES]: 'JX,JY,JZ',
   [CONFIG_KEYS.OUTLETS]: '[{"NamaOutlet":"J&T Pasir Jaha Balaraja"},{"NamaOutlet":"J&T Jayanti"},{"NamaOutlet":"J&T Cikupa Mas"}]',
   [CONFIG_KEYS.OPERATORS]: '[{"NamaOperator":"FITRI FAJRIA"},{"NamaOperator":"M. HARI YANTO"},{"NamaOperator":"M. DANANG"}]',
   [CONFIG_KEYS.SELLERS]: '[]',
@@ -84,6 +84,13 @@ class ConfigurationService {
           this.cache[configKey] = value;
         }
       }
+    }
+    
+    // Auto-update legacy prefix default if it matches old "JX,JZ" or "JX, JZ"
+    const currentPrefixes = this.cache[CONFIG_KEYS.RESI_PREFIXES];
+    if (currentPrefixes === 'JX,JZ' || currentPrefixes === 'JX, JZ') {
+      this.cache[CONFIG_KEYS.RESI_PREFIXES] = 'JX,JY,JZ';
+      localStorage.setItem(this.CACHE_PREFIX + CONFIG_KEYS.RESI_PREFIXES, 'JX,JY,JZ');
     }
     
     // Legacy migration

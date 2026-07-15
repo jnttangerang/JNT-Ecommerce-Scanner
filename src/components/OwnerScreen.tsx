@@ -163,7 +163,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   // Prefix Resi states
   const [newPrefixInput, setNewPrefixInput] = useState("");
   const [savedPrefixes, setSavedPrefixes] = useState<string[]>(() => {
-    const stored = Config.get(CONFIG_KEYS.RESI_PREFIXES) || "JX, JZ";
+    const stored = Config.get(CONFIG_KEYS.RESI_PREFIXES) || "JX, JY, JZ";
     return stored.split(",").map(p => p.trim().toUpperCase()).filter(Boolean);
   });
   const [resiPrefixSuccess, setResiPrefixSuccess] = useState(false);
@@ -451,7 +451,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const handleDeletePrefix = (prefixToDelete: string) => {
     let currentPrefixes = savedPrefixes.filter(p => p !== prefixToDelete);
     if (currentPrefixes.length === 0) {
-      currentPrefixes = ["JX", "JZ"];
+      currentPrefixes = ["JX", "JY", "JZ"];
     }
     const formatted = currentPrefixes.join(", ");
     setSavedPrefixes(currentPrefixes);
