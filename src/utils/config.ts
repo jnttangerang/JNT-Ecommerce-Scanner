@@ -67,10 +67,7 @@ const DEFAULT_CONFIG: Record<string, string> = {
 class ConfigurationService {
   private cache: Record<string, string> = {};
   private readonly CACHE_PREFIX = 'jt_config_';
-  private currentSyncPromise: Promise<void> | null = null;
-  private hasSyncedOnce = false;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private retryDelayMs = 5000;
+  private syncInProgress = false;
 
   constructor() {
     this.loadCache();
@@ -147,34 +144,14 @@ class ConfigurationService {
     localStorage.setItem(this.CACHE_PREFIX + key, value);
   }
 
-  // Dedupe concurrent callers onto the same in-flight sync instead of firing another request.
-  sync(accessToken?: string): Promise<void> {
-    if (this.currentSyncPromise) return this.currentSyncPromise;
-    this.currentSyncPromise = this._doSync(accessToken).finally(() => {
-      this.currentSyncPromise = null;
-    });
-    return this.currentSyncPromise;
-  }
-
-  // Best-effort wait for a fresh DATA_MASTER before proceeding, without breaking Offline First:
-  // if we've already synced once this session, or the browser reports offline, resolve
-  // immediately and let the caller proceed with whatever is in cache (default or last-known-good).
-  // ponytail: bounded by timeoutMs, not by actual sync completion — if the network is just slow,
-  // the caller proceeds on stale cache and sync() keeps retrying in the background (see below).
-  async ensureSynced(timeoutMs = 3000): Promise<boolean> {
-    if (this.hasSyncedOnce) return true;
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
-    await Promise.race([
-      this.sync(),
-      new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
-    ]);
-    return this.hasSyncedOnce;
-  }
-
-  private async _doSync(accessToken?: string) {
+  async sync(accessToken?: string) {
+    if (this.syncInProgress) return;
+    this.syncInProgress = true;
+    
     try {
       const spreadsheetId = this.get(CONFIG_KEYS.GOOGLE_SHEET_ID);
       if (!spreadsheetId) {
+        this.syncInProgress = false;
         return;
       }
 
@@ -194,7 +171,7 @@ class ConfigurationService {
             const data = await res.json();
             values = data.values || [];
             success = true;
-          } else if (res.status === 400) {
+                        } else if (res.status === 400) {
             // Sheet might not exist, let's create it
             await this.createDataMaster(spreadsheetId, accessToken);
           }
@@ -232,37 +209,12 @@ class ConfigurationService {
             this.set(key, String(val));
           }
         }
-        this.hasSyncedOnce = true;
-        this.retryDelayMs = 5000; // reset backoff after a real success
-        if (this.retryTimer) {
-          clearTimeout(this.retryTimer);
-          this.retryTimer = null;
-        }
-      } else {
-        this.scheduleRetry();
       }
     } catch (e) {
       console.error("Failed to sync config:", e);
-      this.scheduleRetry();
+    } finally {
+      this.syncInProgress = false;
     }
-  }
-
-  // Self-healing: a failed sync (network hiccup, slow connection, CORS) must not leave the
-  // client stuck on a stale/default cache for the rest of the session. Keep retrying with
-  // capped exponential backoff while the tab is open and online.
-  // ponytail: ceiling is the browser tab lifetime + 60s max backoff; if that's ever not enough
-  // (e.g. a background service worker), move this to a proper background sync registration.
-  private scheduleRetry() {
-    if (this.retryTimer) return; // already scheduled, don't stack timers
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = null;
-      this.retryDelayMs = Math.min(this.retryDelayMs * 2, 60000);
-      if (typeof navigator === 'undefined' || navigator.onLine) {
-        this.sync();
-      } else {
-        this.scheduleRetry();
-      }
-    }, this.retryDelayMs);
   }
   
   async saveToSheet(accessToken?: string) {

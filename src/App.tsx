@@ -253,7 +253,7 @@ export default function App() {
     }
   };
 
-  const handleStartScanning = async (config: {
+  const handleStartScanning = (config: {
     outlet: string;
     seller: string;
     operator: string;
@@ -266,13 +266,6 @@ export default function App() {
     Config.set(CONFIG_KEYS.SAVED_OUTLET, config.outlet);
     Config.set(CONFIG_KEYS.SAVED_SELLER, config.seller);
     Config.set(CONFIG_KEYS.SAVED_OPERATOR, config.operator);
-
-    // Give DATA_MASTER (e.g. RESI_PREFIXES) a short window to arrive before scanning starts,
-    // so the operator isn't validated against a stale/default prefix list. Bounded wait only —
-    // if offline or slow, proceeds anyway on whatever is cached (Offline First stays intact).
-    setIsPulling(true);
-    await Config.ensureSynced();
-    setIsPulling(false);
 
     changeView("SCANNER");
     updatePendingCount();
