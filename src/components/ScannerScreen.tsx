@@ -1,3 +1,4 @@
+import { Config, CONFIG_KEYS } from '../utils/config';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -838,10 +839,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
     lastCaptureSharpnessRef.current = Infinity; // Not a real capture, so never flag it as blurry
     
-    const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
+    const validPrefixesStr = Config.get(CONFIG_KEYS.RESI_PREFIXES);
     // Parse prefixes safely using a regex separator for robustness
-    const validPrefixes = validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean);
-    const defaultPrefix = validPrefixes.length > 0 ? validPrefixes[0] : "JX";
+    const validPrefixes = validPrefixesStr ? validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean) : [];
+    const defaultPrefix = validPrefixes.length > 0 ? validPrefixes[0] : "";
     
     const simulatedBarcode = scannedResi || `${defaultPrefix}${Math.floor(1000000000 + Math.random() * 9000000000)}`;
     return createMockResiPhoto(simulatedBarcode, config.seller);
@@ -857,15 +858,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     if (!rawCode) return;
 
     // VALIDASI FORMAT BARCODE J&T (Robust parsing supports any prefix dynamically)
-    const validPrefixesStr = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
-    const validPrefixes = validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean);
-    const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "(JX|JZ)";
+    const validPrefixesStr = Config.get(CONFIG_KEYS.RESI_PREFIXES);
+    const validPrefixes = validPrefixesStr ? validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean) : [];
+    const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "";
     const regex = new RegExp(`^${prefixRegexPart}\\d{10,12}$`);
 
     console.group("Barcode Validation");
     console.log("Raw barcode:", scannedResi);
     console.log("Normalized barcode:", rawCode);
-    console.log("localStorage:", localStorage.getItem("jt_resi_prefixes"));
+    console.log("localStorage:", Config.get(CONFIG_KEYS.RESI_PREFIXES));
     console.log("Parsed prefixes:", validPrefixes);
     console.log("Regex:", regex);
     console.log("Regex source:", regex.source);
@@ -2388,8 +2389,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               <div className="space-y-1 text-left">
                 <button
                   onClick={() => {
-                    localStorage.removeItem("jt_saved_operator");
-                    localStorage.setItem("jt_current_view", "WELCOME");
+                    Config.set(CONFIG_KEYS.SAVED_OPERATOR, "");
+                    Config.set(CONFIG_KEYS.CURRENT_VIEW, "WELCOME");
                     window.location.reload();
                   }}
                   className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold py-3 px-4 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center space-x-2"

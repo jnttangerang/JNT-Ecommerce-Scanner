@@ -1,3 +1,4 @@
+import { Config, CONFIG_KEYS } from './config';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -21,14 +22,14 @@ export function getTodayLocalDateString(date: Date = new Date()): string {
 }
 
 // Predefined constants and localstorage keys
-const SELLER_KEY = "jt_pickup_sellers";
-const OUTLET_KEY = "jt_pickup_outlets";
-const OPERATOR_KEY = "jt_pickup_operators";
+
+
+
 const RECORDS_KEY = "jt_pickup_records";
 const IMPORT_LOGS_KEY = "jt_pickup_import_logs";
-const OFFLINE_MODE_KEY = "jt_pickup_offline_mode";
-const CLOUD_CONFIG_KEY = "jt_pickup_cloud_config";
-const DAILY_TARGET_KEY = "jt_pickup_daily_target";
+
+
+
 
 export interface CloudConfig {
   coreFolderUrl: string;
@@ -481,14 +482,14 @@ export class DatabaseService {
 
   // Initialize lists
   public getOutlets(): Outlet[] {
-    const raw = localStorage.getItem(OUTLET_KEY);
+    const raw = Config.get(CONFIG_KEYS.OUTLETS);
     if (!raw) {
       const config = this.getCloudConfig();
       const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
       if (hasAppsScript) {
         return [];
       }
-      localStorage.setItem(OUTLET_KEY, JSON.stringify(DEFAULT_OUTLETS));
+      Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(DEFAULT_OUTLETS));
       return DEFAULT_OUTLETS;
     }
     return JSON.parse(raw);
@@ -502,7 +503,7 @@ export class DatabaseService {
       return false;
     }
     outlets.push({ NamaOutlet: cleanName });
-    localStorage.setItem(OUTLET_KEY, JSON.stringify(outlets));
+    Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(outlets));
 
     // Try background sync to Spreadsheet if available
     const config = this.getCloudConfig();
@@ -533,33 +534,33 @@ export class DatabaseService {
     const outlets = this.getOutlets();
     const filtered = outlets.filter(o => o.NamaOutlet.trim().toLowerCase() !== name.trim().toLowerCase());
     if (outlets.length === filtered.length) return false;
-    localStorage.setItem(OUTLET_KEY, JSON.stringify(filtered));
+    Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(filtered));
     return true;
   }
 
   public getOperators(): Operator[] {
-    const raw = localStorage.getItem(OPERATOR_KEY);
+    const raw = Config.get(CONFIG_KEYS.OPERATORS);
     if (!raw) {
       const config = this.getCloudConfig();
       const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
       if (hasAppsScript) {
         return [];
       }
-      localStorage.setItem(OPERATOR_KEY, JSON.stringify(DEFAULT_OPERATORS));
+      Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(DEFAULT_OPERATORS));
       return DEFAULT_OPERATORS;
     }
     return JSON.parse(raw);
   }
 
   public getSellers(): Seller[] {
-    const raw = localStorage.getItem(SELLER_KEY);
+    const raw = Config.get(CONFIG_KEYS.SELLERS);
     if (!raw) {
       const config = this.getCloudConfig();
       const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
       if (hasAppsScript) {
         return [];
       }
-      localStorage.setItem(SELLER_KEY, JSON.stringify(DEFAULT_SELLERS));
+      Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(DEFAULT_SELLERS));
       return DEFAULT_SELLERS;
     }
     return JSON.parse(raw);
@@ -576,7 +577,7 @@ export class DatabaseService {
     }
 
     sellers.push({ NamaSeller: cleanName });
-    localStorage.setItem(SELLER_KEY, JSON.stringify(sellers));
+    Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(sellers));
 
     // Try background sync to Spreadsheet if available
     const config = this.getCloudConfig();
@@ -607,7 +608,7 @@ export class DatabaseService {
     const sellers = this.getSellers();
     const filtered = sellers.filter(s => s.NamaSeller.trim().toLowerCase() !== name.trim().toLowerCase());
     if (sellers.length === filtered.length) return false;
-    localStorage.setItem(SELLER_KEY, JSON.stringify(filtered));
+    Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(filtered));
     return true;
   }
 
@@ -619,7 +620,7 @@ export class DatabaseService {
       return false;
     }
     operators.push({ NamaOperator: cleanName });
-    localStorage.setItem(OPERATOR_KEY, JSON.stringify(operators));
+    Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(operators));
 
     // Try background sync to Spreadsheet if available
     const config = this.getCloudConfig();
@@ -650,14 +651,14 @@ export class DatabaseService {
     const operators = this.getOperators();
     const filtered = operators.filter(o => o.NamaOperator.trim().toLowerCase() !== name.trim().toLowerCase());
     if (operators.length === filtered.length) return false;
-    localStorage.setItem(OPERATOR_KEY, JSON.stringify(filtered));
+    Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(filtered));
     return true;
   }
 
   public getCloudConfig(): CloudConfig {
-    const raw = localStorage.getItem(CLOUD_CONFIG_KEY);
+    const raw = JSON.stringify({spreadsheetId: Config.get(CONFIG_KEYS.GOOGLE_SHEET_ID), fotoFolderId: Config.get(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER), appsScriptUrl: ''});
     if (!raw) {
-      localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(DEFAULT_CLOUD_CONFIG));
+      Config.set(CONFIG_KEYS.GOOGLE_SHEET_ID, DEFAULT_CLOUD_CONFIG.spreadsheetId); Config.set(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER, DEFAULT_CLOUD_CONFIG.fotoFolderId);
       return DEFAULT_CLOUD_CONFIG;
     }
     return JSON.parse(raw);
@@ -666,7 +667,7 @@ export class DatabaseService {
   public saveCloudConfig(config: Partial<CloudConfig>) {
     const current = this.getCloudConfig();
     const updated = { ...current, ...config };
-    localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(updated));
+    Config.set(CONFIG_KEYS.GOOGLE_SHEET_ID, updated.spreadsheetId); Config.set(CONFIG_KEYS.GOOGLE_DRIVE_FOLDER, updated.fotoFolderId);
   }
 
   // Get active scanned records
@@ -683,21 +684,21 @@ export class DatabaseService {
 
   // Set offline mode preference
   public getOfflinePreference(): boolean {
-    return localStorage.getItem(OFFLINE_MODE_KEY) === "true";
+    return Config.get(CONFIG_KEYS.OFFLINE_MODE) === "true";
   }
 
   public setOfflinePreference(val: boolean) {
-    localStorage.setItem(OFFLINE_MODE_KEY, String(val));
+    Config.set(CONFIG_KEYS.OFFLINE_MODE, String(val));
   }
 
   // Set and get daily target
   public getDailyTarget(): number {
-    const raw = localStorage.getItem(DAILY_TARGET_KEY);
+    const raw = Config.get(CONFIG_KEYS.DAILY_TARGET);
     return raw ? parseInt(raw, 10) : 150; // Default target is 150
   }
 
   public setDailyTarget(target: number) {
-    localStorage.setItem(DAILY_TARGET_KEY, String(target));
+    Config.set(CONFIG_KEYS.DAILY_TARGET, String(target));
   }
 
   /**
@@ -1223,9 +1224,9 @@ export class DatabaseService {
         const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
         const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
 
-        localStorage.setItem(SELLER_KEY, JSON.stringify(fetchedSellers));
-        localStorage.setItem(OPERATOR_KEY, JSON.stringify(fetchedOperators));
-        localStorage.setItem(OUTLET_KEY, JSON.stringify(fetchedOutlets));
+        Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(fetchedSellers));
+        Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(fetchedOperators));
+        Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(fetchedOutlets));
         return { success: true };
       }
       return { success: false, error: "Data masters kosong atau respons gagal." };

@@ -1,3 +1,4 @@
+import { Config, CONFIG_KEYS } from './utils/config';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -18,16 +19,16 @@ export default function App() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const isSilentSyncingRef = useRef(false);
   const [currentView, setView] = useState<AppView>(() => {
-    const savedView = localStorage.getItem("jt_current_view") as AppView;
+    const savedView = Config.get(CONFIG_KEYS.CURRENT_VIEW) as AppView;
     if (savedView === "SCANNER") {
-      const savedOut = localStorage.getItem("jt_saved_outlet") || "";
-      const savedSel = localStorage.getItem("jt_saved_seller") || "";
-      const savedOp = localStorage.getItem("jt_saved_operator") || "";
+      const savedOut = Config.get(CONFIG_KEYS.SAVED_OUTLET) || "";
+      const savedSel = Config.get(CONFIG_KEYS.SAVED_SELLER) || "";
+      const savedOp = Config.get(CONFIG_KEYS.SAVED_OPERATOR) || "";
       if (savedOut && savedSel && savedOp) {
         return "SCANNER";
       }
     }
-    if (savedView === "OWNER_DASHBOARD" && localStorage.getItem("jt_owner_authenticated") === "true") {
+    if (savedView === "OWNER_DASHBOARD" && Config.get(CONFIG_KEYS.OWNER_AUTHENTICATED) === "true") {
       return "OWNER_DASHBOARD";
     }
     return "WELCOME";
@@ -35,7 +36,7 @@ export default function App() {
 
   const changeView = (view: AppView) => {
     setView(view);
-    localStorage.setItem("jt_current_view", view);
+    Config.set(CONFIG_KEYS.CURRENT_VIEW, String(view));
   };
 
   // Selection state
@@ -50,11 +51,11 @@ export default function App() {
   const [syncStatusText, setSyncStatusText] = useState("");
   const [isPulling, setIsPulling] = useState(false);
   const [isCloudDataFresh, setIsCloudDataFresh] = useState<boolean>(() => {
-    return localStorage.getItem("jt_is_cloud_data_fresh") === "true";
+    return Config.get(CONFIG_KEYS.IS_CLOUD_DATA_FRESH) === "true";
   });
 
   useEffect(() => {
-    localStorage.setItem("jt_is_cloud_data_fresh", String(isCloudDataFresh));
+    Config.set(CONFIG_KEYS.IS_CLOUD_DATA_FRESH, String(String(isCloudDataFresh)));
   }, [isCloudDataFresh]);
 
   // Push notification state for "Order Cancelled" and system updates
@@ -99,10 +100,21 @@ export default function App() {
     const pref = dbService.getOfflinePreference();
     setIsOffline(pref);
 
+    const handleOnline = () => {
+      setIsOffline(false);
+      Config.sync();
+    };
+    const handleOffline = () => setIsOffline(true);
+    
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    
+    if (window.navigator.onLine) Config.sync();
+
     // Retrieve previous selected batch setup
-    const savedOut = localStorage.getItem("jt_saved_outlet") || "";
-    const savedSel = localStorage.getItem("jt_saved_seller") || "";
-    const savedOp = localStorage.getItem("jt_saved_operator") || "";
+    const savedOut = Config.get(CONFIG_KEYS.SAVED_OUTLET) || "";
+    const savedSel = Config.get(CONFIG_KEYS.SAVED_SELLER) || "";
+    const savedOp = Config.get(CONFIG_KEYS.SAVED_OPERATOR) || "";
 
     setSelectedOutlet(savedOut);
     setSelectedSeller(savedSel);
@@ -120,6 +132,7 @@ export default function App() {
       if (hasAppsScript && !pref) {
         setIsPulling(true);
         try {
+          await Config.sync(); // Also sync DATA_MASTER
           await dbService.pullMasters();
           await dbService.pullRecords();
           updatePendingCount();
@@ -162,6 +175,8 @@ export default function App() {
     return () => {
       clearInterval(interval);
       window.removeEventListener("sync-retry-attempt", handleRetryEvent);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, [isOffline, isSyncing]);
 
@@ -233,9 +248,9 @@ export default function App() {
     setSelectedSeller(config.seller);
     setSelectedOperator(config.operator);
 
-    localStorage.setItem("jt_saved_outlet", config.outlet);
-    localStorage.setItem("jt_saved_seller", config.seller);
-    localStorage.setItem("jt_saved_operator", config.operator);
+    Config.set(CONFIG_KEYS.SAVED_OUTLET, config.outlet);
+    Config.set(CONFIG_KEYS.SAVED_SELLER, config.seller);
+    Config.set(CONFIG_KEYS.SAVED_OPERATOR, config.operator);
 
     changeView("SCANNER");
     updatePendingCount();
@@ -441,32 +456,7 @@ export default function App() {
               <button
                 onClick={() => {
                   // Save crucial configurations and customized master data before clearing cache
-                  const prefixes = localStorage.getItem("jt_resi_prefixes");
-                  const password = localStorage.getItem("jt_owner_password");
-                  const cloudConfig = localStorage.getItem("jt_pickup_cloud_config");
-                  const auth = localStorage.getItem("jt_owner_authenticated");
-                  const outlets = localStorage.getItem("jt_pickup_outlets");
-                  const operators = localStorage.getItem("jt_pickup_operators");
-                  const savedOutlet = localStorage.getItem("jt_saved_outlet");
-                  const savedOperator = localStorage.getItem("jt_saved_operator");
-                  const dailyTarget = localStorage.getItem("jt_pickup_daily_target");
-                  const offlineMode = localStorage.getItem("jt_pickup_offline_mode");
-
-                  // Clear transaction cache
-                  dbService.clearAllRecords();
-                  localStorage.clear();
-
-                  // Restore crucial configurations and customized master data
-                  if (prefixes) localStorage.setItem("jt_resi_prefixes", prefixes);
-                  if (password) localStorage.setItem("jt_owner_password", password);
-                  if (cloudConfig) localStorage.setItem("jt_pickup_cloud_config", cloudConfig);
-                  if (auth) localStorage.setItem("jt_owner_authenticated", auth);
-                  if (outlets) localStorage.setItem("jt_pickup_outlets", outlets);
-                  if (operators) localStorage.setItem("jt_pickup_operators", operators);
-                  if (savedOutlet) localStorage.setItem("jt_saved_outlet", savedOutlet);
-                  if (savedOperator) localStorage.setItem("jt_saved_operator", savedOperator);
-                  if (dailyTarget) localStorage.setItem("jt_pickup_daily_target", dailyTarget);
-                  if (offlineMode) localStorage.setItem("jt_pickup_offline_mode", offlineMode);
+                  localStorage.clear(); Config.clearSessionCache(); Config.saveCache();
 
                   window.location.reload();
                 }}

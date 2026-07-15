@@ -37,7 +37,9 @@ const RESI_HEADERS = [
 function doGet(e) {
   try {
     const action = e.parameter.action;
-    if (action === "get_masters") {
+    if (action === "get_data_master") {
+      return handleGetDataMaster();
+    } else if (action === "get_masters") {
       return handleGetMasters();
     } else if (action === "get_records") {
       return handleGetRecords();
@@ -55,7 +57,9 @@ function doPost(e) {
     const payload = JSON.parse(e.postData.contents);
     const action = payload.action;
 
-    if (action === "sync_batch") {
+    if (action === "save_data_master") {
+      return handleSaveDataMaster(payload.keysValues);
+    } else if (action === "sync_batch") {
       return handleSyncBatch(payload.records);
     } else if (action === "add_seller") {
       return handleAddSeller(payload.sellerName);
@@ -694,4 +698,51 @@ function setupSheetHeaders() {
   }
   
   return { success: true, message: resultMsg };
+}
+function handleGetDataMaster() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName("DATA_MASTER");
+  if (!sheet) {
+    sheet = ss.insertSheet("DATA_MASTER");
+    sheet.appendRow(["KEY", "VALUE", "DESCRIPTION"]);
+  }
+  const lastRow = sheet.getLastRow();
+  let values = [];
+  if (lastRow > 1) {
+    values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  }
+  return ContentService.createTextOutput(JSON.stringify({ success: true, values: values }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleSaveDataMaster(keysValues) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName("DATA_MASTER");
+  if (!sheet) {
+    sheet = ss.insertSheet("DATA_MASTER");
+    sheet.appendRow(["KEY", "VALUE", "DESCRIPTION"]);
+  }
+  // This uses a simple overwrite logic for the provided keys 
+  const lastRow = sheet.getLastRow();
+  const existingData = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 3).getValues() : [];
+  
+  const currentMap = {};
+  for (let i = 0; i < existingData.length; i++) {
+    if (existingData[i][0]) {
+      currentMap[existingData[i][0]] = { value: existingData[i][1], desc: existingData[i][2], rowIndex: i + 2 };
+    }
+  }
+
+  for (let j = 0; j < keysValues.length; j++) {
+    const key = keysValues[j].key;
+    const val = keysValues[j].value;
+    if (currentMap[key]) {
+      sheet.getRange(currentMap[key].rowIndex, 2).setValue(val);
+    } else {
+      sheet.appendRow([key, val, ""]);
+    }
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
 }

@@ -1,3 +1,4 @@
+import { Config, CONFIG_KEYS } from '../utils/config';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -56,7 +57,7 @@ interface OwnerDashboardProps {
 export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, isPulling = false }) => {
   // Passcode gate state
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem("jt_owner_authenticated") === "true";
+    return Config.get(CONFIG_KEYS.OWNER_AUTHENTICATED) === "true";
   });
   const [passcode, setPasscode] = useState("");
   const [passError, setPassError] = useState("");
@@ -79,13 +80,13 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [completedRecordIds, setCompletedRecordIds] = useState<string[]>(() => {
     try {
       const todayStr = getTodayLocalDateString();
-      const savedDate = localStorage.getItem("jt_review_completed_date");
+      const savedDate = Config.get(CONFIG_KEYS.REVIEW_COMPLETED_DATE);
       if (savedDate !== todayStr) {
-        localStorage.removeItem("jt_completed_review_records");
-        localStorage.setItem("jt_review_completed_date", todayStr);
+        Config.set(CONFIG_KEYS.COMPLETED_REVIEW_RECORDS, "[]");
+        Config.set(CONFIG_KEYS.REVIEW_COMPLETED_DATE, todayStr);
         return [];
       }
-      const stored = localStorage.getItem("jt_completed_review_records");
+      const stored = Config.get(CONFIG_KEYS.COMPLETED_REVIEW_RECORDS);
       return stored ? JSON.parse(stored) : [];
     } catch (e) {
       return [];
@@ -161,7 +162,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   // Prefix Resi states
   const [newPrefixInput, setNewPrefixInput] = useState("");
   const [savedPrefixes, setSavedPrefixes] = useState<string[]>(() => {
-    const stored = localStorage.getItem("jt_resi_prefixes") || "JX, JZ";
+    const stored = Config.get(CONFIG_KEYS.RESI_PREFIXES) || "JX, JZ";
     return stored.split(",").map(p => p.trim().toUpperCase()).filter(Boolean);
   });
   const [resiPrefixSuccess, setResiPrefixSuccess] = useState(false);
@@ -339,10 +340,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           setSyncFeedback({ type: "error", message: "Data kosong di Spreadsheet. Pastikan Spreadsheet Anda sudah diinisialisasi atau berisi data." });
         } else {
           // Save to local storage
-          localStorage.setItem("jt_pickup_operators", JSON.stringify(fetchedOperators));
-          localStorage.setItem("jt_pickup_sellers", JSON.stringify(fetchedSellers));
+          Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(fetchedOperators));
+          Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(fetchedSellers));
           if (fetchedOutlets.length > 0) {
-            localStorage.setItem("jt_pickup_outlets", JSON.stringify(fetchedOutlets));
+            Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(fetchedOutlets));
           }
           
           setSellers(fetchedSellers);
@@ -425,7 +426,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     
     const formattedStr = currentPrefixes.join(", ");
     setSavedPrefixes(currentPrefixes);
-    localStorage.setItem("jt_resi_prefixes", formattedStr);
+    Config.set(CONFIG_KEYS.RESI_PREFIXES, formattedStr);
     
     setNewPrefixInput("");
     setResiPrefixSuccess(true);
@@ -439,7 +440,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     }
     const formatted = currentPrefixes.join(", ");
     setSavedPrefixes(currentPrefixes);
-    localStorage.setItem("jt_resi_prefixes", formatted);
+    Config.set(CONFIG_KEYS.RESI_PREFIXES, formatted);
   };
 
   const handleSaveCloudConfigField = (field: string, value: string) => {
@@ -1534,12 +1535,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     e.preventDefault();
     setPassError("");
     
-    const savedPassword = localStorage.getItem("jt_owner_password") || "jntowner";
+    const savedPassword = Config.get(CONFIG_KEYS.OWNER_PASSWORD) || "jntowner";
     
     // Accept standard default passcode or saved custom password
     if (passcode.trim() === savedPassword || passcode.trim() === "balaraja") {
       setIsAuthenticated(true);
-      localStorage.setItem("jt_owner_authenticated", "true");
+      Config.set(CONFIG_KEYS.OWNER_AUTHENTICATED, "true");
       setPasscode("");
     } else {
       setPassError("Kata sandi salah!");
@@ -1549,7 +1550,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   // Handle logout
   const handleLogout = () => {
     setIsAuthenticated(false);
-    localStorage.removeItem("jt_owner_authenticated");
+    Config.set(CONFIG_KEYS.OWNER_AUTHENTICATED, "false");
   };
 
   // Update Owner Password Callback
@@ -1558,7 +1559,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     setPwError("");
     setPwSuccess(false);
 
-    const savedPassword = localStorage.getItem("jt_owner_password") || "jntowner";
+    const savedPassword = Config.get(CONFIG_KEYS.OWNER_PASSWORD) || "jntowner";
     
     if (oldPassword !== savedPassword && oldPassword !== "balaraja") {
       setPwError("Kata sandi lama salah!");
@@ -1581,7 +1582,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     }
 
     // Save
-    localStorage.setItem("jt_owner_password", newPassword);
+    Config.set(CONFIG_KEYS.OWNER_PASSWORD, newPassword);
     setPwSuccess(true);
     setOldPassword("");
     setNewPassword("");
@@ -1842,7 +1843,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     const newList = Array.from(new Set([...completedRecordIds, ...newIds]));
     
     setCompletedRecordIds(newList);
-    localStorage.setItem("jt_completed_review_records", JSON.stringify(newList));
+    Config.set(CONFIG_KEYS.COMPLETED_REVIEW_RECORDS, JSON.stringify(newList));
     dbService.completeReviews(newIds);
     toast.success(`${newIds.length} resi dari ${sellerName} ditandai Selesai!`);
 
