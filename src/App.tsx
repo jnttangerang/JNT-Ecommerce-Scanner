@@ -62,6 +62,24 @@ export default function App() {
   // Push notification state for "Order Cancelled" and system updates
   const [notifications, setNotifications] = useState<{ id: string; message: string; timestamp: string; type?: "success" | "error" | "warning"; title?: string }[]>([]);
 
+  // Acknowledge retake state to avoid duplicate notifications
+  const [acknowledgedRetakes, setAcknowledgedRetakes] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("jt_acknowledged_retakes");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleAcknowledgeRetake = (resi: string) => {
+    setAcknowledgedRetakes(prev => {
+      const updated = [...new Set([...prev, resi])];
+      localStorage.setItem("jt_acknowledged_retakes", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   const pullDatabaseFromCloud = async () => {
     const config = dbService.getCloudConfig();
     const hasAppsScript = config.appsScriptUrl && 
@@ -94,6 +112,35 @@ export default function App() {
       setIsPulling(false);
     }
   };
+
+  // Show retake notifications at the operator level (WELCOME or SCANNER views)
+  useEffect(() => {
+    if (currentView === "OWNER_LOGIN" || currentView === "OWNER_DASHBOARD") {
+      return;
+    }
+
+    const allRecords = dbService.getRecords();
+    const retakeRequests = allRecords.filter(
+      (r) => r.RetakeStatus === "PENDING" && !acknowledgedRetakes.includes(r.Resi)
+    );
+
+    if (retakeRequests.length > 0) {
+      // Find the first unacknowledged retake request
+      const topRetake = retakeRequests[0];
+      
+      toast.warning("FOTO ULANG (RETAKE)", {
+        description: `Butuh Foto Ulang: Resi ${topRetake.Resi} (Seller: ${topRetake.Seller}) ditandai BURAM oleh Owner! Harap foto ulang paket tersebut.`,
+        duration: 15000,
+        id: `retake-toast-${topRetake.Resi}`, // unique ID to prevent duplicate toast spam
+        action: {
+          label: "Mengerti",
+          onClick: () => {
+            handleAcknowledgeRetake(topRetake.Resi);
+          }
+        }
+      });
+    }
+  }, [currentView, acknowledgedRetakes, pendingCount, isSyncing, isPulling, isOffline]);
 
   // Load state on mount
   useEffect(() => {
@@ -273,19 +320,6 @@ export default function App() {
 
   // Owner marked order as cancelled or requested retake -> inform operators immediately!
   const handleOwnerUpdatedStatus = () => {
-    const allRecords = dbService.getRecords();
-    
-
-    // Check for retake requests
-    const retakeRequests = allRecords.filter(r => r.RetakeStatus === "PENDING");
-    if (retakeRequests.length > 0) {
-      const topRetake = retakeRequests[0];
-      toast.warning("FOTO ULANG (RETAKE)", {
-        description: `Butuh Foto Ulang: Resi ${topRetake.Resi} (Seller: ${topRetake.Seller}) ditandai BURAM oleh Owner! Harap foto ulang paket tersebut.`,
-        duration: 8000,
-      });
-    }
-
     updatePendingCount();
   };
 

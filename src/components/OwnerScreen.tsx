@@ -346,9 +346,45 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       const data = await response.json();
       if (data && data.success) {
         // Map raw strings to objects
-        const fetchedSellers: any[] = [];
-        const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
-        const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
+        let fetchedSellers: Seller[] = [];
+        if (data.sellers && Array.isArray(data.sellers)) {
+          fetchedSellers = data.sellers.map((item: any, idx: number) => {
+            if (typeof item === 'string') {
+              return {
+                id: `SEL_PULL_${idx}_${item.replace(/[^A-Z0-9]/ig, '')}`,
+                kodeSeller: `KS-${item.replace(/[^A-Z0-9]/ig, '') || idx}`,
+                nama: item.trim(),
+                statusAktif: 'ACTIVE' as const,
+                syncStatus: 'SYNCED' as const
+              };
+            } else if (item && typeof item === 'object') {
+              const nama = item.NamaSeller || item.nama || item.Nama || item.SellerName || item.Nama_Seller || '';
+              const kodeSeller = item.kodeSeller || item.KodeSeller || item.kode || `KS-${nama.replace(/[^A-Z0-9]/ig, '') || idx}`;
+              const id = item.id || item.ID || `SEL_PULL_${idx}_${nama.replace(/[^A-Z0-9]/ig, '')}`;
+              return {
+                id: id,
+                kodeSeller: kodeSeller,
+                nama: nama.trim(),
+                statusAktif: item.statusAktif || item.StatusAktif || 'ACTIVE',
+                kategoriProduk: item.kategoriProduk || item.KategoriProduk,
+                noHp: item.noHp || item.NoHp || item.no_hp || item.No_HP,
+                alamat: item.alamat || item.Alamat,
+                gps: item.gps || item.GPS,
+                targetHarian: Number(item.targetHarian || item.TargetHarian) || 0,
+                catatan: item.catatan || item.Catatan,
+                updatedAt: item.updatedAt || item.UpdatedAt,
+                createdAt: item.createdAt || item.CreatedAt,
+                syncStatus: 'SYNCED' as const
+              };
+            }
+            return null;
+          }).filter(Boolean) as Seller[];
+        }
+        const uniqueOpNames = Array.from(new Set((data.operators || []).map((name: any) => typeof name === 'string' ? name.trim() : ''))).filter(Boolean);
+        const fetchedOperators = uniqueOpNames.map(name => ({ NamaOperator: name }));
+
+        const uniqueOutNames = Array.from(new Set((data.outlets || []).map((name: any) => typeof name === 'string' ? name.trim() : ''))).filter(Boolean);
+        const fetchedOutlets = uniqueOutNames.map(name => ({ NamaOutlet: name }));
 
         if (fetchedSellers.length === 0 && fetchedOperators.length === 0 && fetchedOutlets.length === 0) {
           setSyncFeedback({ type: "error", message: "Data kosong di Spreadsheet. Pastikan Spreadsheet Anda sudah diinisialisasi atau berisi data." });
@@ -360,6 +396,11 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(fetchedOutlets));
           }
           
+          if (fetchedSellers.length > 0) {
+            Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(fetchedSellers));
+            SellerService.setSellers(fetchedSellers);
+          }
+          
           setSellers(SellerService.getAll());
           setOperators(fetchedOperators);
           if (fetchedOutlets.length > 0) {
@@ -368,7 +409,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           
           setSyncFeedback({ 
             type: "success", 
-            message: `Berhasil menarik Seller Master tersinkron secara terpisah, ${fetchedOperators.length} Operator, dan ${fetchedOutlets.length || 3} Outlet dari Spreadsheet!` 
+            message: `Berhasil menarik ${fetchedSellers.length} Seller Master, ${fetchedOperators.length} Operator, dan ${fetchedOutlets.length || 3} Outlet dari Spreadsheet!` 
           });
           onStatusChanged(); // Notify parent of refresh if needed
         }
@@ -3150,6 +3191,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   <button
                     onClick={() => handleMarkCancelled(activeReviewRecord.Resi)}
                     className="w-full bg-red-650 hover:bg-red-700 text-white font-bold py-4 px-4 rounded-xl transition-all flex items-center justify-center space-x-2 shadow-sm cursor-pointer border-none"
+                    style={{ backgroundColor: '#363636' }}
                     id="mark-order-cancelled-button"
                   >
                     <Ban className="h-4 w-4" />

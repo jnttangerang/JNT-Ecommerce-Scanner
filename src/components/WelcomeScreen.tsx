@@ -186,8 +186,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               id="outlet-dropdown"
             >
               <option value="" disabled>--- Pilih Outlet J&T ---</option>
-              {outlets.map((o) => (
-                <option key={o.NamaOutlet} value={o.NamaOutlet}>
+              {outlets.map((o, idx) => (
+                <option key={`outlet-opt-${idx}-${o.NamaOutlet}`} value={o.NamaOutlet}>
                   {o.NamaOutlet}
                 </option>
               ))}
@@ -257,8 +257,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               id="seller-dropdown"
             >
               <option value="" disabled>--- Pilih Seller ---</option>
-              {sellers.map((s) => (
-                <option key={s.nama} value={s.nama}>
+              {sellers.map((s, idx) => (
+                <option key={s.id || `sel-opt-${idx}-${s.nama}`} value={s.nama}>
                   {s.nama}
                 </option>
               ))}
@@ -278,8 +278,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               id="operator-dropdown"
             >
               <option value="" disabled>--- Pilih Operator ---</option>
-              {operators.map((o) => (
-                <option key={o.NamaOperator} value={o.NamaOperator}>
+              {operators.map((o, idx) => (
+                <option key={`op-opt-${idx}-${o.NamaOperator}`} value={o.NamaOperator}>
                   {o.NamaOperator}
                 </option>
               ))}

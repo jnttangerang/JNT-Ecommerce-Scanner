@@ -232,29 +232,50 @@ export async function directAddMaster(
 }
 
 export async function directGetMasters(spreadsheetId: string, accessToken: string) {
-  const lists = [
-    { name: "Seller List", alt: "Daftar Seller" },
-    { name: "Data Operator", alt: "Operator List" },
-    { name: "Daftar Outlet", alt: "Outlet List" }
+  const sellerSheetNames = [
+    "MASTER_SELLER",
+    "MASTER SELLERS",
+    "MASTER SELLER",
+    "Seller List",
+    "Daftar Seller",
+    "SELLERS"
+  ];
+  
+  const operatorSheetNames = [
+    "Data Operator",
+    "Operator List",
+    "Daftar Operator",
+    "OPERATORS"
+  ];
+
+  const outletSheetNames = [
+    "Daftar Outlet",
+    "Outlet List",
+    "Daftar Outlets",
+    "OUTLETS"
   ];
 
   const results: any = { sellers: [], operators: [], outlets: [] };
 
-  const getSheetData = async (primary: string, alt: string) => {
-    let res = await fetchWithAuth(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(primary)}'!A2:A`, { method: 'GET' }, accessToken);
-    if (!res.ok) {
-      res = await fetchWithAuth(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(alt)}'!A2:A`, { method: 'GET' }, accessToken);
-    }
-    if (res.ok) {
-      const data = await res.json();
-      return (data.values || []).map((r: any) => r[0]).filter(Boolean);
+  const getSheetDataWithAlts = async (sheetNames: string[]) => {
+    for (const name of sheetNames) {
+      const res = await fetchWithAuth(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(name)}'!A2:A`,
+        { method: 'GET' },
+        accessToken
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const vals = (data.values || []).map((r: any) => r[0]).filter(Boolean);
+        if (vals.length > 0) return vals;
+      }
     }
     return [];
   };
 
-  results.sellers = await getSheetData(lists[0].name, lists[0].alt);
-  results.operators = await getSheetData(lists[1].name, lists[1].alt);
-  results.outlets = await getSheetData(lists[2].name, lists[2].alt);
+  results.sellers = await getSheetDataWithAlts(sellerSheetNames);
+  results.operators = await getSheetDataWithAlts(operatorSheetNames);
+  results.outlets = await getSheetDataWithAlts(outletSheetNames);
 
   return { success: true, ...results };
 }

@@ -1174,13 +1174,55 @@ export class DatabaseService {
       }
 
       if (data && data.success) {
-        
-        const fetchedOperators = (data.operators || []).map((name: string) => ({ NamaOperator: name.trim() })).filter((x: any) => x.NamaOperator);
-        const fetchedOutlets = (data.outlets || []).map((name: string) => ({ NamaOutlet: name.trim() })).filter((x: any) => x.NamaOutlet);
+        const uniqueOpNames = Array.from(new Set((data.operators || []).map((name: any) => typeof name === 'string' ? name.trim() : ''))).filter(Boolean);
+        const fetchedOperators = uniqueOpNames.map(name => ({ NamaOperator: name }));
 
-        
+        const uniqueOutNames = Array.from(new Set((data.outlets || []).map((name: any) => typeof name === 'string' ? name.trim() : ''))).filter(Boolean);
+        const fetchedOutlets = uniqueOutNames.map(name => ({ NamaOutlet: name }));
+
+        let fetchedSellers: Seller[] = [];
+        if (data.sellers && Array.isArray(data.sellers)) {
+          fetchedSellers = data.sellers.map((item: any, idx: number) => {
+            if (typeof item === 'string') {
+              return {
+                id: `SEL_PULL_${idx}_${item.replace(/[^A-Z0-9]/ig, '')}`,
+                kodeSeller: `KS-${item.replace(/[^A-Z0-9]/ig, '') || idx}`,
+                nama: item.trim(),
+                statusAktif: 'ACTIVE' as const,
+                syncStatus: 'SYNCED' as const
+              };
+            } else if (item && typeof item === 'object') {
+              const nama = item.NamaSeller || item.nama || item.Nama || item.SellerName || item.Nama_Seller || '';
+              const kodeSeller = item.kodeSeller || item.KodeSeller || item.kode || `KS-${nama.replace(/[^A-Z0-9]/ig, '') || idx}`;
+              const id = item.id || item.ID || `SEL_PULL_${idx}_${nama.replace(/[^A-Z0-9]/ig, '')}`;
+              return {
+                id: id,
+                kodeSeller: kodeSeller,
+                nama: nama.trim(),
+                statusAktif: item.statusAktif || item.StatusAktif || 'ACTIVE',
+                kategoriProduk: item.kategoriProduk || item.KategoriProduk,
+                noHp: item.noHp || item.NoHp || item.no_hp || item.No_HP,
+                alamat: item.alamat || item.Alamat,
+                gps: item.gps || item.GPS,
+                targetHarian: Number(item.targetHarian || item.TargetHarian) || 0,
+                catatan: item.catatan || item.Catatan,
+                updatedAt: item.updatedAt || item.UpdatedAt,
+                createdAt: item.createdAt || item.CreatedAt,
+                syncStatus: 'SYNCED' as const
+              };
+            }
+            return null;
+          }).filter(Boolean) as Seller[];
+        }
+
         Config.set(CONFIG_KEYS.OPERATORS, JSON.stringify(fetchedOperators));
         Config.set(CONFIG_KEYS.OUTLETS, JSON.stringify(fetchedOutlets));
+        if (fetchedSellers.length > 0) {
+          Config.set(CONFIG_KEYS.SELLERS, JSON.stringify(fetchedSellers));
+          import("./sellerService").then(({ SellerService }) => {
+            SellerService.setSellers(fetchedSellers);
+          });
+        }
         return { success: true };
       }
       return { success: false, error: "Data masters kosong atau respons gagal." };

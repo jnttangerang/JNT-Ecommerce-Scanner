@@ -11,6 +11,48 @@ class SellerServiceManager {
     this.loadCache();
   }
 
+  parseSellersFromRaw(raw: string): Seller[] {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item: any, idx: number) => {
+          if (typeof item === 'string') {
+            return {
+              id: `SEL_RAW_${idx}_${item.replace(/[^A-Z0-9]/ig, '')}`,
+              kodeSeller: `KS-${item.replace(/[^A-Z0-9]/ig, '') || idx}`,
+              nama: item.trim(),
+              statusAktif: 'ACTIVE' as const,
+              syncStatus: 'SYNCED' as const
+            };
+          } else if (item && typeof item === 'object') {
+            const nama = item.NamaSeller || item.nama || item.Nama || item.SellerName || item.Nama_Seller || '';
+            const kodeSeller = item.kodeSeller || item.KodeSeller || item.kode || `KS-${nama.replace(/[^A-Z0-9]/ig, '') || idx}`;
+            const id = item.id || item.ID || `SEL_RAW_${idx}_${nama.replace(/[^A-Z0-9]/ig, '')}`;
+            return {
+              id: id,
+              kodeSeller: kodeSeller,
+              nama: nama.trim(),
+              statusAktif: item.statusAktif || item.StatusAktif || 'ACTIVE',
+              kategoriProduk: item.kategoriProduk || item.KategoriProduk,
+              noHp: item.noHp || item.NoHp || item.no_hp || item.No_HP,
+              alamat: item.alamat || item.Alamat,
+              gps: item.gps || item.GPS,
+              targetHarian: Number(item.targetHarian || item.TargetHarian) || 0,
+              catatan: item.catatan || item.Catatan,
+              updatedAt: item.updatedAt || item.UpdatedAt,
+              createdAt: item.createdAt || item.CreatedAt,
+              syncStatus: 'SYNCED' as const
+            };
+          }
+          return null;
+        }).filter(Boolean) as Seller[];
+      }
+    } catch (e) {
+      console.warn("Failed to parse raw sellers:", e);
+    }
+    return [];
+  }
+
   loadCache() {
     try {
       const raw = localStorage.getItem(this.CACHE_KEY);
@@ -22,13 +64,33 @@ class SellerServiceManager {
     } catch (e) {
       this.cache = [];
     }
+
+    if (this.cache.length === 0) {
+      const configRawSellers = localStorage.getItem('jt_config_SELLERS');
+      if (configRawSellers && configRawSellers !== '[]') {
+        this.cache = this.parseSellersFromRaw(configRawSellers);
+        this.saveCache();
+      }
+    }
   }
 
   saveCache() {
     localStorage.setItem(this.CACHE_KEY, JSON.stringify(this.cache));
   }
 
+  setSellers(sellers: Seller[]) {
+    this.cache = sellers;
+    this.saveCache();
+  }
+
   getAll(): Seller[] {
+    if (this.cache.length === 0) {
+      const configRawSellers = localStorage.getItem('jt_config_SELLERS');
+      if (configRawSellers && configRawSellers !== '[]') {
+        this.cache = this.parseSellersFromRaw(configRawSellers);
+        this.saveCache();
+      }
+    }
     return this.cache;
   }
 
