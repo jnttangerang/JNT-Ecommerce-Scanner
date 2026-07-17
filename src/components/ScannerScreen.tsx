@@ -129,7 +129,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // Session scanned resis (starts empty on enter)
   const [sessionScannedResis, setSessionScannedResis] = useState<string[]>([]);
   // Active panel tab ("ACTIVE_SESSION" by default)
-  const [activePanelTab, setActivePanelTab] = useState<"ACTIVE_SESSION" | "LAPORAN_SCAN" | "CANCEL_QUEUE">("ACTIVE_SESSION");
+  const [activePanelTab, setActivePanelTab] = useState<"ACTIVE_SESSION" | "LAPORAN_SCAN" | "CANCEL_QUEUE" | "RETAKE_HISTORY">("ACTIVE_SESSION");
 
   // Cancel queue processing states
   const [activeCancelItem, setActiveCancelItem] = useState<ScanRecord | null>(null);
@@ -362,16 +362,29 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     );
   }, [filteredRecords]);
 
+  // Filtered records for Retake History (requested for a retake by owner)
+  const filteredRecordsRetakeHistory = React.useMemo(() => {
+    return filteredRecords.filter(r => 
+      r.RetakeStatus === "PENDING" || r.RetakeStatus === "RETAKEN"
+    );
+  }, [filteredRecords]);
+
+  const pendingRetakeCount = React.useMemo(() => {
+    return filteredRecordsRetakeHistory.filter(r => r.RetakeStatus === "PENDING").length;
+  }, [filteredRecordsRetakeHistory]);
+
   // Active records to display based on the selected tab
   const activeRecordsList = React.useMemo(() => {
     if (activePanelTab === "ACTIVE_SESSION") {
       return filteredRecordsSession;
     } else if (activePanelTab === "CANCEL_QUEUE") {
       return filteredRecordsCancelQueue;
+    } else if (activePanelTab === "RETAKE_HISTORY") {
+      return filteredRecordsRetakeHistory;
     } else {
       return filteredRecordsLaporan;
     }
-  }, [activePanelTab, filteredRecordsSession, filteredRecordsLaporan, filteredRecordsCancelQueue]);
+  }, [activePanelTab, filteredRecordsSession, filteredRecordsLaporan, filteredRecordsCancelQueue, filteredRecordsRetakeHistory]);
 
   // Check if any filters are actively set (other than default)
   const isFilterActive = !!(filterSearchQuery.trim());
@@ -1916,18 +1929,18 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           <div className="bg-white border border-slate-200 rounded-3xl p-5 flex flex-col flex-grow shadow-sm">
             
             {/* Segmented Tab Controls */}
-            <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-4 border border-slate-200/50 gap-1 select-none">
+            <div className="flex bg-slate-100 p-1.5 rounded-2xl mb-4 border border-slate-200/50 gap-1 select-none flex-wrap">
               <button
                 type="button"
                 onClick={() => setActivePanelTab("ACTIVE_SESSION")}
-                className={`flex-1 py-2 px-2.5 rounded-xl text-[11px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 ${
+                className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 min-w-[65px] ${
                   activePanelTab === "ACTIVE_SESSION"
                     ? "bg-white text-slate-900 shadow-sm border border-slate-200/20"
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
                 <span>Sesi</span>
-                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                <span className={`text-[9px] font-mono px-1 py-0.5 rounded-md ${
                   activePanelTab === "ACTIVE_SESSION" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
                 }`}>
                   {sessionScannedResis.length}
@@ -1936,14 +1949,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               <button
                 type="button"
                 onClick={() => setActivePanelTab("LAPORAN_SCAN")}
-                className={`flex-1 py-2 px-2.5 rounded-xl text-[11px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 ${
+                className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 min-w-[75px] ${
                   activePanelTab === "LAPORAN_SCAN"
                     ? "bg-white text-slate-900 shadow-sm border border-slate-200/20"
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
                 <span>Laporan</span>
-                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                <span className={`text-[9px] font-mono px-1 py-0.5 rounded-md ${
                   activePanelTab === "LAPORAN_SCAN" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
                 }`}>
                   {filteredRecordsLaporan.length}
@@ -1952,19 +1965,39 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               <button
                 type="button"
                 onClick={() => setActivePanelTab("CANCEL_QUEUE")}
-                className={`flex-1 py-2 px-2.5 rounded-xl text-[11px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 ${
+                className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 min-w-[70px] ${
                   activePanelTab === "CANCEL_QUEUE"
-                    ? "bg-red-600 text-white shadow-sm font-bold"
+                    ? "bg-red-650 text-white shadow-sm font-bold"
                     : filteredRecordsCancelQueue.length > 0
                     ? "bg-red-100 text-red-700 animate-pulse font-extrabold"
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
                 <span>Cancel</span>
-                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                <span className={`text-[9px] font-mono px-1 py-0.5 rounded-md ${
                   activePanelTab === "CANCEL_QUEUE" ? "bg-red-700 text-white font-bold" : "bg-slate-200 text-slate-600"
                 }`}>
                   {filteredRecordsCancelQueue.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivePanelTab("RETAKE_HISTORY")}
+                className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-black tracking-wide uppercase transition-all duration-200 cursor-pointer flex items-center justify-center space-x-1 min-w-[70px] ${
+                  activePanelTab === "RETAKE_HISTORY"
+                    ? "bg-amber-550 text-white shadow-sm font-bold"
+                    : pendingRetakeCount > 0
+                    ? "bg-amber-100 text-amber-700 animate-pulse font-extrabold"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <span>Retake</span>
+                <span className={`text-[9px] font-mono px-1 py-0.5 rounded-md ${
+                  activePanelTab === "RETAKE_HISTORY" 
+                    ? (pendingRetakeCount > 0 ? "bg-red-600 text-white font-bold animate-bounce" : "bg-amber-600 text-white font-bold") 
+                    : (pendingRetakeCount > 0 ? "bg-red-600 text-white font-bold" : "bg-slate-200 text-slate-600")
+                }`}>
+                  {pendingRetakeCount > 0 ? `${pendingRetakeCount} Perlu Retake` : filteredRecordsRetakeHistory.length}
                 </span>
               </button>
             </div>
@@ -1978,6 +2011,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     ? `DAFTAR RESI TERAKHIR (${sessionScannedResis.length})`
                     : activePanelTab === "CANCEL_QUEUE"
                     ? `DAFTAR PAKET CANCEL (${filteredRecordsCancelQueue.length})`
+                    : activePanelTab === "RETAKE_HISTORY"
+                    ? `RIWAYAT FOTO ULANG (${filteredRecordsRetakeHistory.length})`
                     : `LAPORAN SCAN HARI INI (${filteredRecordsLaporan.length})`
                   }
                   {(() => {
@@ -2004,6 +2039,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     ? "Menampilkan seluruh data yang cocok dengan kriteria filter" 
                     : activePanelTab === "ACTIVE_SESSION"
                     ? "Resi yang berhasil di scan pada sesi aktif ini"
+                    : activePanelTab === "CANCEL_QUEUE"
+                    ? "Daftar paket yang ditandai batal oleh seller atau owner"
+                    : activePanelTab === "RETAKE_HISTORY"
+                    ? "Daftar seluruh paket yang pernah diminta foto ulang (retake) oleh owner"
                     : "Histori seluruh resi yang berhasil Anda scan hari ini"
                   }
                 </p>
@@ -2061,7 +2100,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                            Daftar resi terakhir kosong. Silakan mulai memindai barcode paket seller <strong className="text-red-650">{config.seller}</strong>!
                          </p>
                        </>
-                     ) : activePanelTab === "CANCEL_QUEUE" ? (
+                     ) : activePanelTab === "RETAKE_HISTORY" ? (
+                        <>
+                          <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Riwayat Retake Bersih</h5>
+                          <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold text-emerald-600">
+                            Tidak ada riwayat foto ulang (retake) untuk Anda. Kualitas foto Anda luar biasa!
+                          </p>
+                        </>
+                      ) : activePanelTab === "CANCEL_QUEUE" ? (
                        <>
                          <h5 className="text-slate-500 font-bold text-xs uppercase tracking-wider">Antrean Cancel Bersih</h5>
                          <p className="text-[11px] max-w-xs mx-auto text-slate-500 mt-1 leading-relaxed font-semibold text-emerald-600">
@@ -2129,6 +2175,23 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                           <span>•</span>
                           <span className="truncate max-w-[80px]">{r.Seller}</span>
                         </div>
+
+                        {/* Retake status labels for clarity */}
+                        {r.RetakeStatus === "PENDING" && (
+                          <div className="mt-1 flex items-center">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200 uppercase tracking-wider gap-1">
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              Butuh Foto Ulang
+                            </span>
+                          </div>
+                        )}
+                        {r.RetakeStatus === "RETAKEN" && (
+                          <div className="mt-1 flex items-center">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase tracking-wider">
+                              ✓ Retake Selesai
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2167,6 +2230,21 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                             <Camera className="h-3.5 w-3.5" />
                             <span>Proses</span>
                           </button>
+                        ) : activePanelTab === "RETAKE_HISTORY" ? (
+                          r.RetakeStatus === "PENDING" ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRetakeModal(r.Resi)}
+                              className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] py-1.5 px-3 rounded-lg flex items-center space-x-1 uppercase cursor-pointer transition-colors"
+                            >
+                              <Camera className="h-3.5 w-3.5" />
+                              <span>Foto Ulang</span>
+                            </button>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-1 text-[9px] font-extrabold bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200/50">
+                              SELESAI
+                            </span>
+                          )
                         ) : deletingResi === r.Resi ? (
                           <div className="flex items-center bg-red-50 border border-red-200 rounded-lg p-1 space-x-1 animate-fadeIn">
                             <button
