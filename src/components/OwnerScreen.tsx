@@ -2668,10 +2668,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                       <div>
                         <h3 className="font-bold text-sm text-slate-800 flex items-center">
                           <BarChart3 className="h-4 w-4 text-[#f20000] mr-2" />
-                          BEBAN & PRODUKTIVITAS KURIR
+                          BEBAN & PRODUKTIVITAS
                         </h3>
                         <p className="text-[10px] text-slate-500 mt-1">
-                          Jumlah paket yang berhasil discan/diinput berdasarkan operator kurir aktif.
+                          Jumlah paket yang berhasil discan/diinput berdasarkan operator aktif.
                         </p>
                       </div>
                       <span className="bg-red-50 text-[#f20000] text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border border-red-100">
