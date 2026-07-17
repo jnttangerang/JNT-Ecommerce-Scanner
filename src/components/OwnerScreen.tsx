@@ -1675,6 +1675,9 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       results = results.filter(r => r.Status === selectedStatusFilter);
     }
 
+    // Sort by ScanTimestamp descending so newest are first (No. 1)
+    results = [...results].sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
+
     setFilteredRecords(results);
     
     // Auto reset review index to start of filtered set
