@@ -1329,6 +1329,8 @@ export class DatabaseService {
               finalMergedMap.set(resiKey, {
                 ...localRec,
                 ...cloudRec,
+                ID: localRec.ID || cloudRec.ID,
+                ScanTimestamp: localRec.ScanTimestamp || cloudRec.ScanTimestamp,
                 SyncStatus: "SYNCED",
                 // Preserve business states if they have been locally initialized/changed
                 PackageStatus: (localRec.PackageStatus && localRec.PackageStatus !== "NONE") ? localRec.PackageStatus : (cloudRec.PackageStatus || "NONE"),

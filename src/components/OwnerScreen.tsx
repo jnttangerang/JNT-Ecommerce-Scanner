@@ -249,7 +249,16 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
   const loadData = () => {
     const records = dbService.getRecords();
-    setAllRecords(records);
+    
+    // Only update state if records have actually changed (diffing)
+    setAllRecords(prev => {
+      // Fast check by length first
+      if (prev.length !== records.length) return records;
+      
+      // Deep check if length is same
+      const isSame = JSON.stringify(prev) === JSON.stringify(records);
+      return isSame ? prev : records;
+    });
 
     // Load import logs
     setImportLogs(dbService.getImportLogs());
