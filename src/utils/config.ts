@@ -218,7 +218,7 @@ class ConfigurationService {
         }
       }
     } catch (e) {
-      console.error("Failed to sync config:", e);
+      console.warn("Failed to sync config:", e);
     } finally {
       this.syncInProgress = false;
     }

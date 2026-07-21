@@ -208,7 +208,7 @@ class SellerServiceManager {
              this.saveCache();
            }
         } catch (e) {
-           console.error("Error syncing sellers up", e);
+           console.warn("Error syncing sellers up", e);
         }
       }
       
@@ -247,7 +247,7 @@ class SellerServiceManager {
       }
 
     } catch (e) {
-      console.error("Failed to sync sellers:", e);
+      console.warn("Failed to sync sellers:", e);
     } finally {
       this.syncInProgress = false;
     }

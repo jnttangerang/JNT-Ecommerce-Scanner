@@ -139,7 +139,13 @@ function generateHistoricalData(): ScanRecord[] {
     });
   }
 
-  return records.sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
+  return records.sort((a, b) => {
+    const timeA = new Date(`${a.Tanggal}T${a.Jam}`).getTime();
+    const timeB = new Date(`${b.Tanggal}T${b.Jam}`).getTime();
+    if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+    if (b.Tanggal !== a.Tanggal) return b.Tanggal.localeCompare(a.Tanggal);
+    return (b.Jam || "").localeCompare(a.Jam || "");
+  });
 }
 
 // Generate simple svg-based data URI as mock tracking photo
@@ -423,7 +429,13 @@ export class DatabaseService {
             const cacheIds = new Set(this.recordsCache.map(r => r.ID));
             const missing = idbRecords.filter(r => !cacheIds.has(r.ID));
             if (missing.length > 0) {
-              this.recordsCache = [...this.recordsCache, ...missing].sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
+              this.recordsCache = [...this.recordsCache, ...missing].sort((a, b) => {
+                const timeA = new Date(`${a.Tanggal}T${a.Jam}`).getTime();
+                const timeB = new Date(`${b.Tanggal}T${b.Jam}`).getTime();
+                if (!isNaN(timeA) && !isNaN(timeB)) return timeB - timeA;
+                if (b.Tanggal !== a.Tanggal) return b.Tanggal.localeCompare(a.Tanggal);
+                return (b.Jam || "").localeCompare(a.Jam || "");
+              });
             }
           } else {
             // First time bootstrap: register in-memory historical list onto IndexedDB
@@ -1361,7 +1373,20 @@ export class DatabaseService {
 
         // Convert map back to sorted array
         const finalMerged = Array.from(finalMergedMap.values())
-          .sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
+          .sort((a, b) => {
+            // Reconstruct timestamps explicitly for robustness
+            const timeA = new Date(`${a.Tanggal}T${a.Jam}`).getTime();
+            const timeB = new Date(`${b.Tanggal}T${b.Jam}`).getTime();
+            
+            if (!isNaN(timeA) && !isNaN(timeB)) {
+              return timeB - timeA; // Descending
+            }
+            // Fallback
+            if (b.Tanggal !== a.Tanggal) {
+              return b.Tanggal.localeCompare(a.Tanggal);
+            }
+            return (b.Jam || "").localeCompare(a.Jam || "");
+          });
 
         this.saveRecords(finalMerged);
         return { success: true };

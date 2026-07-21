@@ -622,6 +622,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       }
 
       setCameraActive(true);
+      // Coba fokus otomatis saat kamera baru saja dihidupkan
+      setTimeout(() => {
+        triggerManualFocus();
+      }, 1000);
     } catch (err: any) {
       console.warn("Camera failed to start under html5-qrcode:", err);
       // Determine if error is NotAllowedError (permission denied) or NotFoundError (no device)
@@ -738,6 +742,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     } catch (err) {
       console.warn("Failed to set manual focus constraint adjustment:", err);
     }
+  };
+
+  const unlockScannerAndFocus = () => {
+    isScanningLocked.current = false;
+    triggerManualFocus();
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1042,7 +1051,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           audioService.playError();
           toast.error("Gagal mengambil foto. Coba lagi.");
           consecutiveScansRef.current = { barcode: "", count: 0 };
-          isScanningLocked.current = false;
+          unlockScannerAndFocus();
           return;
         }
 
@@ -1068,7 +1077,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         });
       } catch (err) {
         console.error("Scan processing error:", err);
-        isScanningLocked.current = false;
+        unlockScannerAndFocus();
       }
     })();
   };
@@ -1120,14 +1129,14 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         onRecordAdded();
       }
       setPendingValidation(null);
-      isScanningLocked.current = false;
+      unlockScannerAndFocus();
     } else {
       console.log(`Save DB : FAILED - ${result.error}`);
       // Show error, play error sound, unlock scanner so they can retry
       audioService.playError();
       toast.error("Gagal menyimpan data", { description: result.error || "Unknown error" });
       setPendingValidation(null);
-      isScanningLocked.current = false;
+      unlockScannerAndFocus();
     }
   };
 
@@ -1343,8 +1352,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               </p>
               
               <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
-                {retakeTasks.map(task => (
-                  <div key={task.Resi} className="bg-slate-950/60 border border-amber-500/10 rounded-xl p-3 flex items-center justify-between">
+                {retakeTasks.map((task, idx) => (
+                  <div key={`${task.ID}-${idx}`} className="bg-slate-950/60 border border-amber-500/10 rounded-xl p-3 flex items-center justify-between">
                     <div className="text-xs">
                       <span className="font-mono font-bold text-slate-100 block">{task.Resi}</span>
                       <span className="text-[10px] text-slate-400 block mt-0.5">Seller: {task.Seller} • {task.Jam}</span>
@@ -1494,7 +1503,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       <button
                         onClick={() => {
                           setDuplicateWarning(null);
-                          isScanningLocked.current = false;
+                          unlockScannerAndFocus();
                         }}
                         className="w-full bg-red-650 hover:bg-red-600 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(220,38,38,0.25)] active:scale-95 cursor-pointer uppercase"
                       >
@@ -1538,7 +1547,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       <button
                         onClick={() => {
                           setUnclearResiAlert(null);
-                          isScanningLocked.current = false;
+                          unlockScannerAndFocus();
                         }}
                         className="w-full bg-green-650 hover:bg-green-600 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(22,163,74,0.3)] active:scale-95 cursor-pointer uppercase"
                       >
@@ -1572,7 +1581,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       <button
                         onClick={() => {
                           setCancelledWarning(null);
-                          isScanningLocked.current = false;
+                          unlockScannerAndFocus();
                         }}
                         className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-3.5 px-4 rounded-xl transition-all shadow-[0_0_15px_rgba(239,68,68,0.3)] active:scale-95 cursor-pointer uppercase"
                       >
@@ -1955,7 +1964,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                <span>Laporan</span>
+                <span>Riwayat</span>
                 <span className={`text-[9px] font-mono px-1 py-0.5 rounded-md ${
                   activePanelTab === "LAPORAN_SCAN" ? "bg-red-50 text-red-650 font-bold" : "bg-slate-200 text-slate-600"
                 }`}>
@@ -2013,7 +2022,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     ? `DAFTAR PAKET CANCEL (${filteredRecordsCancelQueue.length})`
                     : activePanelTab === "RETAKE_HISTORY"
                     ? `RIWAYAT FOTO ULANG (${filteredRecordsRetakeHistory.length})`
-                    : `LAPORAN SCAN HARI INI (${filteredRecordsLaporan.length})`
+                    : `RIWAYAT SCAN HARI INI (${filteredRecordsLaporan.length})`
                   }
                   {(() => {
                     const isDataRealtime = !isOffline && pendingCount === 0 && isCloudDataFresh;
@@ -2137,7 +2146,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                ) : (
                 displayedRecords.map((r, i) => (
                   <div
-                    key={r.Resi + r.ScanTimestamp}
+                    key={`${r.ID}-${i}`}
                     className={`p-3 bg-slate-50 border rounded-xl flex items-center justify-between transition-all hover:bg-slate-100/60 ${
                       i === 0 && !isFilterActive ? "border-red-200 shadow-sm" : "border-slate-100/70"
                     }`}

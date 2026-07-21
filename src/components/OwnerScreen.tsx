@@ -72,6 +72,17 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [selectedOutletFilter, setSelectedOutletFilter] = useState("ALL");
   const [selectedSellerFilter, setSelectedSellerFilter] = useState("ALL");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("ALL");
+  
+  // New Log Date Filter
+  const [logDateFilter, setLogDateFilter] = useState<"TODAY" | "YESTERDAY" | "THIS_WEEK" | "THIS_MONTH" | "CUSTOM">("TODAY");
+  const [logStartDate, setLogStartDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [logEndDate, setLogEndDate] = useState(() => new Date().toISOString().split("T")[0]);
+
+  // Pagination for Summary & Rekap
+  const [summarySellerPage, setSummarySellerPage] = useState(1);
+  const [summarySellerPageSize, setSummarySellerPageSize] = useState(5);
+  const [rekapSellerPage, setRekapSellerPage] = useState(1);
+  const [rekapSellerPageSize, setRekapSellerPageSize] = useState(5);
 
   // Review Deck indices (for carousel review)
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -101,7 +112,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [statsTotalCancelled, setStatsTotalCancelled] = useState(0);
 
   // Summary Date Filters
-  const [summaryDateType, setSummaryDateType] = useState<"ALL" | "TODAY" | "YESTERDAY" | "CUSTOM">("ALL");
+  const [summaryDateType, setSummaryDateType] = useState<"ALL" | "TODAY" | "YESTERDAY" | "CUSTOM">("TODAY");
   const [summaryStartDate, setSummaryStartDate] = useState(() => {
     return new Date().toISOString().split("T")[0];
   });
@@ -239,8 +250,6 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const loadData = () => {
     const records = dbService.getRecords();
     setAllRecords(records);
-    setFilteredRecords(records);
-    calculateStatistics(records);
 
     // Load import logs
     setImportLogs(dbService.getImportLogs());
@@ -262,11 +271,6 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         document.getElementsByTagName("head")[0].appendChild(link);
       }
       link.href = config.faviconUrl;
-    }
-
-    // Default review carousel index
-    if (records.length > 0) {
-      setReviewIndex(0);
     }
   };
 
@@ -1652,6 +1656,40 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   useEffect(() => {
     let results = allRecords;
 
+    // Filter by Log Date
+    if (logDateFilter !== "ALL") {
+      const today = new Date();
+      // Offset by current timezone to get local date correctly
+      const getLocalDateStr = (d: Date) => {
+        const offset = d.getTimezoneOffset() * 60000;
+        return new Date(d.getTime() - offset).toISOString().split("T")[0];
+      };
+      
+      const todayStr = getLocalDateStr(today);
+
+      if (logDateFilter === "TODAY") {
+        results = results.filter(r => r.Tanggal === todayStr);
+      } else if (logDateFilter === "YESTERDAY") {
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yStr = getLocalDateStr(yesterday);
+        results = results.filter(r => r.Tanggal === yStr);
+      } else if (logDateFilter === "THIS_WEEK") {
+        const firstDay = new Date(today);
+        const day = firstDay.getDay(); // 0 is Sunday, 1 is Monday
+        const diff = firstDay.getDate() - day + (day === 0 ? -6 : 1);
+        firstDay.setDate(diff); // Monday
+        const firstDayStr = getLocalDateStr(firstDay);
+        results = results.filter(r => r.Tanggal >= firstDayStr && r.Tanggal <= todayStr);
+      } else if (logDateFilter === "THIS_MONTH") {
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+        const firstDayStr = getLocalDateStr(firstDay);
+        results = results.filter(r => r.Tanggal >= firstDayStr && r.Tanggal <= todayStr);
+      } else if (logDateFilter === "CUSTOM") {
+        results = results.filter(r => r.Tanggal >= logStartDate && r.Tanggal <= logEndDate);
+      }
+    }
+
     // Search query match Tracking Resi or Operator
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -1675,16 +1713,32 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       results = results.filter(r => r.Status === selectedStatusFilter);
     }
 
-    // Sort by ScanTimestamp descending so newest are first (No. 1)
-    results = [...results].sort((a, b) => b.ScanTimestamp - a.ScanTimestamp);
+    // Sort by Tanggal and Jam descending so newest are first (No. 1)
+    // Single Source of Truth: using Tanggal and Jam to build Timestamp
+    results = [...results].sort((a, b) => {
+      const timeA = new Date(`${a.Tanggal}T${a.Jam}`).getTime();
+      const timeB = new Date(`${b.Tanggal}T${b.Jam}`).getTime();
+      
+      if (!isNaN(timeA) && !isNaN(timeB)) {
+        return timeB - timeA; // Descending
+      }
+      
+      // Fallback if parsing fails (should not happen with standard formats)
+      if (b.Tanggal !== a.Tanggal) {
+        return b.Tanggal.localeCompare(a.Tanggal);
+      }
+      return b.Jam.localeCompare(a.Jam);
+    });
 
     setFilteredRecords(results);
-    
-    // Auto reset review index to start of filtered set
+  }, [searchQuery, selectedOutletFilter, selectedSellerFilter, selectedStatusFilter, allRecords, logDateFilter, logStartDate, logEndDate]);
+
+  // Reset pagination and review index ONLY when filters change (not when records update from polling)
+  useEffect(() => {
     setReviewIndex(0);
     setOwnerPage(1);
     setOwnerJumpInput("");
-  }, [searchQuery, selectedOutletFilter, selectedSellerFilter, selectedStatusFilter, allRecords]);
+  }, [searchQuery, selectedOutletFilter, selectedSellerFilter, selectedStatusFilter, logDateFilter, logStartDate, logEndDate]);
 
   // Owner pagination variables
   const totalOwnerRecords = filteredRecords.length;
@@ -1877,6 +1931,25 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const activeReviewRecord = selectedReviewSeller
     ? (reviewDeckRecords[reviewIndex] || null)
     : null;
+
+  // Track active review record ID to prevent shifting during polling
+  const activeReviewIdRef = React.useRef<string | null>(null);
+  
+  React.useEffect(() => {
+    if (activeReviewRecord) {
+      activeReviewIdRef.current = activeReviewRecord.ID;
+    }
+  }, [activeReviewRecord]);
+
+  // When reviewDeckRecords changes (due to polling), check if the active record shifted
+  React.useEffect(() => {
+    if (selectedReviewSeller && activeReviewIdRef.current && reviewDeckRecords.length > 0) {
+      const newIndex = reviewDeckRecords.findIndex(r => r.ID === activeReviewIdRef.current);
+      if (newIndex !== -1 && newIndex !== reviewIndex) {
+        setReviewIndex(newIndex);
+      }
+    }
+  }, [reviewDeckRecords, selectedReviewSeller]);
 
   // Get unique list of sellers present in deckEligibleRecords with stats
   const sellersInFilteredSet = React.useMemo(() => {
@@ -2859,43 +2932,90 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         {Object.keys(statsSeller).length === 0 ? (
           <p className="text-slate-400 text-xs text-center py-6">Belum ada data rekap seller pada tanggal terpilih.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {Object.entries(statsSeller).map(([sellerName, total]) => {
-              // Count of cancelled for this seller in the filtered range
-              const cancelledCount = getFilteredSummaryRecords().filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
-              const scannedCount = (total as number) - cancelledCount;
+          (() => {
+            const sortedSellers = Object.entries(statsSeller).sort((a, b) => (b[1] as number) - (a[1] as number));
+            const totalSummaryPages = Math.ceil(sortedSellers.length / summarySellerPageSize) || 1;
+            const startIdx = (summarySellerPage - 1) * summarySellerPageSize;
+            const paginatedSellers = sortedSellers.slice(startIdx, startIdx + summarySellerPageSize);
 
-              return (
-                <div 
-                  key={sellerName}
-                  className="bg-slate-50 hover:bg-slate-100/70 border border-slate-100 hover:border-slate-200 rounded-2xl p-4 transition duration-250 flex flex-col justify-between space-y-3"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="max-w-[75%]">
-                      <h4 className="font-extrabold text-slate-800 text-xs truncate" title={sellerName}>
-                        {sellerName}
-                      </h4>
-                      <span className="text-[9px] text-slate-400 font-medium block mt-0.5">J&T Partner</span>
-                    </div>
-                    <div className="bg-red-50 text-red-600 border border-red-100 text-[10px] font-black font-mono h-6 px-2 rounded-lg flex items-center justify-center">
-                      {total as number} Pkt
-                    </div>
-                  </div>
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  {paginatedSellers.map(([sellerName, total]) => {
+                    // Count of cancelled for this seller in the filtered range
+                    const cancelledCount = getFilteredSummaryRecords().filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
+                    const scannedCount = (total as number) - cancelledCount;
 
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/50">
-                    <div className="bg-white border border-slate-100 rounded-xl p-1.5 text-center">
-                      <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">OK (SCANNED)</span>
-                      <span className="text-xs font-extrabold text-green-600 font-mono mt-0.5 block">{scannedCount}</span>
-                    </div>
-                    <div className="bg-white border border-slate-100 rounded-xl p-1.5 text-center">
-                      <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">CANCELLED</span>
-                      <span className="text-xs font-extrabold text-red-650 font-mono mt-0.5 block" style={{ color: "#ff0000" }}>{cancelledCount}</span>
-                    </div>
+                    return (
+                      <div 
+                        key={sellerName}
+                        className="bg-slate-50 hover:bg-slate-100/70 border border-slate-100 hover:border-slate-200 rounded-2xl p-4 transition duration-250 flex flex-col justify-between space-y-3"
+                      >
+                        <div className="flex justify-between items-start">
+                          <div className="max-w-[75%]">
+                            <h4 className="font-extrabold text-slate-800 text-xs truncate" title={sellerName}>
+                              {sellerName}
+                            </h4>
+                            <span className="text-[9px] text-slate-400 font-medium block mt-0.5">J&T Partner</span>
+                          </div>
+                          <div className="bg-red-50 text-red-600 border border-red-100 text-[10px] font-black font-mono h-6 px-2 rounded-lg flex items-center justify-center">
+                            {total as number} Pkt
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/50">
+                          <div className="bg-white border border-slate-100 rounded-xl p-1.5 text-center">
+                            <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">OK (SCANNED)</span>
+                            <span className="text-xs font-extrabold text-green-600 font-mono mt-0.5 block">{scannedCount}</span>
+                          </div>
+                          <div className="bg-white border border-slate-100 rounded-xl p-1.5 text-center">
+                            <span className="text-[8px] text-slate-400 block font-bold uppercase tracking-wider">CANCELLED</span>
+                            <span className="text-xs font-extrabold text-red-650 font-mono mt-0.5 block" style={{ color: "#ff0000" }}>{cancelledCount}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {/* Pagination Controls */}
+                <div className="flex items-center justify-between border-t border-slate-100 pt-4 mt-2">
+                  <select
+                    value={summarySellerPageSize}
+                    onChange={(e) => {
+                      setSummarySellerPageSize(Number(e.target.value));
+                      setSummarySellerPage(1);
+                    }}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 font-semibold focus:outline-none"
+                  >
+                    <option value={5}>5 / halaman</option>
+                    <option value={10}>10 / halaman</option>
+                    <option value={25}>25 / halaman</option>
+                  </select>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setSummarySellerPage(Math.max(1, summarySellerPage - 1))}
+                      disabled={summarySellerPage === 1}
+                      className="p-1 rounded-lg hover:bg-slate-100 disabled:opacity-50 text-slate-600"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="text-xs text-slate-500 font-medium font-mono">
+                      {summarySellerPage} / {totalSummaryPages}
+                    </span>
+                    <button
+                      onClick={() => setSummarySellerPage(Math.min(totalSummaryPages, summarySellerPage + 1))}
+                      disabled={summarySellerPage === totalSummaryPages}
+                      className="p-1 rounded-lg hover:bg-slate-100 disabled:opacity-50 text-slate-600"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })()
         )}
       </div>
 
@@ -2913,7 +3033,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               <p className="text-[10px] text-slate-500">Volume parcel dari masing-masing seller</p>
             </div>
             <span className="bg-slate-50 border border-slate-200 text-[10px] font-mono px-2 py-0.5 rounded text-slate-600 font-bold">
-              Hari Ini & Kemarin
+              {summaryDateType === "TODAY" ? "Hari Ini" : summaryDateType === "YESTERDAY" ? "Kemarin" : summaryDateType === "ALL" ? "Semua" : "Kustom"}
             </span>
           </div>
 
@@ -2921,27 +3041,74 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             {Object.keys(statsSeller).length === 0 ? (
               <p className="text-slate-400 text-xs text-center py-6">Belum ada data seller.</p>
             ) : (
-              Object.entries(statsSeller).map(([sellerName, count]) => {
+              (() => {
+                const sortedSellers = Object.entries(statsSeller).sort((a, b) => (b[1] as number) - (a[1] as number));
+                const totalRekapPages = Math.ceil(sortedSellers.length / rekapSellerPageSize) || 1;
+                const startIdx = (rekapSellerPage - 1) * rekapSellerPageSize;
+                const paginatedSellers = sortedSellers.slice(startIdx, startIdx + rekapSellerPageSize);
                 const maxVal = Math.max(...Object.keys(statsSeller).map(k => statsSeller[k] as number), 1);
-                const percent = ((count as number) / maxVal) * 100;
+
                 return (
-                  <div key={sellerName} className="space-y-1">
-                     <div className="flex justify-between text-xs font-medium">
-                      <span className="text-slate-700 font-bold">{sellerName}</span>
-                      <span className="font-mono text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 font-bold text-[11px]">
-                        {count as number} paket
-                      </span>
+                  <>
+                    {paginatedSellers.map(([sellerName, count]) => {
+                      const percent = ((count as number) / maxVal) * 100;
+                      return (
+                        <div key={sellerName} className="space-y-1">
+                           <div className="flex justify-between text-xs font-medium">
+                            <span className="text-slate-700 font-bold">{sellerName}</span>
+                            <span className="font-mono text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 font-bold text-[11px]">
+                              {count as number} paket
+                            </span>
+                          </div>
+                          {/* SVG/CSS Custom bar */}
+                          <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden border border-slate-200/50 p-0.5">
+                            <div
+                              className="bg-red-600 h-full rounded-full transition-all duration-500 shadow-sm"
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
+                    {/* Pagination Controls */}
+                    <div className="flex items-center justify-between border-t border-slate-100 pt-3 mt-4">
+                      <select
+                        value={rekapSellerPageSize}
+                        onChange={(e) => {
+                          setRekapSellerPageSize(Number(e.target.value));
+                          setRekapSellerPage(1);
+                        }}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] text-slate-700 font-semibold focus:outline-none"
+                      >
+                        <option value={5}>5 / halaman</option>
+                        <option value={10}>10 / halaman</option>
+                        <option value={25}>25 / halaman</option>
+                      </select>
+
+                      <div className="flex items-center space-x-1">
+                        <button
+                          onClick={() => setRekapSellerPage(Math.max(1, rekapSellerPage - 1))}
+                          disabled={rekapSellerPage === 1}
+                          className="p-1 rounded hover:bg-slate-100 disabled:opacity-50 text-slate-600"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="text-[10px] text-slate-500 font-medium font-mono px-1">
+                          {rekapSellerPage} / {totalRekapPages}
+                        </span>
+                        <button
+                          onClick={() => setRekapSellerPage(Math.min(totalRekapPages, rekapSellerPage + 1))}
+                          disabled={rekapSellerPage === totalRekapPages}
+                          className="p-1 rounded hover:bg-slate-100 disabled:opacity-50 text-slate-600"
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
-                    {/* SVG/CSS Custom bar */}
-                    <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden border border-slate-200/50 p-0.5">
-                      <div
-                        className="bg-red-600 h-full rounded-full transition-all duration-500 shadow-sm"
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
-                  </div>
+                  </>
                 );
-              })
+              })()
             )}
           </div>
         </div>
@@ -3312,8 +3479,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   Tidak ada paket batal yang perlu dipisahkan.
                 </div>
               ) : (
-                pendingCancelRecords.map(r => (
-                  <div key={r.Resi} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                pendingCancelRecords.map((r, idx) => (
+                  <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
                     <div className="text-xs space-y-1">
                       <span className="font-mono font-bold text-slate-800 block tracking-wider">{r.Resi}</span>
                       <div className="text-[10px] text-slate-500 font-medium">
@@ -3345,8 +3512,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   Belum ada paket batal yang berhasil dipisahkan hari ini.
                 </div>
               ) : (
-                resolvedCancelRecords.map(r => (
-                  <div key={r.Resi} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                resolvedCancelRecords.map((r, idx) => (
+                  <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
                     <div className="text-xs space-y-1 min-w-0 flex-1 pr-2">
                       <span className="font-mono font-bold text-slate-800 block tracking-wider">{r.Resi}</span>
                       <div className="text-[10px] text-slate-500 font-medium truncate">
@@ -3400,7 +3567,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
         </div>
 
         {/* Filters control row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5 mb-5 select-none text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 mb-3 select-none text-xs">
           
           {/* Searching */}
           <div className="relative">
@@ -3413,6 +3580,19 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-slate-800 focus:outline-none focus:border-red-600 font-semibold"
             />
           </div>
+
+          {/* Filter Tanggal */}
+          <select
+            value={logDateFilter}
+            onChange={(e) => setLogDateFilter(e.target.value as any)}
+            className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-700 focus:outline-none"
+          >
+            <option value="TODAY">Hari Ini</option>
+            <option value="YESTERDAY">Kemarin</option>
+            <option value="THIS_WEEK">Minggu Ini</option>
+            <option value="THIS_MONTH">Bulan Ini</option>
+            <option value="CUSTOM">Custom Date</option>
+          </select>
 
           {/* Filter Outlet */}
           <select
@@ -3449,8 +3629,26 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             <option value="SCANNED">SCANNED (Aktif)</option>
             <option value="CANCELLED">CANCELLED (Ditolak)</option>
           </select>
-
         </div>
+
+        {logDateFilter === "CUSTOM" && (
+          <div className="flex items-center space-x-2 mb-5 animate-in fade-in slide-in-from-top-2 duration-200">
+            <span className="text-xs text-slate-500 font-semibold">Dari:</span>
+            <input
+              type="date"
+              value={logStartDate}
+              onChange={(e) => setLogStartDate(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-red-500"
+            />
+            <span className="text-xs text-slate-500 font-semibold pl-2">Sampai:</span>
+            <input
+              type="date"
+              value={logEndDate}
+              onChange={(e) => setLogEndDate(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-red-500"
+            />
+          </div>
+        )}
 
         {/* Database tabular view */}
         <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -3479,7 +3677,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   const fileName = `PKT_${r.Tanggal.replace(/-/g, '')}_${r.Resi}.jpg`;
                   
                   return (
-                    <tr key={r.Resi + r.Jam} className="hover:bg-slate-50/50 transition-colors">
+                    <tr key={`${r.ID}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                       {/* Column 1: No. */}
                       <td className="p-3.5 font-bold font-mono text-[11px]" style={{ color: "#484848" }}>
                         {ownerStartIndex + idx + 1}
