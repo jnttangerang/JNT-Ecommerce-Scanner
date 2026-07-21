@@ -1790,16 +1790,53 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     }
   };
 
-  // Reviews indices navigation centered at middle-bottom
-  const handlePrevReview = () => {
-    const listLength = selectedReviewSeller ? reviewDeckRecords.length : filteredRecords.length;
-    setReviewIndex((prev) => (prev > 0 ? prev - 1 : listLength - 1));
-  };
+  // Business logic: Filter records specifically for the Review Deck
+  const deckEligibleRecords = React.useMemo(() => {
+    const todayStr = getTodayLocalDateString();
+    return filteredRecords.filter(r => {
+      // Must NOT display: records already marked "Selesai Scan"
+      if (completedRecordIds.includes(r.ID)) return false;
 
-  const handleNextReview = () => {
-    const listLength = selectedReviewSeller ? reviewDeckRecords.length : filteredRecords.length;
-    setReviewIndex((prev) => (prev < listLength - 1 ? prev + 1 : 0));
-  };
+      const requiresAction = r.RetakeStatus === "PENDING" || r.alertStatus === "PENDING";
+      const isCompleted = r.Status === "DISERAHKAN" || r.Status === "PICKUP" || r.Status === "CANCELLED";
+      
+      // Show: packages requiring owner action
+      if (requiresAction) return true;
+
+      // Must NOT display: already processed Sprinter records (unless it requires action)
+      if (isCompleted) return false;
+
+      // Must NOT display: yesterday's completed work / historical records
+      const isToday = r.Tanggal === todayStr;
+      if (!isToday) return false;
+
+      // Show: seller scanned today, packages that still require Sprinter processing (SCANNED)
+      return true;
+    });
+  }, [filteredRecords, completedRecordIds]);
+
+  // Get records specifically for the currently selected review seller
+  const reviewDeckRecords = React.useMemo(() => {
+    if (!selectedReviewSeller) return [];
+    return deckEligibleRecords.filter(r => r.Seller === selectedReviewSeller);
+  }, [deckEligibleRecords, selectedReviewSeller]);
+
+  // Reviews indices navigation centered at middle-bottom
+  const handlePrevReview = React.useCallback(() => {
+    setReviewIndex((prev) => {
+      const listLength = selectedReviewSeller ? reviewDeckRecords.length : filteredRecords.length;
+      if (listLength === 0) return 0;
+      return prev > 0 ? prev - 1 : listLength - 1;
+    });
+  }, [selectedReviewSeller, reviewDeckRecords.length, filteredRecords.length]);
+
+  const handleNextReview = React.useCallback(() => {
+    setReviewIndex((prev) => {
+      const listLength = selectedReviewSeller ? reviewDeckRecords.length : filteredRecords.length;
+      if (listLength === 0) return 0;
+      return prev < listLength - 1 ? prev + 1 : 0;
+    });
+  }, [selectedReviewSeller, reviewDeckRecords.length, filteredRecords.length]);
 
   // Handle YoYi Import
   const handleImportYoYi = async () => {
@@ -1905,37 +1942,6 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const uniqueOutlets = Array.from(new Set(allRecords.map(r => r.Outlet)));
   const uniqueSellers = Array.from(new Set(allRecords.map(r => r.Seller)));
 
-  // Business logic: Filter records specifically for the Review Deck
-  const deckEligibleRecords = React.useMemo(() => {
-    const todayStr = getTodayLocalDateString();
-    return filteredRecords.filter(r => {
-      // Must NOT display: records already marked "Selesai Scan"
-      if (completedRecordIds.includes(r.ID)) return false;
-
-      const requiresAction = r.RetakeStatus === "PENDING" || r.alertStatus === "PENDING";
-      const isCompleted = r.Status === "DISERAHKAN" || r.Status === "PICKUP" || r.Status === "CANCELLED";
-      
-      // Show: packages requiring owner action
-      if (requiresAction) return true;
-
-      // Must NOT display: already processed Sprinter records (unless it requires action)
-      if (isCompleted) return false;
-
-      // Must NOT display: yesterday's completed work / historical records
-      const isToday = r.Tanggal === todayStr;
-      if (!isToday) return false;
-
-      // Show: seller scanned today, packages that still require Sprinter processing (SCANNED)
-      return true;
-    });
-  }, [filteredRecords, completedRecordIds]);
-
-  // Get records specifically for the currently selected review seller
-  const reviewDeckRecords = React.useMemo(() => {
-    if (!selectedReviewSeller) return [];
-    return deckEligibleRecords.filter(r => r.Seller === selectedReviewSeller);
-  }, [deckEligibleRecords, selectedReviewSeller]);
-
   // Retrieve current active record for Review Deck
   const activeReviewRecord = selectedReviewSeller
     ? (reviewDeckRecords[reviewIndex] || null)
@@ -1959,6 +1965,110 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       }
     }
   }, [reviewDeckRecords, selectedReviewSeller]);
+
+  // Ensure reviewIndex stays within bounds if records are removed
+  React.useEffect(() => {
+    const maxIdx = selectedReviewSeller ? reviewDeckRecords.length - 1 : filteredRecords.length - 1;
+    if (maxIdx >= 0 && reviewIndex > maxIdx) {
+      setReviewIndex(maxIdx);
+    }
+  }, [reviewDeckRecords.length, filteredRecords.length, reviewIndex, selectedReviewSeller]);
+
+  // Persistent Set of preloaded image URLs to avoid duplicate network requests
+  const preloadedImageUrlsRef = React.useRef<Set<string>>(new Set());
+
+  // Windowed Image Preloader (Preload ±3 images around active reviewIndex for 0ms slide transitions)
+  React.useEffect(() => {
+    const listToPreload = selectedReviewSeller ? reviewDeckRecords : filteredRecords;
+    if (!listToPreload || listToPreload.length === 0) return;
+
+    const windowSize = 3; // Preload 3 items before and 3 items after active index
+    const start = Math.max(0, reviewIndex - windowSize);
+    const end = Math.min(listToPreload.length - 1, reviewIndex + windowSize);
+
+    for (let i = start; i <= end; i++) {
+      const rec = listToPreload[i];
+      if (!rec || !rec.PhotoURL) continue;
+
+      const directUrl = getDirectDriveImageUrl(rec.PhotoURL);
+      if (directUrl && !preloadedImageUrlsRef.current.has(directUrl)) {
+        preloadedImageUrlsRef.current.add(directUrl);
+        const img = new Image();
+        img.src = directUrl;
+      }
+
+      if (rec.CancelEvidencePhoto) {
+        const cancelUrl = getDirectDriveImageUrl(rec.CancelEvidencePhoto);
+        if (cancelUrl && !preloadedImageUrlsRef.current.has(cancelUrl)) {
+          preloadedImageUrlsRef.current.add(cancelUrl);
+          const img = new Image();
+          img.src = cancelUrl;
+        }
+      }
+    }
+  }, [reviewIndex, reviewDeckRecords, selectedReviewSeller, filteredRecords]);
+
+  // Keyboard Arrow Navigation & Handheld Barcode Scanner Support
+  const barcodeBufferRef = React.useRef<string>("");
+  const lastKeyTimeRef = React.useRef<number>(0);
+
+  React.useEffect(() => {
+    // Only intercept keys when user is reviewing a seller or in focus mode
+    if (!selectedReviewSeller && !isFocusMode) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore keystrokes when typing in text fields
+      const targetTag = (e.target as HTMLElement)?.tagName?.toUpperCase();
+      if (targetTag === "INPUT" || targetTag === "TEXTAREA" || targetTag === "SELECT") {
+        return;
+      }
+
+      // Left / Up Arrow -> Previous photo
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        handlePrevReview();
+        return;
+      }
+
+      // Right / Down Arrow / Space -> Next photo
+      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+        e.preventDefault();
+        handleNextReview();
+        return;
+      }
+
+      // Handheld Barcode Scanner Support (scans fast character sequence followed by Enter)
+      const now = Date.now();
+      if (now - lastKeyTimeRef.current > 120) {
+        barcodeBufferRef.current = ""; // Reset buffer if typed manually / slow
+      }
+      lastKeyTimeRef.current = now;
+
+      if (e.key === "Enter") {
+        const scannedResi = barcodeBufferRef.current.trim();
+        barcodeBufferRef.current = "";
+        if (scannedResi.length >= 4) {
+          const listToSearch = selectedReviewSeller ? reviewDeckRecords : filteredRecords;
+          const matchedIdx = listToSearch.findIndex(
+            r => r.Resi.toLowerCase() === scannedResi.toLowerCase()
+          );
+          if (matchedIdx !== -1) {
+            setReviewIndex(matchedIdx);
+            toast.success(`Menampilkan resi ${scannedResi}`);
+          } else {
+            toast.info(`Resi ${scannedResi} tidak ditemukan pada seller ini`);
+          }
+        }
+      } else if (e.key.length === 1) {
+        barcodeBufferRef.current += e.key;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [selectedReviewSeller, isFocusMode, reviewDeckRecords, filteredRecords, handlePrevReview, handleNextReview]);
 
   // Get unique list of sellers present in deckEligibleRecords with stats
   const sellersInFilteredSet = React.useMemo(() => {
@@ -2183,10 +2293,13 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               {/* Image Frame */}
               <div className="relative w-full h-full flex items-center justify-center bg-black rounded-2xl overflow-hidden shadow-2xl aspect-video">
                 <img
+                  key={activeReviewRecord.ID || activeReviewRecord.Resi}
                   src={getDirectDriveImageUrl(activeReviewRecord.PhotoURL)}
                   alt={`Receipt image for ${activeReviewRecord.Resi}`}
                   className="w-full h-full object-contain"
                   referrerPolicy="no-referrer"
+                  loading="eager"
+                  decoding="async"
                 />
 
                 {/* Left Arrow overlay */}
@@ -3308,10 +3421,13 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               {/* Photo component */}
               <div className="relative w-full max-w-lg aspect-video flex items-center justify-center bg-black rounded-lg overflow-hidden border border-slate-800">
                 <img
+                  key={activeReviewRecord.ID || activeReviewRecord.Resi}
                   src={getDirectDriveImageUrl(activeReviewRecord.PhotoURL)}
                   alt={`Receipt image for ${activeReviewRecord.Resi}`}
                   className="w-full h-full object-contain"
                   referrerPolicy="no-referrer"
+                  loading="eager"
+                  decoding="async"
                 />
                 
                 {/* Micro branding watermark */}
