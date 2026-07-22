@@ -50,9 +50,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   // Local scan records for summary
   const [allRecords, setAllRecords] = useState<ScanRecord[]>([]);
-  const [filterStartDate, setFilterStartDate] = useState("");
-  const [filterEndDate, setFilterEndDate] = useState("");
+  const [filterStartDate, setFilterStartDate] = useState(() => getTodayLocalDateString());
+  const [filterEndDate, setFilterEndDate] = useState(() => getTodayLocalDateString());
   const [filterSyncStatus, setFilterSyncStatus] = useState<"ALL" | "SYNCED" | "PENDING">("ALL");
+
+  // Pagination for summary
+  const [summaryPage, setSummaryPage] = useState(1);
+  const [summaryPageSize, setSummaryPageSize] = useState<number | "ALL">(5);
 
   useEffect(() => {
     // Load local scan records
@@ -478,34 +482,89 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         {Object.keys(statsSeller).length === 0 ? (
           <p className="text-slate-400 text-[11px] text-center py-4 font-medium">Belum ada rekap data pada filter ini.</p>
         ) : (
-          <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
-            {Object.entries(statsSeller).map(([sellerName, total]) => {
-              const cancelledCount = filteredRecords.filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
-              const scannedCount = total - cancelledCount;
+          <div className="space-y-3">
+            <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+              {(() => {
+                const sortedSellers = Object.entries(statsSeller).sort((a, b) => b[1] - a[1]);
+                
+                const paginatedSellers = summaryPageSize === "ALL" 
+                  ? sortedSellers
+                  : sortedSellers.slice((summaryPage - 1) * summaryPageSize, summaryPage * summaryPageSize);
 
-              return (
-                <div key={sellerName} className="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-100 rounded-xl transition duration-150">
-                  <div className="max-w-[60%]">
-                    <span className="font-extrabold text-[11px] text-slate-700 block truncate" title={sellerName}>
-                      {sellerName}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-[9px] bg-green-50 text-green-700 border border-green-150 px-1.5 py-0.5 rounded font-mono font-bold" title="Scanned / Berhasil">
-                      {scannedCount} OK
-                    </span>
-                    {cancelledCount > 0 && (
-                      <span className="text-[9px] bg-[#ff0000] text-white border border-red-150 px-1.5 py-0.5 rounded font-mono font-bold" title="Cancelled / Batal">
-                        {cancelledCount} BT
-                      </span>
-                    )}
-                    <span className="text-[10px] bg-slate-200 text-slate-800 px-2 py-0.5 rounded-md font-mono font-black">
-                      {total} Pkt
-                    </span>
-                  </div>
+                return paginatedSellers.map(([sellerName, total]) => {
+                  const cancelledCount = filteredRecords.filter(r => r.Seller === sellerName && r.Status === "CANCELLED").length;
+                  const scannedCount = total - cancelledCount;
+
+                  return (
+                    <div key={sellerName} className="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-100 rounded-xl transition duration-150">
+                      <div className="max-w-[60%]">
+                        <span className="font-extrabold text-[11px] text-slate-700 block truncate" title={sellerName}>
+                          {sellerName}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[9px] bg-green-50 text-green-700 border border-green-150 px-1.5 py-0.5 rounded font-mono font-bold" title="Scanned / Berhasil">
+                          {scannedCount} OK
+                        </span>
+                        {cancelledCount > 0 && (
+                          <span className="text-[9px] bg-[#ff0000] text-white border border-red-150 px-1.5 py-0.5 rounded font-mono font-bold" title="Cancelled / Batal">
+                            {cancelledCount} BT
+                          </span>
+                        )}
+                        <span className="text-[10px] bg-slate-200 text-slate-800 px-2 py-0.5 rounded-md font-mono font-black">
+                          {total} Pkt
+                        </span>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Pagination Controls */}
+            {Object.keys(statsSeller).length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between pt-2 border-t border-slate-100 gap-2">
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Tampilkan:</span>
+                  <select
+                    value={summaryPageSize}
+                    onChange={(e) => {
+                      const val = e.target.value === "ALL" ? "ALL" : Number(e.target.value);
+                      setSummaryPageSize(val);
+                      setSummaryPage(1);
+                    }}
+                    className="bg-slate-50 border border-slate-200 rounded-md px-1.5 py-1 text-[10px] text-slate-700 font-bold focus:outline-none"
+                  >
+                    <option value={5}>5 / hal</option>
+                    <option value={10}>10 / hal</option>
+                    <option value={25}>25 / hal</option>
+                    <option value="ALL">Semua</option>
+                  </select>
                 </div>
-              );
-            })}
+
+                {summaryPageSize !== "ALL" && (
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setSummaryPage(Math.max(1, summaryPage - 1))}
+                      disabled={summaryPage === 1}
+                      className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-600 transition-colors cursor-pointer"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <span className="text-[10px] text-slate-600 font-bold font-mono px-1">
+                      Hal {summaryPage} / {Math.ceil(Object.keys(statsSeller).length / summaryPageSize) || 1}
+                    </span>
+                    <button
+                      onClick={() => setSummaryPage(Math.min(Math.ceil(Object.keys(statsSeller).length / summaryPageSize) || 1, summaryPage + 1))}
+                      disabled={summaryPage === (Math.ceil(Object.keys(statsSeller).length / summaryPageSize) || 1)}
+                      className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-600 transition-colors cursor-pointer"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
