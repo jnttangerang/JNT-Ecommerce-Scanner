@@ -495,7 +495,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                       {scannedCount} OK
                     </span>
                     {cancelledCount > 0 && (
-                      <span className="text-[9px] bg-red-50 text-red-650 border border-red-150 px-1.5 py-0.5 rounded font-mono font-bold" title="Cancelled / Batal">
+                      <span className="text-[9px] bg-[#ff0000] text-white border border-red-150 px-1.5 py-0.5 rounded font-mono font-bold" title="Cancelled / Batal">
                         {cancelledCount} BT
                       </span>
                     )}
