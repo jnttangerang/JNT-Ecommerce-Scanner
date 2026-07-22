@@ -49,6 +49,7 @@ import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { QRCodeSVG } from 'qrcode.react';
 
 interface OwnerDashboardProps {
   onStatusChanged: () => void;
@@ -88,6 +89,8 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [selectedReviewSeller, setSelectedReviewSeller] = useState<string | null>(null);
+  const [reviewSellerPage, setReviewSellerPage] = useState(1);
+  const [reviewSellerPageSize, setReviewSellerPageSize] = useState<number | "ALL">(6);
   const [detailRecordIndex, setDetailRecordIndex] = useState<number | null>(null);
   const [completedRecordIds, setCompletedRecordIds] = useState<string[]>(() => {
     try {
@@ -2343,9 +2346,21 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               
               {/* Giant Info Card */}
               <div className="bg-slate-900 border border-slate-850 p-6 md:p-8 rounded-3xl space-y-5 shadow-2xl">
-                <span className="text-xs text-red-500 font-extrabold tracking-widest block uppercase">ID PELACAKAN RESI:</span>
-                <div className="text-3xl md:text-4xl font-black text-white font-mono tracking-wider break-all leading-none selection:bg-red-500">
-                  {activeReviewRecord.Resi}
+                <div className="flex justify-between items-start gap-4">
+                  <div className="min-w-0">
+                    <span className="text-xs text-red-500 font-extrabold tracking-widest block uppercase">ID PELACAKAN RESI:</span>
+                    <div className="text-3xl md:text-4xl font-black text-white font-mono tracking-wider break-all leading-none selection:bg-red-500 mt-2">
+                      {activeReviewRecord.Resi}
+                    </div>
+                  </div>
+                  <div className="bg-white p-3 rounded-2xl shadow-xl flex-shrink-0" title="Scan dengan aplikasi J&T Sprinter">
+                    <QRCodeSVG 
+                      value={activeReviewRecord.Resi} 
+                      size={96} 
+                      level="M" 
+                      includeMargin={false}
+                    />
+                  </div>
                 </div>
 
                 <div className="border-t border-slate-800 pt-5 space-y-4">
@@ -3338,77 +3353,130 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
         {!selectedReviewSeller ? (
           /* LIST OF SELLERS SCANNED BY ADMIN */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 py-2" id="owner-seller-pickup-list">
-            {sellersInFilteredSet.length === 0 ? (
-              <div className="col-span-full text-center py-16 text-slate-400 space-y-3 border border-dashed border-slate-200 rounded-3xl">
-                <Filter className="h-10 w-10 mx-auto opacity-30 text-slate-400" />
-                <h5 className="text-slate-650 font-bold text-sm uppercase tracking-wider">Belum Ada Seller yang Di-scan</h5>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto font-semibold leading-relaxed">
-                  Tidak ditemukan seller dengan data scan di database pada filter aktif saat ini.
-                </p>
-              </div>
-            ) : (
-              sellersInFilteredSet.map((s) => {
-                return (
-                  <div 
-                    key={s.name}
-                    className="border rounded-2xl p-4 transition-all flex flex-col justify-between hover:shadow-md bg-white border-slate-200/80 hover:border-red-200"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between">
-                        <span className="font-extrabold text-slate-800 text-sm md:text-base truncate max-w-[170px]" title={s.name}>
-                          {s.name}
-                        </span>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-slate-100 text-slate-500 font-medium">
-                          Belum Scan
-                        </span>
-                      </div>
-                      
-                      <div className="mt-3 space-y-1 text-[11px] text-slate-500 font-semibold">
-                        <div className="flex justify-between">
-                          <span>Total Paket Scanned:</span>
-                          <span className="font-bold text-slate-700">{s.total} resi</span>
-                        </div>
-                        {s.cancelled > 0 && (
-                          <div className="flex justify-between text-red-650">
-                            <span>Dibatalkan (Cancelled):</span>
-                            <span className="font-bold">{s.cancelled} resi</span>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 py-2" id="owner-seller-pickup-list">
+              {sellersInFilteredSet.length === 0 ? (
+                <div className="col-span-full text-center py-16 text-slate-400 space-y-3 border border-dashed border-slate-200 rounded-3xl">
+                  <Filter className="h-10 w-10 mx-auto opacity-30 text-slate-400" />
+                  <h5 className="text-slate-650 font-bold text-sm uppercase tracking-wider">Belum Ada Seller yang Di-scan</h5>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto font-semibold leading-relaxed">
+                    Tidak ditemukan seller dengan data scan di database pada filter aktif saat ini.
+                  </p>
+                </div>
+              ) : (
+                (() => {
+                  const paginatedSellers = reviewSellerPageSize === "ALL" 
+                    ? sellersInFilteredSet 
+                    : sellersInFilteredSet.slice((reviewSellerPage - 1) * reviewSellerPageSize, reviewSellerPage * reviewSellerPageSize);
+
+                  return paginatedSellers.map((s) => {
+                    return (
+                      <div 
+                        key={s.name}
+                        className="border rounded-2xl p-4 transition-all flex flex-col justify-between hover:shadow-md bg-white border-slate-200/80 hover:border-red-200"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <span className="font-extrabold text-slate-800 text-sm md:text-base truncate max-w-[170px]" title={s.name}>
+                              {s.name}
+                            </span>
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-slate-100 text-slate-500 font-medium">
+                              Belum Scan
+                            </span>
                           </div>
-                        )}
-                        <div className="flex justify-between text-[10px] text-slate-400 pt-1">
-                          <span>Scan Terakhir:</span>
-                          <span className="font-mono font-bold text-slate-600">{s.lastScanTime}</span>
+                          
+                          <div className="mt-3 space-y-1 text-[11px] text-slate-500 font-semibold">
+                            <div className="flex justify-between">
+                              <span>Total Paket Scanned:</span>
+                              <span className="font-bold text-slate-700">{s.total} resi</span>
+                            </div>
+                            {s.cancelled > 0 && (
+                              <div className="flex justify-between text-red-650">
+                                <span>Dibatalkan (Cancelled):</span>
+                                <span className="font-bold">{s.cancelled} resi</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between text-[10px] text-slate-400 pt-1">
+                              <span>Scan Terakhir:</span>
+                              <span className="font-mono font-bold text-slate-600">{s.lastScanTime}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => completeSellerRecords(s.name)}
+                            type="button"
+                            className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center space-x-1 border border-transparent cursor-pointer text-white hover:opacity-90"
+                            style={{ backgroundColor: "#ff0000" }}
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                            <span>Selesai Scan</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setSelectedReviewSeller(s.name);
+                              setReviewIndex(0);
+                            }}
+                            type="button"
+                            className="text-white font-black px-3.5 py-2 rounded-xl text-[10px] uppercase tracking-wider transition-all flex items-center space-x-1 cursor-pointer border-none shadow-sm hover:opacity-90"
+                            style={{ backgroundColor: "#666666" }}
+                          >
+                            <span>Review Foto ({s.total})</span>
+                            <ChevronRight className="h-3.5 w-3.5 text-white" />
+                          </button>
                         </div>
                       </div>
-                    </div>
+                    );
+                  });
+                })()
+              )}
+            </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => completeSellerRecords(s.name)}
-                        type="button"
-                        className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center space-x-1 border border-transparent cursor-pointer text-white hover:opacity-90"
-                        style={{ backgroundColor: "#ff0000" }}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        <span>Selesai Scan</span>
-                      </button>
+            {/* Pagination Controls */}
+            {sellersInFilteredSet.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-100 gap-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs text-slate-500 font-medium">Tampilkan:</span>
+                  <select
+                    value={reviewSellerPageSize}
+                    onChange={(e) => {
+                      const val = e.target.value === "ALL" ? "ALL" : Number(e.target.value);
+                      setReviewSellerPageSize(val);
+                      setReviewSellerPage(1);
+                    }}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 font-semibold focus:outline-none"
+                  >
+                    <option value={6}>6 / halaman</option>
+                    <option value={12}>12 / halaman</option>
+                    <option value={24}>24 / halaman</option>
+                    <option value="ALL">Semua</option>
+                  </select>
+                </div>
 
-                      <button
-                        onClick={() => {
-                          setSelectedReviewSeller(s.name);
-                          setReviewIndex(0);
-                        }}
-                        type="button"
-                        className="text-white font-black px-3.5 py-2 rounded-xl text-[10px] uppercase tracking-wider transition-all flex items-center space-x-1 cursor-pointer border-none shadow-sm hover:opacity-90"
-                        style={{ backgroundColor: "#666666" }}
-                      >
-                        <span>Review Foto ({s.total})</span>
-                        <ChevronRight className="h-3.5 w-3.5 text-white" />
-                      </button>
-                    </div>
+                {reviewSellerPageSize !== "ALL" && (
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setReviewSellerPage(Math.max(1, reviewSellerPage - 1))}
+                      disabled={reviewSellerPage === 1}
+                      className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-600 transition-colors cursor-pointer"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="text-xs text-slate-600 font-medium font-mono px-2">
+                      Halaman {reviewSellerPage} dari {Math.ceil(sellersInFilteredSet.length / reviewSellerPageSize) || 1}
+                    </span>
+                    <button
+                      onClick={() => setReviewSellerPage(Math.min(Math.ceil(sellersInFilteredSet.length / reviewSellerPageSize) || 1, reviewSellerPage + 1))}
+                      disabled={reviewSellerPage === (Math.ceil(sellersInFilteredSet.length / reviewSellerPageSize) || 1)}
+                      className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-600 transition-colors cursor-pointer"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
                   </div>
-                );
-              })
+                )}
+              </div>
             )}
           </div>
         ) : activeReviewRecord ? (
@@ -3452,9 +3520,21 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             <div className="md:col-span-4 space-y-5 text-slate-700">
               
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-3">
-                <div className="text-[10px] text-slate-400 font-bold tracking-wider block">ID PELACAKAN RESI:</div>
-                <div className="text-2xl font-black text-slate-850 font-mono tracking-wider" id="review-barcode-text">
-                  {activeReviewRecord.Resi}
+                <div className="flex justify-between items-start gap-4">
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-slate-400 font-bold tracking-wider block">ID PELACAKAN RESI:</div>
+                    <div className="text-xl lg:text-2xl font-black text-slate-850 font-mono tracking-wider mt-1 truncate" id="review-barcode-text">
+                      {activeReviewRecord.Resi}
+                    </div>
+                  </div>
+                  <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm flex-shrink-0" title="Scan dengan aplikasi J&T Sprinter">
+                    <QRCodeSVG 
+                      value={activeReviewRecord.Resi} 
+                      size={72} 
+                      level="M" 
+                      includeMargin={false}
+                    />
+                  </div>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-y-2 text-xs pt-1 border-t border-slate-200 text-slate-600">
