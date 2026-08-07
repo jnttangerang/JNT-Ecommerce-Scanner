@@ -257,25 +257,48 @@ export async function directGetMasters(spreadsheetId: string, accessToken: strin
 
   const results: any = { sellers: [], operators: [], outlets: [] };
 
-  const getSheetDataWithAlts = async (sheetNames: string[]) => {
+  const getSheetDataWithAlts = async (sheetNames: string[], isSeller = false) => {
     for (const name of sheetNames) {
+      const range = isSeller ? 'A2:K' : 'A2:A';
       const res = await fetchWithAuth(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(name)}'!A2:A`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(name)}'!${range}`,
         { method: 'GET' },
         accessToken
       );
       if (res.ok) {
         const data = await res.json();
-        const vals = (data.values || []).map((r: any) => r[0]).filter(Boolean);
-        if (vals.length > 0) return vals;
+        
+        if (isSeller) {
+          const vals = (data.values || []).map((r: any) => {
+            // A=0: ID, B=1: Kode, C=2: Nama, etc.
+            const rawNama = r[2] || r[0] || ""; // fallback to col A if C is empty
+            if (!rawNama) return null;
+            return {
+              id: r[0] || "",
+              kodeSeller: r[1] || "",
+              nama: rawNama,
+              kategoriProduk: r[3] || "",
+              adminSeller: r[4] || "",
+              noHp: r[5] || "",
+              alamat: r[6] || "",
+              gps: r[7] || "",
+              radius: r[8] || "",
+              targetHarian: r[10] || ""
+            };
+          }).filter(Boolean);
+          if (vals.length > 0) return vals;
+        } else {
+          const vals = (data.values || []).map((r: any) => r[0]).filter(Boolean);
+          if (vals.length > 0) return vals;
+        }
       }
     }
     return [];
   };
 
-  results.sellers = await getSheetDataWithAlts(sellerSheetNames);
-  results.operators = await getSheetDataWithAlts(operatorSheetNames);
-  results.outlets = await getSheetDataWithAlts(outletSheetNames);
+  results.sellers = await getSheetDataWithAlts(sellerSheetNames, true);
+  results.operators = await getSheetDataWithAlts(operatorSheetNames, false);
+  results.outlets = await getSheetDataWithAlts(outletSheetNames, false);
 
   return { success: true, ...results };
 }

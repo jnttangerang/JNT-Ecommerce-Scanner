@@ -1623,10 +1623,28 @@ function handleGetMasters() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   
   // Get Sellers
-  const sellerSheet = ss.getSheetByName("Seller List") || ss.getSheetByName("Daftar Seller");
+  const sellerSheet = ss.getSheetByName("MASTER_SELLER") || ss.getSheetByName("MASTER SELLERS") || ss.getSheetByName("Seller List") || ss.getSheetByName("Daftar Seller");
   let sellers = [];
   if (sellerSheet && sellerSheet.getLastRow() > 1) {
-    sellers = sellerSheet.getRange(2, 1, sellerSheet.getLastRow() - 1, 1).getValues().map(r => r[0].toString());
+    const data = sellerSheet.getRange(2, 1, sellerSheet.getLastRow() - 1, 11).getValues();
+    for (let i = 0; i < data.length; i++) {
+      const r = data[i];
+      const rawNama = r[2] || r[0] || ""; // C is index 2, A is index 0
+      if (rawNama) {
+        sellers.push({
+          id: r[0] || "",
+          kodeSeller: r[1] || "",
+          nama: rawNama,
+          kategoriProduk: r[3] || "",
+          adminSeller: r[4] || "",
+          noHp: r[5] || "",
+          alamat: r[6] || "",
+          gps: r[7] || "",
+          radius: r[8] || "",
+          targetHarian: r[10] || ""
+        });
+      }
+    }
   }
   
   // Get Operators

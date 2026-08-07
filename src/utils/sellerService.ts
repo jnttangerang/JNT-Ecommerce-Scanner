@@ -79,7 +79,17 @@ class SellerServiceManager {
   }
 
   setSellers(sellers: Seller[]) {
-    this.cache = sellers;
+    // Deduplicate by name (case-insensitive)
+    const uniqueSellers = new Map<string, Seller>();
+    sellers.forEach(s => {
+      if (s.nama) {
+        const key = s.nama.trim().toLowerCase();
+        if (!uniqueSellers.has(key)) {
+          uniqueSellers.set(key, s);
+        }
+      }
+    });
+    this.cache = Array.from(uniqueSellers.values());
     this.saveCache();
   }
 
@@ -87,11 +97,29 @@ class SellerServiceManager {
     if (this.cache.length === 0) {
       const configRawSellers = localStorage.getItem('jt_config_SELLERS');
       if (configRawSellers && configRawSellers !== '[]') {
-        this.cache = this.parseSellersFromRaw(configRawSellers);
+        const parsed = this.parseSellersFromRaw(configRawSellers);
+        // Deduplicate parsed sellers as well
+        const uniqueSellers = new Map<string, Seller>();
+        parsed.forEach(s => {
+          if (s.nama) {
+            const key = s.nama.trim().toLowerCase();
+            if (!uniqueSellers.has(key)) {
+              uniqueSellers.set(key, s);
+            }
+          }
+        });
+        this.cache = Array.from(uniqueSellers.values());
         this.saveCache();
       }
     }
-    return this.cache;
+    // Also deduplicate the in-memory cache just in case
+    const unique = new Map<string, Seller>();
+    this.cache.forEach(s => {
+      if (s.nama) {
+        unique.set(s.nama.trim().toLowerCase(), s);
+      }
+    });
+    return Array.from(unique.values());
   }
 
   getById(id: string): Seller | undefined {
