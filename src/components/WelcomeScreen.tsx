@@ -277,8 +277,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     className="fixed inset-0 z-40" 
                     onClick={() => setShowSellerDropdown(false)}
                   />
-                  <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-hidden flex flex-col">
-                    <div className="p-2 border-b border-slate-100 flex items-center bg-slate-50 relative z-50">
+                  <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-[350px] flex flex-col">
+                    <div className="p-2 border-b border-slate-100 flex items-center bg-slate-50 relative z-50 rounded-t-xl">
                     <Search className="h-4 w-4 text-slate-400 ml-2 mr-2 flex-shrink-0" />
                     <input
                       type="text"
@@ -289,7 +289,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                       autoFocus
                     />
                   </div>
-                  <div className="overflow-y-auto flex-grow">
+                  <div className="overflow-y-auto overflow-x-hidden flex-grow rounded-b-xl">
                     {sellers
                       .filter(s => s.nama.toLowerCase().includes(sellerSearchQuery.toLowerCase()))
                       .map((s, idx) => (
