@@ -144,16 +144,26 @@ export default function App() {
 
   // Load state on mount
   useEffect(() => {
-    // Check initial offline preference
-    const pref = dbService.getOfflinePreference();
-    setIsOffline(pref);
+    // Use actual browser online status on mount
+    const isBrowserOnline = window.navigator.onLine;
+    const initialOffline = !isBrowserOnline;
+    setIsOffline(initialOffline);
+    
+    // Also sync the preference to match reality so it doesn't get stuck
+    if (isBrowserOnline) {
+      dbService.setOfflinePreference(false);
+    }
 
     const handleOnline = () => {
       setIsOffline(false);
+      dbService.setOfflinePreference(false);
       Config.sync();
       SellerService.sync();
     };
-    const handleOffline = () => setIsOffline(true);
+    const handleOffline = () => {
+      setIsOffline(true);
+      dbService.setOfflinePreference(true);
+    };
     
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
@@ -181,7 +191,7 @@ export default function App() {
         !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && 
         !config.appsScriptUrl.includes("AKfycbz_Example");
       
-      if (hasAppsScript && !pref) {
+      if (hasAppsScript && !initialOffline) {
         setIsPulling(true);
         try {
           await Config.sync(); // Also sync DATA_MASTER

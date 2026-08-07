@@ -482,6 +482,9 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       let html5QrCode = new Html5Qrcode("html5-qr-code-element");
       html5QrCodeRef.current = html5QrCode;
 
+      // Detect iOS for specific workarounds
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+
       // Configurations for shipping resi labels, which may carry a Code 128 barcode,
       // a QR code, or occasionally other 1D formats depending on the ecommerce seller.
       const scanConfig = {
@@ -499,10 +502,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
           Html5QrcodeSupportedFormats.CODE_39,
           Html5QrcodeSupportedFormats.EAN_13
         ],
-        aspectRatio: 1.0, // Force 1:1 Aspect ratio to conform to container properly
         disableFlip: false,
         experimentalFeatures: {
-          useBarCodeDetectorIfSupported: true // Hardware acceleration if supported
+          // iOS native BarcodeDetector can be flaky with 1D barcodes like CODE_128, 
+          // so we disable hardware acceleration on iOS and use the reliable ZXing fallback.
+          useBarCodeDetectorIfSupported: !isIOS 
         }
       };
 
