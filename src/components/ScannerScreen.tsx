@@ -488,12 +488,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       // Configurations for shipping resi labels, which may carry a Code 128 barcode,
       // a QR code, or occasionally other 1D formats depending on the ecommerce seller.
       const scanConfig = {
-        fps: 20, // 20 is optimal for mid-range Android devices, 30 might drop frames
+        fps: 25, // Increased slightly for snappier response
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-          // Tighter scanning box so it targets a single resi instead of also catching a
-          // neighboring package's barcode when packages are stacked close together.
-          const width = Math.min(480, Math.floor(viewfinderWidth * 0.78));
-          const height = Math.min(170, Math.floor(viewfinderHeight * 0.28));
+          // Generous scanning box
+          const width = Math.min(480, Math.floor(viewfinderWidth * 0.85));
+          const height = Math.min(220, Math.floor(viewfinderHeight * 0.40));
           return { width, height };
         },
         formatsToSupport: [
@@ -1450,7 +1449,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
               {/* Real camera html5-qrcode element */}
               <div
                 id="html5-qr-code-element"
-                className="w-full min-h-[300px] max-h-[350px] sm:max-h-[450px] overflow-hidden [&>video]:w-full [&>video]:h-full [&>video]:object-cover"
+                className="w-full min-h-[300px] max-h-[350px] sm:max-h-[450px] overflow-hidden"
               />
 
               {/* If permission was denied or unavailable, display nice fallback illustration */}

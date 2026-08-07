@@ -350,6 +350,7 @@ function getAllRecordsFromIDB(): Promise<ScanRecord[] | null> {
 export class DatabaseService {
   private isSyncingInProgress = false;
   private recordsCache: ScanRecord[] = [];
+  private idbInitPromise: Promise<void> | null = null;
 
   // STATE MACHINE VALIDATOR
   public validateStateTransition(current: StatusType, next: StatusType): boolean {
@@ -412,9 +413,9 @@ export class DatabaseService {
     }
 
     // 2. Asynchronously bootstrap IndexedDB: read the full un-truncated objects (with full Base64 photos) if they exist
-    openIndexedDB().then((db) => {
+    this.idbInitPromise = openIndexedDB().then((db) => {
       if (db) {
-        getAllRecordsFromIDB().then((idbRecords) => {
+        return getAllRecordsFromIDB().then((idbRecords) => {
           if (idbRecords && idbRecords.length > 0) {
             // Merge in-memory cache with full photos from IndexedDB
             const idbMap = new Map(idbRecords.map(r => [r.ID, r]));
@@ -446,6 +447,13 @@ export class DatabaseService {
     });
   }
 
+  // Await this before performing any sync operations that depend on full photos
+  public async ensureIdbLoaded(): Promise<void> {
+    if (this.idbInitPromise) {
+      await this.idbInitPromise;
+    }
+  }
+
   // Internal helper to persist cache to IndexedDB and LocalStorage (with size-throttled safe fallback)
   private async saveRecords(records: ScanRecord[]): Promise<boolean> {
     this.recordsCache = records;
@@ -457,7 +465,7 @@ export class DatabaseService {
     // We only keep full base64 images inside the 5 most recent scans. For the older files, we keep all
     // metadata and set a small placeholder string (the full images are loaded & restored from the in-memory cache/IndexedDB)
     const trimmedRecords = records.map((r, index) => {
-      if (r.PhotoURL && r.PhotoURL.startsWith("data:image") && index >= 5) {
+      if (idbSuccess && r.PhotoURL && r.PhotoURL.startsWith("data:image") && index >= 5) {
         return {
           ...r,
           PhotoURL: `idb_hybrid_stored_asset`
@@ -940,6 +948,7 @@ export class DatabaseService {
     this.isSyncingInProgress = true;
 
     try {
+      await this.ensureIdbLoaded(); // Wait for IDB to restore full photos before syncing
       const config = this.getCloudConfig();
       const records = this.getRecords();
       
