@@ -5,7 +5,7 @@ import { SellerService } from '../utils/sellerService';
  */
 
 import React, { useState, useEffect } from "react";
-import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users, Calendar, SlidersHorizontal } from "lucide-react";
+import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users, Calendar, SlidersHorizontal, Search, ChevronDown, ChevronUp } from "lucide-react";
 import { Outlet, Seller, Operator, ScanRecord } from "../types";
 import { dbService, getTodayLocalDateString } from "../utils/db";
 import { toast } from "sonner";
@@ -38,6 +38,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [selectedOutlet, setSelectedOutlet] = useState("");
   const [selectedSeller, setSelectedSeller] = useState("");
   const [selectedOperator, setSelectedOperator] = useState("");
+  
+  // Custom Seller Dropdown State
+  const [showSellerDropdown, setShowSellerDropdown] = useState(false);
+  const [sellerSearchQuery, setSellerSearchQuery] = useState("");
 
   // Add custom seller modal/state
   const [showAddSeller, setShowAddSeller] = useState(false);
@@ -163,9 +167,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   return (
     <div className="w-full max-w-md mx-auto p-4 md:p-6 animate-in fade-in duration-200" id="welcome-setup-screen">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 relative overflow-hidden">
-        {/* Decorative corner accent */}
-        <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-2xl animate-pulse" />
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 relative">
+        <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+          {/* Decorative corner accent */}
+          <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 rounded-full blur-2xl animate-pulse" />
+        </div>
         
         <div className="text-center mb-6">
           <p className="text-red-650 text-[10px] font-bold tracking-widest uppercase mb-1">J&T Express Ecommerce Gateway</p>
@@ -254,19 +260,61 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               </form>
             )}
 
-            <select
-              value={selectedSeller}
-              onChange={(e) => setSelectedSeller(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm focus:outline-none focus:border-red-600 focus:bg-white transition-all font-medium"
-              id="seller-dropdown"
-            >
-              <option value="" disabled>--- Pilih Seller ---</option>
-              {sellers.map((s, idx) => (
-                <option key={s.id || `sel-opt-${idx}-${s.nama}`} value={s.nama}>
-                  {s.nama}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowSellerDropdown(!showSellerDropdown)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm focus:outline-none focus:border-red-600 focus:bg-white transition-all font-medium flex justify-between items-center"
+                id="seller-dropdown-btn"
+              >
+                <span className="truncate">{selectedSeller || "--- Pilih Seller ---"}</span>
+                {showSellerDropdown ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+              </button>
+
+              {showSellerDropdown && (
+                <>
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={() => setShowSellerDropdown(false)}
+                  />
+                  <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-hidden flex flex-col">
+                    <div className="p-2 border-b border-slate-100 flex items-center bg-slate-50 relative z-50">
+                    <Search className="h-4 w-4 text-slate-400 ml-2 mr-2 flex-shrink-0" />
+                    <input
+                      type="text"
+                      className="w-full text-sm outline-none bg-transparent py-1.5"
+                      placeholder="Cari seller..."
+                      value={sellerSearchQuery}
+                      onChange={(e) => setSellerSearchQuery(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="overflow-y-auto flex-grow">
+                    {sellers
+                      .filter(s => s.nama.toLowerCase().includes(sellerSearchQuery.toLowerCase()))
+                      .map((s, idx) => (
+                        <div
+                          key={s.id || `sel-opt-${idx}-${s.nama}`}
+                          className={`px-4 py-2.5 text-sm cursor-pointer hover:bg-red-50 border-b border-slate-50 last:border-b-0 ${selectedSeller === s.nama ? 'bg-red-50 text-red-700 font-semibold' : 'text-slate-700'}`}
+                          onClick={() => {
+                            setSelectedSeller(s.nama);
+                            setShowSellerDropdown(false);
+                            setSellerSearchQuery("");
+                          }}
+                        >
+                          {s.nama}
+                        </div>
+                      ))}
+                    {sellers.filter(s => s.nama.toLowerCase().includes(sellerSearchQuery.toLowerCase())).length === 0 && (
+                      <div className="px-4 py-4 text-sm text-slate-500 text-center">
+                        Seller tidak ditemukan
+                      </div>
+                    )}
+                  </div>
+                </div>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Operator Selection */}
