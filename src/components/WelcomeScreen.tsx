@@ -282,7 +282,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     <Search className="h-4 w-4 text-slate-400 ml-2 mr-2 flex-shrink-0" />
                     <input
                       type="text"
-                      className="w-full text-sm outline-none bg-transparent py-1.5"
+                      className="w-full text-sm text-slate-800 placeholder:text-slate-400 outline-none bg-transparent py-1.5"
                       placeholder="Cari seller..."
                       value={sellerSearchQuery}
                       onChange={(e) => setSellerSearchQuery(e.target.value)}
@@ -295,7 +295,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                       .map((s, idx) => (
                         <div
                           key={s.id || `sel-opt-${idx}-${s.nama}`}
-                          className={`px-4 py-2.5 text-sm cursor-pointer hover:bg-red-50 border-b border-slate-50 last:border-b-0 ${selectedSeller === s.nama ? 'bg-red-50 text-red-700 font-semibold' : 'text-slate-700'}`}
+                          className={`px-4 py-2.5 text-sm cursor-pointer hover:bg-red-50 hover:text-red-700 transition-colors border-b border-slate-50 last:border-b-0 ${selectedSeller === s.nama ? 'bg-red-50 text-red-700 font-semibold' : 'text-slate-700'}`}
                           onClick={() => {
                             setSelectedSeller(s.nama);
                             setShowSellerDropdown(false);
