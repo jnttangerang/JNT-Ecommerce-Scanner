@@ -504,7 +504,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         experimentalFeatures: {
           // iOS native BarcodeDetector can be flaky with 1D barcodes like CODE_128, 
           // so we disable hardware acceleration on iOS and use the reliable ZXing fallback.
-          useBarCodeDetectorIfSupported: !isIOS 
+          useBarCodeDetectorIfSupported: true 
         }
       };
 
@@ -901,7 +901,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // VALIDASI FORMAT BARCODE J&T (Robust parsing supports any prefix dynamically)
     const validPrefixesStr = Config.get(CONFIG_KEYS.RESI_PREFIXES);
     const validPrefixes = validPrefixesStr ? validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean) : [];
-    const prefixRegexPart = validPrefixes.length > 0 ? `(${validPrefixes.join("|")})` : "";
+    const prefixRegexPart = validPrefixes.length > 0 ? `(?:${validPrefixes.join("|")})?` : "";
     const regex = new RegExp(`^${prefixRegexPart}\\d{10,12}$`);
 
     console.group("=== REGEX AUDIT ===");

@@ -1629,7 +1629,7 @@ function handleGetMasters() {
     const data = sellerSheet.getRange(2, 1, sellerSheet.getLastRow() - 1, 11).getValues();
     for (let i = 0; i < data.length; i++) {
       const r = data[i];
-      const rawNama = r[2] || r[0] || ""; // C is index 2, A is index 0
+      const rawNama = r[2] || r[1] || r[0] || ""; // C is index 2, A is index 0
       if (rawNama) {
         sellers.push({
           id: r[0] || "",

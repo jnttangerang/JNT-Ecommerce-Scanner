@@ -271,7 +271,7 @@ export async function directGetMasters(spreadsheetId: string, accessToken: strin
         if (isSeller) {
           const vals = (data.values || []).map((r: any) => {
             // A=0: ID, B=1: Kode, C=2: Nama, etc.
-            const rawNama = r[2] || r[0] || ""; // fallback to col A if C is empty
+            const rawNama = r[2] || r[1] || r[0] || ""; // fallback to col A if C is empty
             if (!rawNama) return null;
             return {
               id: r[0] || "",
