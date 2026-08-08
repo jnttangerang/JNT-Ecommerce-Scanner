@@ -8,6 +8,7 @@ import React, { useState, useEffect } from "react";
 import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users, Calendar, SlidersHorizontal, Search, ChevronDown, ChevronUp } from "lucide-react";
 import { Outlet, Seller, Operator, ScanRecord } from "../types";
 import { dbService, getTodayLocalDateString } from "../utils/db";
+import { Config, CONFIG_KEYS } from "../utils/config";
 import { toast } from "sonner";
 
 interface WelcomeScreenProps {
@@ -76,12 +77,18 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setOutlets(outs);
     setOperators(ops);
     setSellers(sels);
+  }, [isPulling]);
 
-    // Hydrate from previous localStorage, otherwise default to empty string "" for the "--- Pilih ---" placeholder
-    setSelectedOutlet(savedOutlet || "");
-    setSelectedSeller(savedSeller || "");
-    setSelectedOperator(savedOperator || "");
-  }, [savedOutlet, savedSeller, savedOperator, isPulling]);
+  // Run once on mount to hydrate previous selections
+  useEffect(() => {
+    const prevOutlet = Config.get(CONFIG_KEYS.SAVED_OUTLET) || savedOutlet || "";
+    const prevSeller = Config.get(CONFIG_KEYS.SAVED_SELLER) || savedSeller || "";
+    const prevOperator = Config.get(CONFIG_KEYS.SAVED_OPERATOR) || savedOperator || "";
+    
+    setSelectedOutlet(prevOutlet);
+    setSelectedSeller(prevSeller);
+    setSelectedOperator(prevOperator);
+  }, []); // Only run once on mount!
 
   const handleCreateSeller = (e: React.FormEvent) => {
     e.preventDefault();

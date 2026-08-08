@@ -498,8 +498,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         formatsToSupport: [
           Html5QrcodeSupportedFormats.CODE_128,
           Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.CODE_39,
-          Html5QrcodeSupportedFormats.EAN_13
+          Html5QrcodeSupportedFormats.CODE_39
         ],
         disableFlip: false,
         experimentalFeatures: {
@@ -924,10 +923,6 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     const isValidFormat = regex.test(rawCode);
 
     if (!isValidFormat) {
-      toast.error(`Raw:\n${rawCode}\n\nRegex:\n${regex.source}\n\nPrefixes:\n${validPrefixes.join(", ")}\n\nResult:\nFAIL`, {
-        duration: 5000
-      });
-
       // Only surface a warning once the SAME unrecognized code has been read stably a
       // few times (avoids reacting to single-frame noise), and at most once every few
       // seconds (avoids spamming toasts while the camera keeps re-reading it).
