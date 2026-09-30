@@ -3,10 +3,10 @@
 # J&T Pickup Scanner PRO
 ## System Context & Business Rules
 
-**Version** : 1.0.0  
+**Version** : 1.1.0  
 **Status** : Active Development  
 **Document Type** : System Context  
-**Last Update** : July 2026
+**Last Update** : September 2026
 
 ---
 
@@ -113,15 +113,16 @@ Semua proses tersebut dilakukan dalam satu aplikasi.
 
 ## Local Database
 
-- IndexedDB
+- IndexedDB (Primary Storage: Transaksi lengkap & foto Base64 tanpa batas kuota)
+- LocalStorage (Secondary Bootstrap Cache: Snapshot metadata <20KB, quota-safe)
 
 ## Cloud Storage
 
-- Google Drive
+- Google Drive (Penyimpanan permanen foto bukti resi)
 
 ## Deployment
 
-- Vercel
+- Google Cloud Run / Vercel
 
 ---
 
@@ -435,10 +436,28 @@ Aplikasi menangani proses berikut:
 - Reporting
 
 Aplikasi **bukan** sistem pengiriman dan **bukan** pengganti YoYi maupun J&T Sprinter.
+ 
+---
+
+# 12. Status & Progress Terkini (September 2026)
+
+Progress implementasi terkini mencakup:
+
+1. **Hardware & Mobile Optimization**:
+   - Pemindaian barcode pada iOS Safari telah dioptimasi menggunakan WebKit hardware-accelerated `BarcodeDetector` (mendukung Code128, Code39, dan QR).
+   - Validasi resi dinamis mendukung format Lazada (prefix `JZ`), Shopee/TikTok (`JX`, `JY`), serta resi numerik murni tanpa false error toast.
+   - Layout responsif iPhone telah distabilkan (`overflow-x-hidden`, zero horizontal scroll jank).
+
+2. **Storage Reliability & Zero Quota Exceeded**:
+   - Arsitektur penyimpanan lokal mengadopsi skema hybrid: IndexedDB menampung riwayat lengkap transaksi dan foto resolusi tinggi, sementara LocalStorage hanya menyimpan snapshot metadata instan (<20KB) dengan mekanisme degradasi bertahap untuk mencegah error `QuotaExceededError`.
+
+3. **Session & Admin Stability**:
+   - Pemilihan nama Admin/Operator di halaman login tidak lagi mereset pilihan Outlet atau Seller yang sudah ditentukan sebelumnya.
+   - Sinkronisasi master data dari Google Sheets (via Apps Script & Direct Sheets API) mendukung pencarian seller fleksibel multi-sheet dengan deduplikasi otomatis.
 
 ---
 
-# 12. Visi Jangka Panjang
+# 13. Visi Jangka Panjang
 
 J&T Pickup Scanner PRO dirancang sebagai pusat operasional ecommerce untuk Outlet J&T Express.
 

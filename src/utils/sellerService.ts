@@ -75,7 +75,11 @@ class SellerServiceManager {
   }
 
   saveCache() {
-    localStorage.setItem(this.CACHE_KEY, JSON.stringify(this.cache));
+    try {
+      localStorage.setItem(this.CACHE_KEY, JSON.stringify(this.cache));
+    } catch (e) {
+      console.warn("Could not save seller cache to localStorage:", e);
+    }
   }
 
   setSellers(sellers: Seller[]) {

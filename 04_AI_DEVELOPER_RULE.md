@@ -3,9 +3,10 @@
 # J&T Pickup Scanner PRO
 ## AI Developer Rules
 
-**Version** : 1.0.0  
+**Version** : 1.1.0  
 **Status** : Active Development  
-**Document Type** : AI Development Standard
+**Document Type** : AI Development Standard  
+**Last Update** : September 2026
 
 ---
 
@@ -254,6 +255,30 @@ Foto digunakan untuk:
 - Pelacakan paket.
 - Investigasi.
 - Bukti operasional.
+
+---
+
+# LocalStorage vs IndexedDB (Storage Quota Discipline)
+
+- **DILARANG** menyimpan string Base64 gambar/foto (`data:image/...` atau Canvas Data URI) ke dalam `localStorage`.
+- `localStorage` memiliki batas kuota ketat 5MB per-origin. Foto Base64 dan seluruh riwayat transaksi tak terbatas WAJIB disimpan di `IndexedDB`.
+- `localStorage` hanya diperkenankan untuk snapshot metadata instan (<20KB) sebagai synchronous bootstrap cache saat render awal.
+- Setiap pemanggilan `localStorage.setItem` WAJIB dibungkus blok `try/catch` dan menggunakan mekanisme fallback snapshot bertahap (50 -> 20 -> 10 -> 0) untuk mencegah `QuotaExceededError`.
+- Hapus item lama (`localStorage.removeItem`) sebelum menulis key snapshot baru untuk membebaskan ruang kuota seketika di engine browser WebKit/Blink.
+
+---
+
+# Pemindaian Kamera & Barcode Mobile
+
+- Gunakan native WebKit `BarcodeDetector` jika tersedia (`useBarCodeDetectorIfSupported: true`) agar pemindaian barcode Code128 / QR Code di iOS Safari berjalan cepat dan hardware-accelerated.
+- Regex validasi format resi harus dinamis mengikuti master konfigurasi dan toleran terhadap variasi panjang barcode ecommerce (seperti resi Lazada JZ 12-13 digit) tanpa memunculkan false-positive warning toast.
+
+---
+
+# Responsive Viewport & UI Discipline
+
+- Gunakan `overflow-x: hidden`, `width: 100%`, dan `max-w-full` pada seluruh container halaman dan bottom sheet modal untuk mencegah bug geser horizontal (swipe kanan-kiri) pada perangkat iPhone iOS.
+- Pemilihan dropdown nama Admin/Operator tidak boleh mereset pilihan Outlet atau Seller yang telah ditentukan sebelumnya.
 
 ---
 

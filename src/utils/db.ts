@@ -224,7 +224,7 @@ export function createMockResiPhoto(resi: string, seller: string): string {
  * Supports standard share links /file/d/FILE_ID/view and query param format id=FILE_ID
  */
 export function getDirectDriveImageUrl(url: string | undefined): string {
-  if (!url) return "";
+  if (!url || url === "idb_image" || url === "idb_hybrid_stored_asset") return "";
   if (url.startsWith("data:image")) {
     return url;
   }
@@ -385,30 +385,89 @@ export class DatabaseService {
       id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
     };
     logs.unshift(newLog);
-    // Keep only the last 50 logs
-    localStorage.setItem(IMPORT_LOGS_KEY, JSON.stringify(logs.slice(0, 50)));
+    // Keep only the last 50 logs safely
+    try {
+      localStorage.setItem(IMPORT_LOGS_KEY, JSON.stringify(logs.slice(0, 50)));
+    } catch (e) {
+      console.warn("Could not save import log to localStorage:", e);
+    }
+  }
+
+  // Helper to safely persist a lightweight bootstrap snapshot to localStorage.
+  // Full images and complete histories are stored in IndexedDB and in-memory cache (this.recordsCache).
+  private safeSaveToLocalStorage(records: ScanRecord[]): void {
+    const stripMedia = (list: ScanRecord[]): ScanRecord[] => {
+      return list.map(r => {
+        let changed = false;
+        let photo = r.PhotoURL;
+        let cancelPhoto = r.CancelEvidencePhoto;
+        if (photo && photo.startsWith("data:")) {
+          photo = "idb_image";
+          changed = true;
+        }
+        if (cancelPhoto && cancelPhoto.startsWith("data:")) {
+          cancelPhoto = "idb_image";
+          changed = true;
+        }
+        return changed ? { ...r, PhotoURL: photo, CancelEvidencePhoto: cancelPhoto } : r;
+      });
+    };
+
+    // Storing up to 50 records without photos uses ~15KB, well below the 5MB browser quota.
+    // If quota is tight, fallback progressively down to an empty array.
+    const limits = [50, 20, 10, 0];
+    for (const limit of limits) {
+      try {
+        const slice = limit > 0 ? records.slice(0, limit) : [];
+        const payload = JSON.stringify(stripMedia(slice));
+        // Remove before set to prevent duplicate quota allocation in some browser engines
+        try {
+          localStorage.removeItem(RECORDS_KEY);
+        } catch {}
+        localStorage.setItem(RECORDS_KEY, payload);
+        return;
+      } catch (err) {
+        console.warn(`LocalStorage write failed at limit ${limit}, reducing snapshot size:`, err);
+      }
+    }
+
+    try {
+      localStorage.removeItem(RECORDS_KEY);
+    } catch {}
   }
 
   constructor() {
     // 1. Synchronously pre-load in-memory cache from localStorage or mock generators so UI gets instant content
-    const raw = localStorage.getItem(RECORDS_KEY);
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(RECORDS_KEY);
+    } catch (e) {
+      console.warn("Could not read RECORDS_KEY from localStorage:", e);
+    }
+
     if (!raw) {
       const config = this.getCloudConfig();
       const hasAppsScript = config.appsScriptUrl && !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") && !config.appsScriptUrl.includes("AKfycbz_Example");
       if (hasAppsScript) {
-        localStorage.setItem(RECORDS_KEY, JSON.stringify([]));
         this.recordsCache = [];
+        this.safeSaveToLocalStorage([]);
       } else {
         const hist = generateHistoricalData();
-        localStorage.setItem(RECORDS_KEY, JSON.stringify(hist));
         this.recordsCache = hist;
+        this.safeSaveToLocalStorage(hist);
       }
     } else {
       try {
         this.recordsCache = JSON.parse(raw);
+        // If existing records in localStorage contained heavy data URIs (e.g. from previous app versions),
+        // rewrite immediately with the stripped snapshot to instantly recover browser storage quota!
+        if (Array.isArray(this.recordsCache) && this.recordsCache.some(r => (r.PhotoURL && r.PhotoURL.startsWith("data:")) || (r.CancelEvidencePhoto && r.CancelEvidencePhoto.startsWith("data:")))) {
+          this.safeSaveToLocalStorage(this.recordsCache);
+        }
       } catch (err) {
         console.warn("LocalStorage corrupted, generating fresh list", err);
         this.recordsCache = generateHistoricalData();
+        this.safeSaveToLocalStorage(this.recordsCache);
       }
     }
 
@@ -438,6 +497,7 @@ export class DatabaseService {
                 return (b.Jam || "").localeCompare(a.Jam || "");
               });
             }
+            window.dispatchEvent(new Event("jt_db_updated"));
           } else {
             // First time bootstrap: register in-memory historical list onto IndexedDB
             saveRecordsToIDB(this.recordsCache);
@@ -461,38 +521,11 @@ export class DatabaseService {
     // 1. Asynchronously write all to IndexedDB (unlimited size limit & avoids blocking UI thread)
     const idbSuccess = await saveRecordsToIDB(records);
 
-    // 2. Keep localStorage size strictly under 500KB to completely avoid the 5MB QuotaExceededError.
-    // We only keep full base64 images inside the 5 most recent scans. For the older files, we keep all
-    // metadata and set a small placeholder string (the full images are loaded & restored from the in-memory cache/IndexedDB)
-    const trimmedRecords = records.map((r, index) => {
-      if (idbSuccess && r.PhotoURL && r.PhotoURL.startsWith("data:image") && index >= 5) {
-        return {
-          ...r,
-          PhotoURL: `idb_hybrid_stored_asset`
-        };
-      }
-      return r;
-    });
-
-    try {
-      localStorage.setItem(RECORDS_KEY, JSON.stringify(trimmedRecords));
-    } catch (err) {
-      console.warn("LocalStorage fallback write failed (even with compression, continuing with in-memory & IndexedDB state):", err);
-      try {
-        const fullyTrimmed = records.map(r => {
-          if (r.PhotoURL && r.PhotoURL.startsWith("data:image")) {
-            return { ...r, PhotoURL: "idb_image" };
-          }
-          return r;
-        });
-        localStorage.setItem(RECORDS_KEY, JSON.stringify(fullyTrimmed));
-      } catch (e) {
-        console.error("Critical: Could not write to localStorage at all", e);
-      }
-    }
+    // 2. Persist compact metadata snapshot safely to localStorage for instant UI bootstrap
+    this.safeSaveToLocalStorage(records);
     
     window.dispatchEvent(new Event("jt_db_updated"));
-    return idbSuccess;
+    return (typeof window !== "undefined" && window.indexedDB) ? idbSuccess : true;
   }
 
   // Initialize lists

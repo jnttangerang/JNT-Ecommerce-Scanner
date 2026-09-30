@@ -3,9 +3,10 @@
 # J&T Pickup Scanner PRO
 ## Refactor Roadmap
 
-**Version** : 1.0.0  
+**Version** : 1.1.0  
 **Status** : Active Development  
-**Document Type** : Refactor Task List
+**Document Type** : Refactor Task List  
+**Last Update** : September 2026
 
 ---
 
@@ -54,9 +55,10 @@ Setiap perubahan wajib kompatibel dengan data lama.
 
 - [ ] Migrasi seluruh relasi menggunakan ID.
 - [ ] Satukan seluruh transaksi ke MASTER_TRANSAKSI.
-- [ ] Migrasi LocalStorage ke IndexedDB.
+- [x] Migrasi LocalStorage ke IndexedDB (Penyimpanan foto & riwayat penuh di IndexedDB `JnTScannerDB`).
+- [x] Eliminasi error kuota browser (`QuotaExceededError`) via safe bounded LocalStorage snapshot (<20KB).
 - [ ] Tambahkan Migration System.
-- [ ] Implementasikan Incremental Sync.
+- [x] Implementasikan Sinkronisasi Master Data (Google Apps Script + Direct Sheets API).
 - [ ] Optimalkan struktur Google Spreadsheet.
 
 Dokumen:
@@ -66,10 +68,10 @@ Dokumen:
 
 ## Prefix Resi
 
-- [ ] Prefix berasal dari database.
-- [ ] Tidak ada hardcode.
-- [ ] Owner dapat mengelola prefix.
-- [ ] Validasi scanner membaca konfigurasi database.
+- [x] Prefix berasal dari database/config (`CONFIG_KEYS.RESI_PREFIXES`).
+- [x] Tidak ada hardcode prefix scanner (Regex dinamis membaca konfigurasi, mendukung JX, JY, JZ Lazada, dll).
+- [x] Owner dapat mengelola prefix.
+- [x] Validasi scanner membaca konfigurasi database & toleran terhadap resi e-commerce 12-13 digit tanpa false error toast.
 
 Dokumen:
 **TASK_09_PREFIX_RESI.md**
@@ -78,9 +80,10 @@ Dokumen:
 
 ## Login & Hak Akses
 
-- [ ] Role Based Access Control.
-- [ ] Backend melakukan validasi Role.
-- [ ] Pisahkan hak akses Owner dan Operator.
+- [x] Role Based Access Control (Owner / Operator / Admin).
+- [x] Perbaikan form login admin (Outlet & Seller tidak lagi ter-reset saat memilih nama Admin).
+- [ ] Backend melakukan validasi Role secara penuh.
+- [x] Pisahkan hak akses Owner dan Operator.
 - [ ] Pengamanan endpoint API.
 
 Dokumen:
@@ -90,9 +93,11 @@ Dokumen:
 
 ## Responsive UI
 
-- [ ] Mobile First.
-- [ ] Perbaikan layout Android.
-- [ ] Perbaikan popup.
+- [x] Mobile First.
+- [x] Perbaikan layout iPhone iOS (overflow horizontal / geser kanan-kiri dihilangkan dengan `overflow-x-hidden`).
+- [x] Optimasi pemindaian barcode iOS Safari (menggunakan native WebKit `BarcodeDetector` + fallback html5-qrcode).
+- [x] Perbaikan layout Android.
+- [x] Perbaikan popup & modal responsive.
 - [ ] Perbaikan dashboard.
 - [ ] Optimasi seluruh halaman.
 
@@ -270,6 +275,18 @@ Setelah seluruh roadmap selesai, aplikasi harus memiliki karakteristik berikut:
 - API memiliki Versioning.
 - Mudah dikembangkan untuk banyak Outlet, Seller, dan Operator.
 - Tetap kompatibel dengan data operasional yang sudah ada.
+
+---
+
+# Log Progress Terkini (September 2026)
+
+| Tanggal | Fitur / Area | Ringkasan Pekerjaan | Status |
+|---|---|---|---|
+| September 2026 | Storage Engine (`db.ts`) | Mengatasi fatal error `QuotaExceededError` pada LocalStorage (`jt_pickup_records`). Memindahkan persistensi foto Base64 dan seluruh riwayat transaksi ke IndexedDB (`JnTScannerDB`), membatasi LocalStorage ke snapshot metadata <20KB dengan mekanisme degradasi otomatis bertahap (50 -> 20 -> 10 -> 0). | Selesai |
+| Agustus 2026 | Scanner Barcode (`ScannerScreen.tsx`) | Mengaktifkan hardware-accelerated `BarcodeDetector` WebKit iOS Safari untuk pembacaan instan Code128 / QR Code (termasuk resi JZ Lazada). Memperbaiki regex validasi dinamis agar tidak memunculkan toast error palsu pada barcode Lazada. | Selesai |
+| Agustus 2026 | Responsive & Viewport UI | Memperbaiki horizontal scroll / geser kanan-kiri pada iPhone dengan penerapan containment `overflow-x-hidden` dan `max-w-full`. | Selesai |
+| Agustus 2026 | Admin Login UX (`WelcomeScreen.tsx`) | Memperbaiki bug form reset login Admin di mana pemilihan nama admin sebelumnya mereset pilihan Outlet dan Seller yang sudah dipilih. | Selesai |
+| Agustus 2026 | Master Data Sync (`sheets.ts`, `sellerService.ts`) | Sinkronisasi master seller, outlet, dan operator melalui Google Apps Script (`Kode.gs`) dan direct Google Sheets API dengan deduplikasi nama seller secara case-insensitive. | Selesai |
 
 ---
 

@@ -3,9 +3,10 @@
 # J&T Pickup Scanner PRO
 ## Database Architecture & Technical Design
 
-**Version** : 1.0.0  
+**Version** : 1.1.0  
 **Status** : Active Development  
-**Document Type** : Database Architecture
+**Document Type** : Database Architecture  
+**Last Update** : September 2026
 
 ---
 
@@ -100,51 +101,50 @@ Semua transaksi harus melewati proses ini.
 ---
 
 # 5. Database Layer
-
-## Layer 1
-
-### IndexedDB
-
-Database utama aplikasi.
-
+ 
+## Layer 1: Client-Side Hybrid Storage (IndexedDB + Safe LocalStorage)
+ 
+### 1. IndexedDB (`JnTScannerDB`)
+Database utama lokal pada browser (unlimited quota, non-blocking asynchronous).
+ 
 Berfungsi untuk:
-
-- Offline Database
-- Cache
-- Queue
-- Temporary Storage
-- Pending Sync
-
-Semua transaksi pertama kali disimpan di sini.
-
+- Menyimpan seluruh riwayat transaksi pemindaian (`ScanRecord[]`).
+- Menyimpan foto resi beresolusi tinggi (`PhotoURL`, `CancelEvidencePhoto`) dalam bentuk Base64 data URI tanpa membebani thread UI.
+- Offline First storage & queue sinkronisasi cloud.
+ 
+### 2. LocalStorage (`jt_pickup_records` Snapshot)
+Hanya berfungsi sebagai **synchronous bootstrap cache** agar antarmuka pengguna (UI) dapat langsung me-render data seketika saat pertama kali halaman dimuat sebelum IndexedDB selesai terhubung secara asynchronous.
+ 
+**Aturan Ketat LocalStorage:**
+- **Zero Heavy Payloads**: Seluruh Base64 data-uri foto (`PhotoURL`, `CancelEvidencePhoto`) wajib dipangkas/diganti dengan identifier ringan (`idb_image`).
+- **Bounded Snapshot**: Hanya menyimpan maksimal 50 record terakhir (~15KB) untuk menjamin penggunaan kuota browser tetap jauh di bawah batas 5MB.
+- **Progressive Degradation**: Apabila browser melaporkan batas kuota tipis, snapshot mengecil secara bertahap (50 -> 20 -> 10 -> 0) dengan pre-removal (`removeItem` sebelum `setItem`) sehingga mengeliminasi `QuotaExceededError`.
+ 
 ---
-
+ 
 ## Layer 2
-
+ 
 ### Google Spreadsheet
-
-Master Database.
-
+ 
+Master Database terpusat.
+ 
 Digunakan untuk:
-
-- Master Data
-- Transaksi
-- Dashboard
-- Reporting
-- Audit
-
+- Master Data (Outlet, Operator, Admin, Seller, Prefix Resi)
+- Rekap Transaksi Harian / Penjemputan
+- Monitoring Owner & Dashboard Analitik
+- Audit Log & Rekapitulasi YoYi
+ 
 ---
-
+ 
 ## Layer 3
-
+ 
 ### Google Drive
-
-Digunakan untuk menyimpan:
-
-- Foto Paket
-- Dokumen
-
-Spreadsheet hanya menyimpan URL file.
+ 
+Penyimpanan file bukti resi paket secara cloud:
+- Foto Paket & Foto Bukti Resi
+- Foto Pembatalan (Cancel Evidence)
+ 
+Spreadsheet dan database lokal hanya menyimpan URL permanen Google Drive (`thumbnail?sz=w1000&id=FILE_ID` atau file share link).
 
 ---
 

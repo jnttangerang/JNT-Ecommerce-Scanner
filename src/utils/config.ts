@@ -90,7 +90,11 @@ class ConfigurationService {
     const currentPrefixes = this.cache[CONFIG_KEYS.RESI_PREFIXES];
     if (currentPrefixes === 'JX,JZ' || currentPrefixes === 'JX, JZ') {
       this.cache[CONFIG_KEYS.RESI_PREFIXES] = 'JX,JY,JZ';
-      localStorage.setItem(this.CACHE_PREFIX + CONFIG_KEYS.RESI_PREFIXES, 'JX,JY,JZ');
+      try {
+        localStorage.setItem(this.CACHE_PREFIX + CONFIG_KEYS.RESI_PREFIXES, 'JX,JY,JZ');
+      } catch (e) {
+        console.warn('Failed to update RESI_PREFIXES in localStorage:', e);
+      }
     }
     
     // Legacy migration
@@ -138,7 +142,11 @@ class ConfigurationService {
 
   saveCache() {
     for (const key of Object.keys(this.cache)) {
-      localStorage.setItem(this.CACHE_PREFIX + key, this.cache[key]);
+      try {
+        localStorage.setItem(this.CACHE_PREFIX + key, this.cache[key]);
+      } catch (e) {
+        console.warn('Failed to cache config key:', key, e);
+      }
     }
   }
 
@@ -148,7 +156,11 @@ class ConfigurationService {
 
   set(key: string, value: string) {
     this.cache[key] = value;
-    localStorage.setItem(this.CACHE_PREFIX + key, value);
+    try {
+      localStorage.setItem(this.CACHE_PREFIX + key, value);
+    } catch (e) {
+      console.warn('Failed to save config key:', key, e);
+    }
   }
 
   async sync(accessToken?: string) {

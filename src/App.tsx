@@ -75,7 +75,11 @@ export default function App() {
   const handleAcknowledgeRetake = (resi: string) => {
     setAcknowledgedRetakes(prev => {
       const updated = [...new Set([...prev, resi])];
-      localStorage.setItem("jt_acknowledged_retakes", JSON.stringify(updated));
+      try {
+        localStorage.setItem("jt_acknowledged_retakes", JSON.stringify(updated));
+      } catch (e) {
+        console.warn("Could not save acknowledged retakes to localStorage:", e);
+      }
       return updated;
     });
   };
