@@ -272,11 +272,52 @@ function handleAddOutlet(name) {
 function handleGetMasters() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   
-  // Get Sellers
-  const sellerSheet = ss.getSheetByName("Seller List") || ss.getSheetByName("Daftar Seller");
+  // Get Sellers: Check MASTER_SELLER sheet first, then fallback to Seller List / Daftar Seller
   let sellers = [];
+  const masterSellerSheet = ss.getSheetByName("MASTER_SELLER") || 
+                            ss.getSheetByName("MASTER SELLERS") || 
+                            ss.getSheetByName("MASTER_SELLERS") ||
+                            ss.getSheetByName("Master_Seller");
+                            
+  if (masterSellerSheet && masterSellerSheet.getLastRow() > 1) {
+    const lastRow = masterSellerSheet.getLastRow();
+    const lastCol = Math.max(1, masterSellerSheet.getLastColumn());
+    const headerRow = masterSellerSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => (h || "").toString().toLowerCase().trim());
+    
+    // Find name column index (1-based)
+    let nameCol = -1;
+    for (let i = 0; i < headerRow.length; i++) {
+      const h = headerRow[i];
+      if ((h.indexOf("nama") !== -1 || h.indexOf("seller") !== -1 || h.indexOf("toko") !== -1) && 
+          h.indexOf("kode") === -1 && h.indexOf("admin") === -1 && h.indexOf("no") === -1) {
+        nameCol = i + 1;
+        break;
+      }
+    }
+    // Fallback: column 3 (standard template: ID, Kode, Nama), then 2, then 1
+    if (nameCol === -1) {
+      nameCol = lastCol >= 3 ? 3 : (lastCol >= 2 ? 2 : 1);
+    }
+    
+    const rows = masterSellerSheet.getRange(2, nameCol, lastRow - 1, 1).getValues();
+    for (let r = 0; r < rows.length; r++) {
+      const val = (rows[r][0] || "").toString().trim();
+      if (val && !sellers.some(s => s.toLowerCase() === val.toLowerCase())) {
+        sellers.push(val);
+      }
+    }
+  }
+  
+  // Fallback / merge from Seller List or Daftar Seller if any
+  const sellerSheet = ss.getSheetByName("Seller List") || ss.getSheetByName("Daftar Seller");
   if (sellerSheet && sellerSheet.getLastRow() > 1) {
-    sellers = sellerSheet.getRange(2, 1, sellerSheet.getLastRow() - 1, 1).getValues().map(r => r[0].toString());
+    const rows = sellerSheet.getRange(2, 1, sellerSheet.getLastRow() - 1, 1).getValues();
+    for (let r = 0; r < rows.length; r++) {
+      const val = (rows[r][0] || "").toString().trim();
+      if (val && !sellers.some(s => s.toLowerCase() === val.toLowerCase())) {
+        sellers.push(val);
+      }
+    }
   }
   
   // Get Operators
@@ -760,17 +801,25 @@ function handleSaveDataMaster(keysValues) {
 
 function handleGetMasterSeller() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  let sheet = ss.getSheetByName("MASTER_SELLER");
+  let sheet = ss.getSheetByName("MASTER_SELLER") || 
+              ss.getSheetByName("MASTER SELLERS") || 
+              ss.getSheetByName("MASTER_SELLERS") ||
+              ss.getSheetByName("Master_Seller");
   if (!sheet) {
     sheet = ss.insertSheet("MASTER_SELLER");
     sheet.appendRow(["ID", "Kode Seller", "Nama", "Kategori Produk", "No. HP Admin Seller", "Alamat", "Titik GPS", "Status Aktif", "Jumlah Paket Harian", "Catatan", "updatedAt"]);
   }
   const lastRow = sheet.getLastRow();
+  const lastCol = Math.max(1, sheet.getLastColumn());
   let values = [];
-  if (lastRow > 1) {
-    values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  let headers = [];
+  if (lastRow >= 1 && lastCol >= 1) {
+    headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => (h || "").toString().trim());
   }
-  return ContentService.createTextOutput(JSON.stringify({ success: true, values: values }))
+  if (lastRow > 1 && lastCol >= 1) {
+    values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  }
+  return ContentService.createTextOutput(JSON.stringify({ success: true, values: values, headers: headers }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

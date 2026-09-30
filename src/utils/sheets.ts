@@ -271,11 +271,15 @@ export async function directGetMasters(spreadsheetId: string, accessToken: strin
         if (isSeller) {
           const vals = (data.values || []).map((r: any) => {
             // A=0: ID, B=1: Kode, C=2: Nama, etc.
-            const rawNama = r[2] || r[1] || r[0] || ""; // fallback to col A if C is empty
+            const rawNama = (r[2] || r[1] || r[0] || "").toString().trim();
             if (!rawNama) return null;
+            const lower = rawNama.toLowerCase();
+            if (lower === "nama" || lower === "nama seller" || lower === "nama_seller" || lower === "id" || lower === "kode" || lower === "kode seller") {
+              return null;
+            }
             return {
-              id: r[0] || "",
-              kodeSeller: r[1] || "",
+              id: r[0] || `SEL_${rawNama.replace(/[^A-Z0-9]/ig, '')}`,
+              kodeSeller: r[1] || `KS-${rawNama.replace(/[^A-Z0-9]/ig, '')}`,
               nama: rawNama,
               kategoriProduk: r[3] || "",
               adminSeller: r[4] || "",
@@ -288,7 +292,11 @@ export async function directGetMasters(spreadsheetId: string, accessToken: strin
           }).filter(Boolean);
           if (vals.length > 0) return vals;
         } else {
-          const vals = (data.values || []).map((r: any) => r[0]).filter(Boolean);
+          const vals = (data.values || []).map((r: any) => (r[0] || "").toString().trim()).filter((v: string) => {
+            if (!v) return false;
+            const l = v.toLowerCase();
+            return l !== "nama" && l !== "nama operator" && l !== "nama outlet" && l !== "operator" && l !== "outlet";
+          });
           if (vals.length > 0) return vals;
         }
       }

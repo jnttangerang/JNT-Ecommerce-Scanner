@@ -70,14 +70,33 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
   useEffect(() => {
     // Load metadata lists
-    const outs = dbService.getOutlets();
-    const ops = dbService.getOperators();
-    const sels = SellerService.getAll();
+    const refreshData = () => {
+      const outs = dbService.getOutlets();
+      const ops = dbService.getOperators();
+      const sels = SellerService.getAll();
 
-    setOutlets(outs);
-    setOperators(ops);
-    setSellers(sels);
+      setOutlets(outs);
+      setOperators(ops);
+      setSellers(sels);
+    };
+
+    refreshData();
+
+    window.addEventListener("jt_sellers_updated", refreshData);
+    window.addEventListener("jt_db_updated", refreshData);
+
+    return () => {
+      window.removeEventListener("jt_sellers_updated", refreshData);
+      window.removeEventListener("jt_db_updated", refreshData);
+    };
   }, [isPulling]);
+
+  // Ensure fresh sellers are loaded on mount if online
+  useEffect(() => {
+    if (window.navigator.onLine) {
+      SellerService.sync().catch(e => console.warn("Background seller sync error:", e));
+    }
+  }, []);
 
   // Run once on mount to hydrate previous selections
   useEffect(() => {
@@ -297,9 +316,24 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     />
                   </div>
                   <div className="overflow-y-auto overflow-x-hidden flex-grow rounded-b-xl">
-                    {sellers
-                      .filter(s => s.nama.toLowerCase().includes(sellerSearchQuery.toLowerCase()))
-                      .map((s, idx) => (
+                    {(() => {
+                      const query = (sellerSearchQuery || "").trim().toLowerCase();
+                      const filteredSellers = sellers.filter(s => {
+                        if (!query) return true;
+                        const name = (s?.nama || "").trim().toLowerCase();
+                        const code = (s?.kodeSeller || "").trim().toLowerCase();
+                        return name.includes(query) || code.includes(query);
+                      });
+
+                      if (filteredSellers.length === 0) {
+                        return (
+                          <div className="px-4 py-4 text-sm text-slate-500 text-center">
+                            Seller tidak ditemukan
+                          </div>
+                        );
+                      }
+
+                      return filteredSellers.map((s, idx) => (
                         <div
                           key={s.id || `sel-opt-${idx}-${s.nama}`}
                           className={`px-4 py-2.5 text-sm cursor-pointer hover:bg-red-50 hover:text-red-700 transition-colors border-b border-slate-50 last:border-b-0 ${selectedSeller === s.nama ? 'bg-red-50 text-red-700 font-semibold' : 'text-slate-700'}`}
@@ -309,14 +343,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                             setSellerSearchQuery("");
                           }}
                         >
-                          {s.nama}
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{s.nama}</span>
+                            {s.kodeSeller && !s.kodeSeller.startsWith("KS-") && (
+                              <span className="text-[10px] text-slate-400 font-mono">{s.kodeSeller}</span>
+                            )}
+                          </div>
                         </div>
-                      ))}
-                    {sellers.filter(s => s.nama.toLowerCase().includes(sellerSearchQuery.toLowerCase())).length === 0 && (
-                      <div className="px-4 py-4 text-sm text-slate-500 text-center">
-                        Seller tidak ditemukan
-                      </div>
-                    )}
+                      ));
+                    })()}
                   </div>
                 </div>
                 </>

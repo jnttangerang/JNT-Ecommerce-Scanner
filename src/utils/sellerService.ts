@@ -80,47 +80,65 @@ class SellerServiceManager {
     } catch (e) {
       console.warn("Could not save seller cache to localStorage:", e);
     }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("jt_sellers_updated", { detail: this.cache }));
+      window.dispatchEvent(new Event("jt_db_updated"));
+    }
   }
 
   setSellers(sellers: Seller[]) {
-    // Deduplicate by name (case-insensitive)
+    // Upsert/merge incoming sellers into existing cache instead of wiping out MASTER_SELLER data
     const uniqueSellers = new Map<string, Seller>();
+
+    // 1. Preserve existing cache first (especially enriched records from MASTER_SELLER)
+    this.cache.forEach(s => {
+      if (s && s.nama && s.nama.trim()) {
+        uniqueSellers.set(s.nama.trim().toLowerCase(), s);
+      }
+    });
+
+    // 2. Merge incoming sellers
     sellers.forEach(s => {
-      if (s.nama) {
+      if (s && s.nama && s.nama.trim()) {
         const key = s.nama.trim().toLowerCase();
-        if (!uniqueSellers.has(key)) {
-          uniqueSellers.set(key, s);
+        const existing = uniqueSellers.get(key);
+        if (existing) {
+          uniqueSellers.set(key, {
+            ...s,
+            ...existing,
+            nama: s.nama.trim(),
+            statusAktif: existing.statusAktif || s.statusAktif || 'ACTIVE',
+            syncStatus: existing.syncStatus || s.syncStatus || 'SYNCED'
+          });
+        } else {
+          uniqueSellers.set(key, {
+            ...s,
+            nama: s.nama.trim()
+          });
         }
       }
     });
+
     this.cache = Array.from(uniqueSellers.values());
     this.saveCache();
   }
 
   getAll(): Seller[] {
     if (this.cache.length === 0) {
-      const configRawSellers = localStorage.getItem('jt_config_SELLERS');
-      if (configRawSellers && configRawSellers !== '[]') {
-        const parsed = this.parseSellersFromRaw(configRawSellers);
-        // Deduplicate parsed sellers as well
-        const uniqueSellers = new Map<string, Seller>();
-        parsed.forEach(s => {
-          if (s.nama) {
-            const key = s.nama.trim().toLowerCase();
-            if (!uniqueSellers.has(key)) {
-              uniqueSellers.set(key, s);
-            }
-          }
-        });
-        this.cache = Array.from(uniqueSellers.values());
-        this.saveCache();
-      }
+      this.loadCache();
     }
-    // Also deduplicate the in-memory cache just in case
+    // Deduplicate and filter out any empty entries
     const unique = new Map<string, Seller>();
     this.cache.forEach(s => {
-      if (s.nama) {
-        unique.set(s.nama.trim().toLowerCase(), s);
+      if (s && s.nama && s.nama.trim()) {
+        const cleanName = s.nama.trim();
+        const key = cleanName.toLowerCase();
+        if (!unique.has(key)) {
+          unique.set(key, {
+            ...s,
+            nama: cleanName
+          });
+        }
       }
     });
     return Array.from(unique.values());
@@ -131,11 +149,14 @@ class SellerServiceManager {
   }
 
   search(query: string): Seller[] {
-    const q = query.toLowerCase();
-    return this.cache.filter(s => 
-      s.nama.toLowerCase().includes(q) || 
-      s.kodeSeller.toLowerCase().includes(q)
-    );
+    const q = (query || "").trim().toLowerCase();
+    const all = this.getAll();
+    if (!q) return all;
+    return all.filter(s => {
+      const name = (s.nama || "").toLowerCase();
+      const code = (s.kodeSeller || "").toLowerCase();
+      return name.includes(q) || code.includes(q);
+    });
   }
 
   async create(seller: Omit<Seller, 'id'>, accessToken?: string) {
@@ -248,30 +269,142 @@ class SellerServiceManager {
       const getRes = await fetch(config.appsScriptUrl + '?action=get_master_seller');
       if (getRes.ok) {
          const data = await getRes.json();
-         if (data.success && data.values) {
-            // merge data
-            const remoteSellers: Seller[] = data.values.map((row: any) => ({
-               id: row[0],
-               kodeSeller: row[1],
-               nama: row[2],
-               kategoriProduk: row[3],
-               noHp: row[4],
-               alamat: row[5],
-               gps: row[6],
-               statusAktif: row[7],
-               targetHarian: Number(row[8]) || 0,
-               catatan: row[9],
-               updatedAt: row[10],
-               syncStatus: 'SYNCED'
-            }));
-            
-            // Only overwrite if we don't have pending changes for that ID
+         if (data.success && data.values && Array.isArray(data.values)) {
+            const rawHeaders: string[] = Array.isArray(data.headers) 
+              ? data.headers.map((h: any) => String(h || "").toLowerCase().trim()) 
+              : [];
+
+            let nameColIdx = -1;
+            let codeColIdx = -1;
+            let idColIdx = -1;
+
+            if (rawHeaders.length > 0) {
+              for (let c = 0; c < rawHeaders.length; c++) {
+                const h = rawHeaders[c];
+                if ((h.includes("nama") || h.includes("seller") || h.includes("toko")) && !h.includes("kode") && !h.includes("admin") && !h.includes("no")) {
+                  if (nameColIdx === -1) nameColIdx = c;
+                } else if (h.includes("kode") && codeColIdx === -1) {
+                  codeColIdx = c;
+                } else if (h.includes("id") && idColIdx === -1) {
+                  idColIdx = c;
+                }
+              }
+            }
+
+            const remoteSellers: Seller[] = [];
+
+            data.values.forEach((row: any, rIdx: number) => {
+              if (!row) return;
+              let id = "";
+              let kodeSeller = "";
+              let nama = "";
+              let kategoriProduk = "";
+              let noHp = "";
+              let alamat = "";
+              let gps = "";
+              let statusAktif = "ACTIVE";
+              let targetHarian = 0;
+              let catatan = "";
+              let updatedAt = "";
+
+              if (Array.isArray(row)) {
+                if (nameColIdx !== -1 && row[nameColIdx] !== undefined) {
+                  nama = String(row[nameColIdx] || "").trim();
+                }
+                if (codeColIdx !== -1 && row[codeColIdx] !== undefined) {
+                  kodeSeller = String(row[codeColIdx] || "").trim();
+                }
+                if (idColIdx !== -1 && row[idColIdx] !== undefined) {
+                  id = String(row[idColIdx] || "").trim();
+                }
+
+                // If nama still empty, fallback through columns
+                if (!nama) {
+                  if (row[2] && String(row[2]).trim()) {
+                    nama = String(row[2]).trim();
+                    kodeSeller = kodeSeller || String(row[1] || "").trim();
+                    id = id || String(row[0] || "").trim();
+                  } else if (row[1] && String(row[1]).trim()) {
+                    nama = String(row[1]).trim();
+                    kodeSeller = kodeSeller || String(row[0] || "").trim();
+                  } else if (row[0] && String(row[0]).trim()) {
+                    nama = String(row[0]).trim();
+                  }
+                }
+
+                // Skip header rows if accidentally returned
+                const lowerName = nama.toLowerCase();
+                if (lowerName === "nama" || lowerName === "nama seller" || lowerName === "nama_seller" || lowerName === "seller" || lowerName === "id" || lowerName === "kode") {
+                  return;
+                }
+
+                if (!nama) return;
+
+                if (!kodeSeller) {
+                  kodeSeller = `KS-${nama.replace(/[^A-Z0-9]/ig, '').toUpperCase() || rIdx}`;
+                }
+                if (!id) {
+                  id = `SEL_${nama.replace(/[^A-Z0-9]/ig, '').toUpperCase() || rIdx}`;
+                }
+
+                kategoriProduk = String(row[3] || "");
+                noHp = String(row[4] || "");
+                alamat = String(row[5] || "");
+                gps = String(row[6] || "");
+                statusAktif = String(row[7] || "ACTIVE");
+                targetHarian = Number(row[8]) || 0;
+                catatan = String(row[9] || "");
+                updatedAt = String(row[10] || "");
+              } else if (typeof row === "object") {
+                nama = String(row.NamaSeller || row.nama || row.Nama || row.SellerName || row.Nama_Seller || row.seller || "").trim();
+                if (!nama) return;
+                const lowerName = nama.toLowerCase();
+                if (lowerName === "nama" || lowerName === "nama seller") return;
+                
+                kodeSeller = String(row.kodeSeller || row.KodeSeller || row.kode || `KS-${nama.replace(/[^A-Z0-9]/ig, '') || rIdx}`).trim();
+                id = String(row.id || row.ID || `SEL_${nama.replace(/[^A-Z0-9]/ig, '') || rIdx}`).trim();
+                kategoriProduk = row.kategoriProduk || row.KategoriProduk || "";
+                noHp = row.noHp || row.NoHp || "";
+                alamat = row.alamat || row.Alamat || "";
+                gps = row.gps || row.GPS || "";
+                statusAktif = row.statusAktif || row.StatusAktif || "ACTIVE";
+                targetHarian = Number(row.targetHarian || row.TargetHarian) || 0;
+                catatan = row.catatan || row.Catatan || "";
+                updatedAt = row.updatedAt || row.UpdatedAt || "";
+              }
+
+              remoteSellers.push({
+                id,
+                kodeSeller,
+                nama,
+                kategoriProduk,
+                noHp,
+                alamat,
+                gps,
+                statusAktif: statusAktif as any,
+                targetHarian,
+                catatan,
+                updatedAt,
+                syncStatus: "SYNCED"
+              });
+            });
+
+            // Upsert remote sellers safely matching by ID or case-insensitive Name
             remoteSellers.forEach(rs => {
-               const idx = this.cache.findIndex(ls => ls.id === rs.id);
+               const normName = rs.nama.trim().toLowerCase();
+               const idx = this.cache.findIndex(ls => 
+                 (rs.id && ls.id === rs.id) || 
+                 (ls.nama && ls.nama.trim().toLowerCase() === normName)
+               );
                if (idx === -1) {
                   this.cache.push(rs);
                } else if (this.cache[idx].syncStatus !== 'PENDING') {
-                  this.cache[idx] = rs;
+                  this.cache[idx] = {
+                    ...this.cache[idx],
+                    ...rs,
+                    nama: rs.nama.trim(),
+                    syncStatus: 'SYNCED'
+                  };
                }
             });
             this.saveCache();
