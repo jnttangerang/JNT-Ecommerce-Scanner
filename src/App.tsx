@@ -251,11 +251,6 @@ export default function App() {
     const records = dbService.getRecords();
     const pending = records.filter((r) => r.SyncStatus === "PENDING").length;
     setPendingCount(pending);
-
-    // Automatically trigger upload if in online mode and records are pending and not already syncing
-    if (!isOffline && pending > 0 && !isSyncing && !isSilentSyncingRef.current) {
-      silentSyncPending();
-    }
   };
 
   const handleRecordAdded = () => {
@@ -265,25 +260,27 @@ export default function App() {
 
   // Handles manual batch upload trigger ("Upload Sekarang")
   const triggerSync = async () => {
-    if (isSyncing || pendingCount === 0) return;
+    if (isSyncing) return;
+    const records = dbService.getRecords();
+    const pending = records.filter((r) => r.SyncStatus === "PENDING").length;
+    if (pending === 0) {
+      toast.info("Tidak ada resi pending untuk diupload.");
+      return;
+    }
     
     setIsSyncing(true);
-    setSyncStatusText("Menghubungkan ke Google Apps Script API...");
+    setSyncStatusText("Mengupload data dan foto ke cloud...");
 
     try {
-      // Simulate real-time upload latency with visual alerts
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setSyncStatusText("Mengupload foto resi terkompresi ke Google Drive...");
-      
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setSyncStatusText("Menyisipkan entri rekaman data ke Google Spreadsheet 'Pickup Ecommerce'...");
-
       const stats = await dbService.syncPendingRecords();
-      setSyncStatusText(`Sukses mensinkronkan ${stats.successCount} data paket pickup!`);
-      setIsCloudDataFresh(true);
-      
-      // Keep successful prompt briefly
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (stats.successCount > 0) {
+        toast.success(`Berhasil upload ${stats.successCount} data resi!`);
+        setIsCloudDataFresh(true);
+      } else if (stats.failedCount > 0) {
+        toast.error("Gagal mengupload", { description: stats.error || "Gagal tersambung ke server." });
+      } else {
+        toast.info("Semua resi sudah tersimpan di cloud.");
+      }
     } catch (err) {
       console.error("Sync error", err);
       toast.error("Gagal mengupload", { description: "Pastikan konektivitas internet aktif." });
@@ -296,7 +293,7 @@ export default function App() {
 
   // Auto/Silent Sync in background
   const silentSyncPending = async () => {
-    if (isSilentSyncingRef.current) return;
+    if (isSilentSyncingRef.current || isSyncing) return;
     isSilentSyncingRef.current = true;
     try {
       const stats = await dbService.syncPendingRecords();
@@ -307,10 +304,7 @@ export default function App() {
       console.warn("Silent background sync failed, will retry", e);
     } finally {
       isSilentSyncingRef.current = false;
-      // Safeguard against recursive call loops: read direct from store and update state to refresh badges
-      const records = dbService.getRecords();
-      const pending = records.filter((r) => r.SyncStatus === "PENDING").length;
-      setPendingCount(pending);
+      updatePendingCount();
     }
   };
 

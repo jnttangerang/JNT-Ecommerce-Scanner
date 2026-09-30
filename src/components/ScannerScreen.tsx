@@ -209,6 +209,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     photoURL: string;
     isBlurry?: boolean;
   } | null>(null);
+  const [isSavingValidation, setIsSavingValidation] = useState(false);
 
   // Retake photo states
   const [activeRetakeResi, setActiveRetakeResi] = useState<string | null>(null);
@@ -1082,7 +1083,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Accept verification and persist
   const handleConfirmValidation = async (isValid: boolean) => {
-    if (!pendingValidation) return;
+    if (!pendingValidation || isSavingValidation) return;
 
     if (!isValid) {
       // ❌ RESI TIDAK JELAS - Cancel scan & trigger full-screen warning modal/alert
@@ -1095,46 +1096,51 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       return;
     }
 
+    setIsSavingValidation(true);
     const startSaveTime = Date.now();
-    // Persist to database first, before playing success sounds!
-    const result = await dbService.addRecord({
-      resi: pendingValidation.resi,
-      outlet: config.outlet,
-      seller: config.seller,
-      operator: config.operator,
-      photoURL: pendingValidation.photoURL
-    });
-
-    const saveTime = Date.now() - startSaveTime;
-
-    if (result.success && result.record) {
-      console.log(`Save DB : SUCCESS (${saveTime}ms)`);
-      console.log(`Sync Queue : SUCCESS`);
-      console.log(`Scanner Unlock`);
-      // Capture success sound "Teet" only if data is successfully saved
-      audioService.playSuccess();
-      toast.success(`Resi tersimpan: ${result.record.Resi}`);
-      
-      setLatestResi(result.record.Resi);
-      setSessionScannedResis(prev => {
-        if (result.record && !prev.includes(result.record.Resi)) {
-          return [result.record.Resi, ...prev];
-        }
-        return prev;
+    try {
+      // Persist to database first, before playing success sounds!
+      const result = await dbService.addRecord({
+        resi: pendingValidation.resi,
+        outlet: config.outlet,
+        seller: config.seller,
+        operator: config.operator,
+        photoURL: pendingValidation.photoURL
       });
-      loadRecords();
-      if (onRecordAdded) {
-        onRecordAdded();
+
+      const saveTime = Date.now() - startSaveTime;
+
+      if (result.success && result.record) {
+        console.log(`Save DB : SUCCESS (${saveTime}ms)`);
+        console.log(`Sync Queue : SUCCESS`);
+        console.log(`Scanner Unlock`);
+        // Capture success sound "Teet" only if data is successfully saved
+        audioService.playSuccess();
+        toast.success(`Resi tersimpan: ${result.record.Resi}`);
+        
+        setLatestResi(result.record.Resi);
+        setSessionScannedResis(prev => {
+          if (result.record && !prev.includes(result.record.Resi)) {
+            return [result.record.Resi, ...prev];
+          }
+          return prev;
+        });
+        loadRecords();
+        if (onRecordAdded) {
+          onRecordAdded();
+        }
+        setPendingValidation(null);
+        unlockScannerAndFocus();
+      } else {
+        console.log(`Save DB : FAILED - ${result.error}`);
+        // Show error, play error sound, unlock scanner so they can retry
+        audioService.playError();
+        toast.error("Gagal menyimpan data", { description: result.error || "Unknown error" });
+        setPendingValidation(null);
+        unlockScannerAndFocus();
       }
-      setPendingValidation(null);
-      unlockScannerAndFocus();
-    } else {
-      console.log(`Save DB : FAILED - ${result.error}`);
-      // Show error, play error sound, unlock scanner so they can retry
-      audioService.playError();
-      toast.error("Gagal menyimpan data", { description: result.error || "Unknown error" });
-      setPendingValidation(null);
-      unlockScannerAndFocus();
+    } finally {
+      setIsSavingValidation(false);
     }
   };
 
@@ -1632,7 +1638,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                   <div className="w-full max-w-2xl grid grid-cols-2 gap-4 mt-4 shrink-0">
                     <button
                       onClick={() => handleConfirmValidation(false)}
-                      className="bg-slate-900 hover:bg-slate-850 text-red-500 border border-slate-800/80 hover:border-red-500/30 py-4 px-3 rounded-2xl text-xs font-bold transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1.5 shadow-lg active:scale-95"
+                      disabled={isSavingValidation}
+                      className="bg-slate-900 hover:bg-slate-850 disabled:opacity-50 text-red-500 border border-slate-800/80 hover:border-red-500/30 py-4 px-3 rounded-2xl text-xs font-bold transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1.5 shadow-lg active:scale-95"
                       id="validate-unclear-button"
                     >
                       <XCircle className="h-6 w-6 text-red-500" />
@@ -1640,11 +1647,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                     </button>
                     <button
                       onClick={() => handleConfirmValidation(true)}
-                      className="bg-green-650 hover:bg-green-600 border border-green-500 text-white py-4 px-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(22,163,74,0.3)] transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1.5 active:scale-95"
+                      disabled={isSavingValidation}
+                      className="bg-green-650 hover:bg-green-600 disabled:opacity-60 border border-green-500 text-white py-4 px-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(22,163,74,0.3)] transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-1.5 active:scale-95"
                       id="validate-clear-button"
                     >
                       <CheckCircle className="h-6 w-6 text-white" />
-                      <span>JELAS & SIMPAN</span>
+                      <span>{isSavingValidation ? "MENYIMPAN..." : "JELAS & SIMPAN"}</span>
                     </button>
                   </div>
                 </div>

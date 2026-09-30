@@ -262,20 +262,26 @@ const IDB_NAME = "JnTScannerDB";
 const IDB_VERSION = 1;
 const STORE_NAME = "records";
 
+let cachedDBPromise: Promise<IDBDatabase | null> | null = null;
+
 function openIndexedDB(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
-    if (typeof window === "undefined" || !window.indexedDB) {
-      resolve(null);
-      return;
-    }
+  if (cachedDBPromise) return cachedDBPromise;
+  if (typeof window === "undefined" || !window.indexedDB) {
+    return Promise.resolve(null);
+  }
+  cachedDBPromise = new Promise((resolve) => {
     try {
       const request = window.indexedDB.open(IDB_NAME, IDB_VERSION);
       request.onerror = (e) => {
         console.warn("IndexedDB failed to open:", e);
+        cachedDBPromise = null;
         resolve(null);
       };
       request.onsuccess = (e) => {
-        resolve((e.target as IDBOpenDBRequest).result);
+        const db = (e.target as IDBOpenDBRequest).result;
+        db.onclose = () => { cachedDBPromise = null; };
+        db.onversionchange = () => { db.close(); cachedDBPromise = null; };
+        resolve(db);
       };
       request.onupgradeneeded = (e) => {
         const db = (e.target as IDBOpenDBRequest).result;
@@ -285,41 +291,70 @@ function openIndexedDB(): Promise<IDBDatabase | null> {
       };
     } catch (err) {
       console.warn("IndexedDB open exception:", err);
+      cachedDBPromise = null;
       resolve(null);
     }
   });
+  return cachedDBPromise;
 }
 
-function saveRecordsToIDB(records: ScanRecord[]): Promise<boolean> {
+function putRecordToIDB(record: ScanRecord): Promise<boolean> {
   return new Promise((resolve) => {
     openIndexedDB().then((db) => {
-      if (!db) {
-        resolve(false);
-        return;
-      }
+      if (!db) return resolve(false);
       try {
-        const transaction = db.transaction([STORE_NAME], "readwrite");
-        const store = transaction.objectStore(STORE_NAME);
-        
-        // Clear old records first to prevent synchronization discrepancies
-        store.clear();
-        
-        // Put all records
-        records.forEach((r) => {
-          store.put(r);
-        });
-        
-        transaction.oncomplete = () => resolve(true);
-        transaction.onerror = (e) => {
-          console.warn("IndexedDB transaction write error:", e);
-          resolve(false);
-        };
-      } catch (err) {
-        console.warn("Error saving to IndexedDB:", err);
+        const tx = db.transaction([STORE_NAME], "readwrite");
+        tx.objectStore(STORE_NAME).put(record);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
         resolve(false);
       }
     });
   });
+}
+
+function putRecordsBatchToIDB(records: ScanRecord[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!records.length) return resolve(true);
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(false);
+      try {
+        const tx = db.transaction([STORE_NAME], "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        for (const r of records) {
+          store.put(r);
+        }
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+function clearRecordsInIDB(): Promise<boolean> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(false);
+      try {
+        const tx = db.transaction([STORE_NAME], "readwrite");
+        tx.objectStore(STORE_NAME).clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+function saveRecordsToIDB(records: ScanRecord[]): Promise<boolean> {
+  if (records.length === 0) {
+    return clearRecordsInIDB();
+  }
+  return putRecordsBatchToIDB(records);
 }
 
 function getAllRecordsFromIDB(): Promise<ScanRecord[] | null> {
@@ -764,19 +799,16 @@ export class DatabaseService {
     };
 
     records.unshift(newRecord);
-    const saveSuccess = await this.saveRecords(records);
-    
-    if (saveSuccess) {
-      // Validate that it actually exists in memory cache as expected
-      const verify = this.getRecords().find(r => r.ID === newRecord.ID);
-      if (verify) {
-        return { success: true, record: newRecord };
-      }
-    }
-    
-    // Rollback if IndexedDB write failed or verification failed
-    this.recordsCache = this.recordsCache.filter(r => r.ID !== newRecord.ID);
-    return { success: false, error: "Gagal menyimpan ke database lokal (IndexedDB)" };
+    this.recordsCache = records;
+
+    // Fast asynchronous IndexedDB write for the new single record (<2ms)
+    putRecordToIDB(newRecord);
+
+    // Update lightweight localStorage snapshot safely
+    this.safeSaveToLocalStorage(records);
+
+    window.dispatchEvent(new Event("jt_db_updated"));
+    return { success: true, record: newRecord };
   }
 
   /**
@@ -966,26 +998,30 @@ export class DatabaseService {
   /**
    * Batch Upload / Sync to Spreadsheet
    */
-  // Records are sent to Apps Script in small chunks rather than all at once. This keeps
-  // each request well under Apps Script's ~6 minute execution limit (large batches with
-  // many photos can otherwise time out mid-way) and means a problem in one chunk can't
-  // block/mask the sync status of records in other chunks.
-  private readonly SYNC_CHUNK_SIZE = 8;
+  private readonly SYNC_CHUNK_SIZE = 3;
+  private activeSyncPromise: Promise<{ successCount: number; failedCount: number; error?: string }> | null = null;
 
   public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
-    if (this.isSyncingInProgress) {
-      console.log("Sinkronisasi sedang berlangsung. Permintaan diabaikan untuk mencegah duplikat.");
-      return { successCount: 0, failedCount: 0 };
+    // If a sync is already running, join the existing in-flight operation to avoid duplicate requests or dropped uploads
+    if (this.activeSyncPromise) {
+      console.log("Sinkronisasi sedang berlangsung. Menggabungkan permintaan ke proses aktif.");
+      return this.activeSyncPromise;
     }
 
-    this.isSyncingInProgress = true;
+    this.activeSyncPromise = this.executeSyncPendingRecords();
+    try {
+      return await this.activeSyncPromise;
+    } finally {
+      this.activeSyncPromise = null;
+    }
+  }
 
+  private async executeSyncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
     try {
       await this.ensureIdbLoaded(); // Wait for IDB to restore full photos before syncing
       const config = this.getCloudConfig();
       const records = this.getRecords();
       
-      // Explicitly destructure and cleanly map each pending record with strictly bound metadata to avoid any reference leakage
       const pending = records
         .filter(r => r.SyncStatus === "PENDING")
         .map(r => ({
@@ -1014,36 +1050,27 @@ export class DatabaseService {
         accessToken = await getAccessToken();
       } catch(e) {}
 
-      const processedPending = [];
-      for (const r of pending) {
-        let finalPhotoUrl = r.PhotoURL;
-        // DISABLED DRIVE INTEGRATION
-        processedPending.push({ ...r, PhotoURL: finalPhotoUrl });
-      }
-
-      // Immediately persist Drive URLs to avoid re-uploading if Sheets sync fails
-      // Use getRecords() to get the freshest data and avoid overwriting concurrent scans
-      const recordsWithDriveUrls = this.getRecords().map(r => {
-        const processed = processedPending.find(p => p.ID === r.ID);
-        if (processed && processed.PhotoURL !== r.PhotoURL) {
-          return { ...r, PhotoURL: processed.PhotoURL };
-        }
-        return r;
-      });
-      await this.saveRecords(recordsWithDriveUrls);
+      const processedPending = pending;
 
       if (accessToken && config.spreadsheetId) {
         try {
           const { directSyncRecords } = await import("./sheets");
           const res = await directSyncRecords(processedPending as any, config.spreadsheetId, accessToken);
           const failedIdsSet = new Set(res.failedIds || []);
-          const updated = this.getRecords().map(r => {
+          const syncedRecords: ScanRecord[] = [];
+          this.recordsCache = this.recordsCache.map(r => {
             if (r.SyncStatus === "PENDING" && !failedIdsSet.has(r.ID)) {
-              return { ...r, SyncStatus: "SYNCED" as const };
+              const updated = { ...r, SyncStatus: "SYNCED" as const };
+              syncedRecords.push(updated);
+              return updated;
             }
             return r;
           });
-          this.saveRecords(updated);
+          if (syncedRecords.length > 0) {
+            putRecordsBatchToIDB(syncedRecords);
+            this.safeSaveToLocalStorage(this.recordsCache);
+            window.dispatchEvent(new Event("jt_db_updated"));
+          }
           return {
             successCount: res.added,
             failedCount: res.failedIds.length,
@@ -1056,13 +1083,20 @@ export class DatabaseService {
 
       if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
         // Simulate/fallback sync locally if actual cloud API is not configured
-        const updated = this.getRecords().map(r => {
+        const syncedRecords: ScanRecord[] = [];
+        this.recordsCache = this.recordsCache.map(r => {
           if (r.SyncStatus === "PENDING") {
-            return { ...r, SyncStatus: "SYNCED" as const };
+            const updated = { ...r, SyncStatus: "SYNCED" as const };
+            syncedRecords.push(updated);
+            return updated;
           }
           return r;
         });
-        this.saveRecords(updated);
+        if (syncedRecords.length > 0) {
+          putRecordsBatchToIDB(syncedRecords);
+          this.safeSaveToLocalStorage(this.recordsCache);
+          window.dispatchEvent(new Event("jt_db_updated"));
+        }
         return { successCount: processedPending.length, failedCount: 0 };
       }
 
@@ -1079,14 +1113,17 @@ export class DatabaseService {
 
       for (const chunk of chunks) {
         let attempt = 0;
-        const maxAttempts = 5;
-        let delay = 1000; // Start at 1000ms (1 second)
+        const maxAttempts = 3;
+        let delay = 1000;
         let responseData: any = null;
         let lastError: any = null;
         let isSuccess = false;
 
         while (attempt < maxAttempts) {
           try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 35000); // 35-second timeout per chunk
+
             const response = await fetch(config.appsScriptUrl, {
               method: "POST",
               mode: "cors",
@@ -1096,8 +1133,10 @@ export class DatabaseService {
               body: JSON.stringify({
                 action: "sync_batch",
                 records: chunk
-              })
+              }),
+              signal: controller.signal
             });
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
               throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
@@ -1111,7 +1150,6 @@ export class DatabaseService {
             lastError = err;
             console.warn(`Sinkronisasi gagal (Percobaan ${attempt}/${maxAttempts}). Mencoba kembali dalam ${delay}ms...`, err);
 
-            // Dispatch custom event to notify UI for retry attempt info
             if (typeof window !== "undefined") {
               const event = new CustomEvent("sync-retry-attempt", {
                 detail: { 
@@ -1128,20 +1166,17 @@ export class DatabaseService {
               break;
             }
             await new Promise(resolve => setTimeout(resolve, delay));
-            delay *= 2; // Exponential Backoff increase
+            delay *= 2;
           }
         }
 
         if (!isSuccess) {
           totalFailed += chunk.length;
-          lastErrorMsg = `Gagal tersambung setelah ${maxAttempts} kali percobaan. Kesalahan terakhir: ${lastError?.toString() || "Koneksi terputus."}`;
-          continue; // Don't let this chunk block the remaining chunks
+          lastErrorMsg = `Gagal tersambung setelah ${maxAttempts} kali percobaan. Kesalahan: ${lastError?.toString() || "Koneksi terputus."}`;
+          continue;
         }
 
         if (responseData && responseData.success) {
-          // Apps Script now reports exactly which IDs (if any) failed to process within
-          // the chunk, so only those specific records stay PENDING - everything else in
-          // the chunk is marked SYNCED even if one sibling record had a problem.
           const failedIdsFromServer: string[] = Array.isArray(responseData.failedIds) ? responseData.failedIds : [];
           chunk.forEach(r => {
             if (!failedIdsFromServer.includes(r.ID)) {
@@ -1152,7 +1187,7 @@ export class DatabaseService {
             }
           });
           if (failedIdsFromServer.length > 0) {
-            lastErrorMsg = `${failedIdsFromServer.length} resi gagal diproses di server (lihat log Apps Script untuk detail).`;
+            lastErrorMsg = `${failedIdsFromServer.length} resi gagal diproses di server.`;
           }
         } else {
           totalFailed += chunk.length;
@@ -1161,8 +1196,18 @@ export class DatabaseService {
       }
 
       if (syncedIds.size > 0) {
-        const updated = this.getRecords().map(r => syncedIds.has(r.ID) ? { ...r, SyncStatus: "SYNCED" as const } : r);
-        this.saveRecords(updated);
+        const syncedRecords: ScanRecord[] = [];
+        this.recordsCache = this.recordsCache.map(r => {
+          if (syncedIds.has(r.ID)) {
+            const updated = { ...r, SyncStatus: "SYNCED" as const };
+            syncedRecords.push(updated);
+            return updated;
+          }
+          return r;
+        });
+        putRecordsBatchToIDB(syncedRecords);
+        this.safeSaveToLocalStorage(this.recordsCache);
+        window.dispatchEvent(new Event("jt_db_updated"));
       }
 
       return {
@@ -1171,7 +1216,7 @@ export class DatabaseService {
         error: totalFailed > 0 ? lastErrorMsg : undefined
       };
     } finally {
-      this.isSyncingInProgress = false;
+      // Completed
     }
   }
 

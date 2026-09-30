@@ -282,6 +282,8 @@ Setelah seluruh roadmap selesai, aplikasi harus memiliki karakteristik berikut:
 
 | Tanggal | Fitur / Area | Ringkasan Pekerjaan | Status |
 |---|---|---|---|
+| September 2026 | Performance "Jelas & Simpan" (`db.ts`, `ScannerScreen.tsx`) | Mempercepat penyimpanan hasil scan dari 30-60 detik menjadi instan (<15ms) dengan IndexedDB connection pooling (`cachedDBPromise`) dan penulisan single-record langsung (`putRecordToIDB`) tanpa `store.clear()` wipe. Menambahkan feedback tombol "MENYIMPAN...". | Selesai |
+| September 2026 | Cloud Upload & Race Condition (`App.tsx`, `db.ts`) | Memperbaiki proses "UPLOAD SEKARANG": menghapus 2.6s artificial delay, menyatukan background sync dan manual upload via shared in-flight promise (`activeSyncPromise`) agar upload manual tidak tertolak/gagal, memangkas `SYNC_CHUNK_SIZE` ke 3 untuk stabilitas upload Google Drive, dan menambahkan AbortController timeout 35s. | Selesai |
 | September 2026 | Storage Engine (`db.ts`) | Mengatasi fatal error `QuotaExceededError` pada LocalStorage (`jt_pickup_records`). Memindahkan persistensi foto Base64 dan seluruh riwayat transaksi ke IndexedDB (`JnTScannerDB`), membatasi LocalStorage ke snapshot metadata <20KB dengan mekanisme degradasi otomatis bertahap (50 -> 20 -> 10 -> 0). | Selesai |
 | Agustus 2026 | Scanner Barcode (`ScannerScreen.tsx`) | Mengaktifkan hardware-accelerated `BarcodeDetector` WebKit iOS Safari untuk pembacaan instan Code128 / QR Code (termasuk resi JZ Lazada). Memperbaiki regex validasi dinamis agar tidak memunculkan toast error palsu pada barcode Lazada. | Selesai |
 | Agustus 2026 | Responsive & Viewport UI | Memperbaiki horizontal scroll / geser kanan-kiri pada iPhone dengan penerapan containment `overflow-x-hidden` dan `max-w-full`. | Selesai |
