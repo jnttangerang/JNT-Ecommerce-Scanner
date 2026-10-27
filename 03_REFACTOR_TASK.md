@@ -1,6 +1,6 @@
 # 03_REFACTOR_TASK.md
 
-# J&T Pickup Scanner PRO
+# J&T Ecommerce
 ## Refactor Roadmap
 
 **Version** : 1.1.0  
