@@ -1,6 +1,6 @@
 # 02_DATABASE_ARCHITECTURE.md
 
-# J&T Pickup Scanner PRO
+# J&T Ecommerce
 ## Database Architecture & Technical Design
 
 **Version** : 1.1.0  
