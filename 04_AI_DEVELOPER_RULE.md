@@ -1,6 +1,6 @@
 # 04_AI_DEVELOPER_RULE.md
 
-# J&T Pickup Scanner PRO
+# J&T Ecommerce
 ## AI Developer Rules
 
 **Version** : 1.1.0  
