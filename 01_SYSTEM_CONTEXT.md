@@ -1,6 +1,6 @@
 # 01_SYSTEM_CONTEXT.md
 
-# J&T Pickup Scanner PRO
+# J&T Ecommerce
 ## System Context & Business Rules
 
 **Version** : 1.1.0  
