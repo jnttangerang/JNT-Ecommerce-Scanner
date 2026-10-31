@@ -918,7 +918,7 @@ function handleSyncMasterSeller(payload) {
 }
 
 // Cek cepat: jalankan dari editor Apps Script. Gagal = throw.
-function selfCheckSellerRow_() {
+function selfCheckSeller() {
   const old = ["S1", "KS1", "Toko A", "Fashion", "Admin A", "0811", "Alamat", "gps", "50", "08:00", "20", "Aktif", "cat"];
   const r = sellerRow_({ id: "S1", nama: "Toko B", noHp: "0822" }, old);
   if (r.length !== 13) throw new Error("harus 13 kolom");
