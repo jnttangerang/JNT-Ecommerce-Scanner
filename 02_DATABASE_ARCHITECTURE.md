@@ -776,3 +776,27 @@ Aplikasi harus memiliki karakteristik berikut.
 - Mudah dikembangkan.
 - Tetap kompatibel dengan data lama.
 - Seluruh perubahan dilakukan melalui Migration yang aman.
+
+---
+
+# 32. Arsitektur Data Paket Retur (TASK_11 - Fase 1)
+
+Modul Paket Retur menggunakan IndexedDB v2 untuk penyimpanan lokal offline-first dan sinkronisasi ke sheet terpisah di Google Spreadsheet tanpa mengubah sheet pickup lama:
+
+### A. Sheet `DATA_RETUR`
+Satu sheet untuk semua outlet pencatatan retur masuk:
+`ReturID | Resi | SellerID | Seller | Outlet | Sumber | TglTerima | JamTerima | AdminTerima | Kondisi | FotoTerimaURL | Status | HandoverID | Catatan | CreatedAt | UpdatedAt | DeletedAt`
+
+### B. Sheet `DATA_RETUR_SERAH`
+Pencatatan batch serah terima paket retur ke pihak seller:
+`HandoverID | SellerID | Seller | Outlet | TglSerah | JamSerah | AdminSerah | Metode | JumlahPaket | DaftarResi | NamaPenerima | FotoBuktiURL | Catatan | CreatedAt | DeletedAt`
+
+### C. Sheet `AUDIT_RETUR`
+Audit trail penyerahan dan penerimaan retur:
+`Waktu | User | Role | Aksi | RecordID | Detail`
+
+### D. IndexedDB Stores (Version 2)
+1. `retur_records`: keyPath `ReturID`, index: `Resi`, `SellerID`, `Status`
+2. `retur_handovers`: keyPath `HandoverID`, index: `SellerID`
+*Catatan:* Foto base64 disimpan di IndexedDB, tidak dimasukkan ke LocalStorage agar tidak melanggar batas quota 5MB.
+

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Shield, Truck, Wifi, WifiOff, RefreshCw, Layers } from "lucide-react";
+import { Shield, Truck, Wifi, WifiOff, RefreshCw, Layers, Package } from "lucide-react";
 import { AppView } from "../types";
 import { dbService } from "../utils/db";
 
@@ -191,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* View switcher (Operator <-> Owner) */}
+          {/* View switcher (Operator <-> Retur <-> Owner) */}
           <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5 sm:p-1" id="view-mode-selector">
             <button
               onClick={() => setView("WELCOME")}
@@ -203,7 +203,19 @@ export const Header: React.FC<HeaderProps> = ({
               title="Portal Operator Scan"
             >
               <Truck className="h-3.5 w-3.5 flex-shrink-0" />
-              <span className="hidden md:inline">Operator</span>
+              <span className="hidden md:inline">Scan</span>
+            </button>
+            <button
+              onClick={() => setView("RETUR")}
+              className={`p-1 sm:p-1.5 rounded-md text-xs flex items-center space-x-1 transition-all ${
+                currentView === "RETUR"
+                  ? "bg-red-600 text-white shadow-sm font-bold"
+                  : "text-slate-500 hover:text-slate-900 font-medium"
+              }`}
+              title="Paket Retur"
+            >
+              <Package className="h-3.5 w-3.5 flex-shrink-0" />
+              <span>Retur</span>
             </button>
             <button
               onClick={() => setView(currentView === "OWNER_DASHBOARD" ? "OWNER_DASHBOARD" : "OWNER_LOGIN")}

@@ -4,7 +4,7 @@ import { Config, CONFIG_KEYS } from './config';
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ScanRecord, Seller, Outlet, Operator, StatusType } from "../types";
+import { ScanRecord, Seller, Outlet, Operator, StatusType, ReturRecord, ReturHandover, ReturKondisi, ReturMetode, ReturStatus, RETUR_STATUS } from "../types";
 
 /**
  * Returns "today" as YYYY-MM-DD based on the DEVICE'S LOCAL time zone (WIB), not UTC.
@@ -258,9 +258,13 @@ export function getDirectDriveImageUrl(url: string | undefined): string {
 // ==========================================
 // IndexedDB setup & Helper Functions
 // ==========================================
+// IndexedDB setup & Helper Functions (v2: added retur_records & retur_handovers)
+// ==========================================
 const IDB_NAME = "JnTScannerDB";
-const IDB_VERSION = 1;
+const IDB_VERSION = 2;
 const STORE_NAME = "records";
+const RETUR_STORE_NAME = "retur_records";
+const HANDOVER_STORE_NAME = "retur_handovers";
 
 let cachedDBPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -287,6 +291,16 @@ function openIndexedDB(): Promise<IDBDatabase | null> {
         const db = (e.target as IDBOpenDBRequest).result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: "ID" });
+        }
+        if (!db.objectStoreNames.contains(RETUR_STORE_NAME)) {
+          const returStore = db.createObjectStore(RETUR_STORE_NAME, { keyPath: "ReturID" });
+          returStore.createIndex("Resi", "Resi", { unique: false });
+          returStore.createIndex("SellerID", "SellerID", { unique: false });
+          returStore.createIndex("Status", "Status", { unique: false });
+        }
+        if (!db.objectStoreNames.contains(HANDOVER_STORE_NAME)) {
+          const hoStore = db.createObjectStore(HANDOVER_STORE_NAME, { keyPath: "HandoverID" });
+          hoStore.createIndex("SellerID", "SellerID", { unique: false });
         }
       };
     } catch (err) {
@@ -382,9 +396,121 @@ function getAllRecordsFromIDB(): Promise<ScanRecord[] | null> {
   });
 }
 
+// ---------------- RETUR IDB HELPERS ----------------
+function putReturToIDB(retur: ReturRecord): Promise<boolean> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(false);
+      try {
+        const tx = db.transaction([RETUR_STORE_NAME], "readwrite");
+        tx.objectStore(RETUR_STORE_NAME).put(retur);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+function putRetursBatchToIDB(returs: ReturRecord[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!returs.length) return resolve(true);
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(false);
+      try {
+        const tx = db.transaction([RETUR_STORE_NAME], "readwrite");
+        const store = tx.objectStore(RETUR_STORE_NAME);
+        for (const r of returs) {
+          store.put(r);
+        }
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+function getAllRetursFromIDB(): Promise<ReturRecord[] | null> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(null);
+      try {
+        const tx = db.transaction([RETUR_STORE_NAME], "readonly");
+        const store = tx.objectStore(RETUR_STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result as ReturRecord[]);
+        req.onerror = () => resolve(null);
+      } catch (err) {
+        console.warn("Error getting returs from IDB:", err);
+        resolve(null);
+      }
+    });
+  });
+}
+
+function putHandoverToIDB(handover: ReturHandover): Promise<boolean> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(false);
+      try {
+        const tx = db.transaction([HANDOVER_STORE_NAME], "readwrite");
+        tx.objectStore(HANDOVER_STORE_NAME).put(handover);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+function putHandoversBatchToIDB(handovers: ReturHandover[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!handovers.length) return resolve(true);
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(false);
+      try {
+        const tx = db.transaction([HANDOVER_STORE_NAME], "readwrite");
+        const store = tx.objectStore(HANDOVER_STORE_NAME);
+        for (const h of handovers) {
+          store.put(h);
+        }
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+function getAllHandoversFromIDB(): Promise<ReturHandover[] | null> {
+  return new Promise((resolve) => {
+    openIndexedDB().then((db) => {
+      if (!db) return resolve(null);
+      try {
+        const tx = db.transaction([HANDOVER_STORE_NAME], "readonly");
+        const store = tx.objectStore(HANDOVER_STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result as ReturHandover[]);
+        req.onerror = () => resolve(null);
+      } catch (err) {
+        console.warn("Error getting handovers from IDB:", err);
+        resolve(null);
+      }
+    });
+  });
+}
+
 export class DatabaseService {
   private isSyncingInProgress = false;
+  private isReturSyncingInProgress = false;
   private recordsCache: ScanRecord[] = [];
+  private retursCache: ReturRecord[] = [];
+  private handoversCache: ReturHandover[] = [];
   private idbInitPromise: Promise<void> | null = null;
 
   // STATE MACHINE VALIDATOR
@@ -507,9 +633,10 @@ export class DatabaseService {
     }
 
     // 2. Asynchronously bootstrap IndexedDB: read the full un-truncated objects (with full Base64 photos) if they exist
-    this.idbInitPromise = openIndexedDB().then((db) => {
+    this.idbInitPromise = openIndexedDB().then(async (db) => {
       if (db) {
-        return getAllRecordsFromIDB().then((idbRecords) => {
+        try {
+          const idbRecords = await getAllRecordsFromIDB();
           if (idbRecords && idbRecords.length > 0) {
             // Merge in-memory cache with full photos from IndexedDB
             const idbMap = new Map(idbRecords.map(r => [r.ID, r]));
@@ -537,7 +664,20 @@ export class DatabaseService {
             // First time bootstrap: register in-memory historical list onto IndexedDB
             saveRecordsToIDB(this.recordsCache);
           }
-        });
+
+          // Bootstrap Retur records & Handovers from IndexedDB
+          const idbReturs = await getAllRetursFromIDB();
+          if (idbReturs && idbReturs.length > 0) {
+            this.retursCache = idbReturs.sort((a, b) => new Date(b.CreatedAt || 0).getTime() - new Date(a.CreatedAt || 0).getTime());
+          }
+          const idbHandovers = await getAllHandoversFromIDB();
+          if (idbHandovers && idbHandovers.length > 0) {
+            this.handoversCache = idbHandovers.sort((a, b) => new Date(b.CreatedAt || 0).getTime() - new Date(a.CreatedAt || 0).getTime());
+          }
+          window.dispatchEvent(new Event("jt_retur_updated"));
+        } catch (err) {
+          console.warn("Error bootstrapping IndexedDB stores:", err);
+        }
       }
     });
   }
@@ -1499,6 +1639,372 @@ export class DatabaseService {
    */
   public clearAllRecords() {
     this.saveRecords([]);
+  }
+
+  // ==========================================
+  // RETUR METHODS (TASK_11)
+  // ==========================================
+  public getReturs(): ReturRecord[] {
+    return [...this.retursCache];
+  }
+
+  public getHandovers(): ReturHandover[] {
+    return [...this.handoversCache];
+  }
+
+  public getPendingReturCount(): number {
+    const pendingR = this.retursCache.filter(r => r.SyncStatus === "PENDING").length;
+    const pendingH = this.handoversCache.filter(h => h.SyncStatus === "PENDING").length;
+    return pendingR + pendingH;
+  }
+
+  public async addRetur(params: {
+    resi: string;
+    sellerId: string;
+    seller: string;
+    outlet: string;
+    sumber: string;
+    kondisi: ReturKondisi;
+    fotoTerima: string;
+    catatan?: string;
+    adminTerima: string;
+  }): Promise<{ success: boolean; error?: string; retur?: ReturRecord }> {
+    const cleanResi = (params.resi || "").trim().toUpperCase();
+    if (!cleanResi) {
+      return { success: false, error: "Nomor resi retur tidak boleh kosong" };
+    }
+    if (!/^[A-Za-z0-9]+$/.test(cleanResi)) {
+      return { success: false, error: "Nomor resi retur harus alfanumerik tanpa spasi atau simbol" };
+    }
+    if (!params.seller || !params.sellerId) {
+      return { success: false, error: "Pilih seller terlebih dahulu" };
+    }
+    if (!params.sumber || !params.sumber.trim()) {
+      return { success: false, error: "Sumber pengirim (Gudang/DP) wajib diisi" };
+    }
+    if (!params.fotoTerima) {
+      return { success: false, error: "Foto kondisi paket + resi wajib diambil" };
+    }
+
+    // Duplicate check on active records
+    const existing = this.retursCache.find(r => r.Resi === cleanResi && !r.DeletedAt);
+    if (existing) {
+      if (existing.Status === RETUR_STATUS.DITERIMA) {
+        return {
+          success: false,
+          error: `Resi ${cleanResi} sudah pernah diterima pada ${existing.TglTerima} ${existing.JamTerima} oleh ${existing.AdminTerima} (Status: DITERIMA).`
+        };
+      } else if (existing.Status === RETUR_STATUS.DISERAHKAN) {
+        return {
+          success: false,
+          error: `Resi ${cleanResi} sudah berstatus DISERAHKAN (HandoverID: ${existing.HandoverID || "-"}).`
+        };
+      }
+    }
+
+    const now = new Date();
+    const tgl = getTodayLocalDateString(now);
+    const jam = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    const returId = `RET-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    const newRetur: ReturRecord = {
+      ReturID: returId,
+      Resi: cleanResi,
+      SellerID: params.sellerId,
+      Seller: params.seller,
+      Outlet: params.outlet,
+      Sumber: params.sumber.trim(),
+      TglTerima: tgl,
+      JamTerima: jam,
+      AdminTerima: params.adminTerima,
+      Kondisi: params.kondisi,
+      FotoTerimaURL: params.fotoTerima,
+      Status: RETUR_STATUS.DITERIMA,
+      Catatan: (params.catatan || "").trim(),
+      CreatedAt: now.toISOString(),
+      UpdatedAt: now.toISOString(),
+      SyncStatus: "PENDING"
+    };
+
+    this.retursCache = [newRetur, ...this.retursCache];
+    await putReturToIDB(newRetur);
+    window.dispatchEvent(new Event("jt_retur_updated"));
+
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      this.syncPendingReturs().catch(e => console.warn("Background retur sync err:", e));
+    }
+
+    return { success: true, retur: newRetur };
+  }
+
+  public async createHandover(params: {
+    sellerId: string;
+    seller: string;
+    outlet: string;
+    adminSerah: string;
+    metode: ReturMetode;
+    resiList: string[];
+    namaPenerima: string;
+    fotoBukti: string;
+    catatan?: string;
+  }): Promise<{ success: boolean; error?: string; handover?: ReturHandover }> {
+    if (!params.sellerId || !params.seller) {
+      return { success: false, error: "Pilih seller terlebih dahulu" };
+    }
+    const resiList = params.resiList || [];
+    if (resiList.length === 0) {
+      return { success: false, error: "Pilih minimal 1 resi retur yang akan diserahkan" };
+    }
+    const cleanPenerima = (params.namaPenerima || "").trim();
+    if (!cleanPenerima) {
+      return { success: false, error: "Nama penerima wajib diisi" };
+    }
+    if (!params.fotoBukti) {
+      return { success: false, error: "Foto bukti penyerahan paket wajib diambil" };
+    }
+
+    // Verify all resi
+    for (const r of resiList) {
+      const found = this.retursCache.find(x => x.Resi === r && !x.DeletedAt);
+      if (!found) {
+        return { success: false, error: `Resi ${r} tidak ditemukan dalam database retur.` };
+      }
+      if (found.Status === RETUR_STATUS.DISERAHKAN) {
+        return { success: false, error: `Resi ${r} sudah pernah diserahkan (HandoverID: ${found.HandoverID || "-"}).` };
+      }
+      if (found.Status !== RETUR_STATUS.DITERIMA) {
+        return { success: false, error: `Resi ${r} tidak berstatus DITERIMA (Status: ${found.Status}).` };
+      }
+    }
+
+    const now = new Date();
+    const tgl = getTodayLocalDateString(now);
+    const jam = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    const handoverId = `HND-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    const handover: ReturHandover = {
+      HandoverID: handoverId,
+      SellerID: params.sellerId,
+      Seller: params.seller,
+      Outlet: params.outlet,
+      TglSerah: tgl,
+      JamSerah: jam,
+      AdminSerah: params.adminSerah,
+      Metode: params.metode,
+      JumlahPaket: resiList.length,
+      DaftarResi: resiList,
+      NamaPenerima: cleanPenerima,
+      FotoBuktiURL: params.fotoBukti,
+      Catatan: (params.catatan || "").trim(),
+      CreatedAt: now.toISOString(),
+      SyncStatus: "PENDING"
+    };
+
+    const resiSet = new Set(resiList);
+    const updatedReturs: ReturRecord[] = [];
+    this.retursCache = this.retursCache.map(r => {
+      if (resiSet.has(r.Resi)) {
+        const updated: ReturRecord = {
+          ...r,
+          Status: RETUR_STATUS.DISERAHKAN,
+          HandoverID: handoverId,
+          UpdatedAt: now.toISOString(),
+          SyncStatus: r.SyncStatus === "SYNCED" ? "PENDING" : r.SyncStatus
+        };
+        updatedReturs.push(updated);
+        return updated;
+      }
+      return r;
+    });
+
+    this.handoversCache = [handover, ...this.handoversCache];
+    await putHandoverToIDB(handover);
+    await putRetursBatchToIDB(updatedReturs);
+
+    window.dispatchEvent(new Event("jt_retur_updated"));
+
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      this.syncPendingReturs().catch(e => console.warn("Background handover sync err:", e));
+    }
+
+    return { success: true, handover };
+  }
+
+  public async syncPendingReturs(): Promise<{ syncedReturs: number; syncedHandovers: number; errors: string[] }> {
+    if (this.isReturSyncingInProgress) {
+      return { syncedReturs: 0, syncedHandovers: 0, errors: ["Sinkronisasi retur sedang berjalan"] };
+    }
+    const config = this.getCloudConfig();
+    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+      return { syncedReturs: 0, syncedHandovers: 0, errors: ["Apps Script URL belum disetting"] };
+    }
+
+    this.isReturSyncingInProgress = true;
+    let syncedReturs = 0;
+    let syncedHandovers = 0;
+    const errors: string[] = [];
+
+    try {
+      // 1. Sync pending returs
+      const pendingReturs = this.retursCache.filter(r => r.SyncStatus === "PENDING" && r.Status === RETUR_STATUS.DITERIMA);
+      if (pendingReturs.length > 0) {
+        const chunkSize = 5;
+        for (let i = 0; i < pendingReturs.length; i += chunkSize) {
+          const chunk = pendingReturs.slice(i, i + chunkSize);
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 40000);
+            const res = await fetch(config.appsScriptUrl, {
+              method: "POST",
+              mode: "cors",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({
+                action: "save_retur_batch",
+                records: chunk
+              }),
+              signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+            }
+            const data = await res.json();
+            if (data.success) {
+              const failedIds: string[] = Array.isArray(data.failedIds) ? data.failedIds : [];
+              const results: Array<{ id: string; photoUrl?: string }> = Array.isArray(data.results) ? data.results : [];
+              const resultMap = new Map(results.map(x => [x.id, x.photoUrl]));
+
+              const toSave: ReturRecord[] = [];
+              this.retursCache = this.retursCache.map(r => {
+                if (chunk.some(c => c.ReturID === r.ReturID) && !failedIds.includes(r.ReturID)) {
+                  syncedReturs++;
+                  const updated: ReturRecord = {
+                    ...r,
+                    SyncStatus: "SYNCED",
+                    FotoTerimaURL: resultMap.get(r.ReturID) || r.FotoTerimaURL
+                  };
+                  toSave.push(updated);
+                  return updated;
+                }
+                return r;
+              });
+              await putRetursBatchToIDB(toSave);
+            } else {
+              errors.push(data.error || "Gagal menyimpan batch retur di server");
+            }
+          } catch (e: any) {
+            errors.push(e.message || "Koneksi terputus saat sync retur");
+          }
+        }
+      }
+
+      // 2. Sync pending handovers
+      const pendingHandovers = this.handoversCache.filter(h => h.SyncStatus === "PENDING");
+      for (const h of pendingHandovers) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 40000);
+          const res = await fetch(config.appsScriptUrl, {
+            method: "POST",
+            mode: "cors",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({
+              action: "save_handover",
+              handover: h
+            }),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+          const data = await res.json();
+          if (data.success) {
+            syncedHandovers++;
+            const updatedH: ReturHandover = {
+              ...h,
+              SyncStatus: "SYNCED",
+              FotoBuktiURL: data.photoUrl || h.FotoBuktiURL
+            };
+            this.handoversCache = this.handoversCache.map(x => x.HandoverID === h.HandoverID ? updatedH : x);
+            await putHandoverToIDB(updatedH);
+
+            const resiArr = Array.isArray(h.DaftarResi) ? h.DaftarResi : (typeof h.DaftarResi === "string" ? (h.DaftarResi as string).split(",").map(s => s.trim()) : []);
+            const resiSet = new Set(resiArr);
+            const updatedR: ReturRecord[] = [];
+            this.retursCache = this.retursCache.map(r => {
+              if (resiSet.has(r.Resi)) {
+                const u: ReturRecord = { ...r, Status: RETUR_STATUS.DISERAHKAN, HandoverID: h.HandoverID, SyncStatus: "SYNCED" };
+                updatedR.push(u);
+                return u;
+              }
+              return r;
+            });
+            await putRetursBatchToIDB(updatedR);
+          } else {
+            errors.push(`Serah terima ${h.HandoverID} ditolak: ${data.error}`);
+          }
+        } catch (e: any) {
+          errors.push(e.message || `Koneksi gagal untuk serah terima ${h.HandoverID}`);
+        }
+      }
+    } finally {
+      this.isReturSyncingInProgress = false;
+      window.dispatchEvent(new Event("jt_retur_updated"));
+    }
+
+    return { syncedReturs, syncedHandovers, errors };
+  }
+
+  public async pullReturs(): Promise<boolean> {
+    const config = this.getCloudConfig();
+    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+      return false;
+    }
+    try {
+      const url = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_retur`;
+      const res = await fetch(url, { method: "GET", mode: "cors" });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data.success) return false;
+
+      const serverReturs: ReturRecord[] = data.returs || [];
+      const serverHandovers: ReturHandover[] = data.handovers || [];
+
+      // Merge returs (local pending status wins)
+      const localMap = new Map(this.retursCache.map(r => [r.ReturID, r]));
+      serverReturs.forEach(sr => {
+        const loc = localMap.get(sr.ReturID);
+        if (!loc || loc.SyncStatus === "SYNCED") {
+          localMap.set(sr.ReturID, { ...sr, SyncStatus: "SYNCED" });
+        }
+      });
+      this.retursCache = Array.from(localMap.values()).sort(
+        (a, b) => new Date(b.CreatedAt || 0).getTime() - new Date(a.CreatedAt || 0).getTime()
+      );
+      await putRetursBatchToIDB(this.retursCache);
+
+      // Merge handovers
+      const localHoMap = new Map(this.handoversCache.map(h => [h.HandoverID, h]));
+      serverHandovers.forEach(sh => {
+        const loc = localHoMap.get(sh.HandoverID);
+        if (!loc || loc.SyncStatus === "SYNCED") {
+          localHoMap.set(sh.HandoverID, { ...sh, SyncStatus: "SYNCED" });
+        }
+      });
+      this.handoversCache = Array.from(localHoMap.values()).sort(
+        (a, b) => new Date(b.CreatedAt || 0).getTime() - new Date(a.CreatedAt || 0).getTime()
+      );
+      await putHandoversBatchToIDB(this.handoversCache);
+
+      window.dispatchEvent(new Event("jt_retur_updated"));
+      return true;
+    } catch (e) {
+      console.warn("pullReturs failed:", e);
+      return false;
+    }
   }
 
   /**

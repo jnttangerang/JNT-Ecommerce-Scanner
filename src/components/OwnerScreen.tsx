@@ -43,10 +43,12 @@ import {
   Tag,
   Eye,
   X,
-  Target
+  Target,
+  Package
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
 import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
+import { ReturScreen } from "./ReturScreen";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { QRCodeSVG } from 'qrcode.react';
@@ -172,7 +174,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [outletError, setOutletError] = useState("");
   const [copiedScript, setCopiedScript] = useState(false);
   const [apiTestStatus, setApiTestStatus] = useState<"IDLE" | "TESTING" | "SUCCESS" | "FAILED">("IDLE");
-  const [activeTab, setActiveTab] = useState<"RECAP" | "MASTERS" | "INTEGRATION" | "DEPLOYMENT">("RECAP");
+  const [activeTab, setActiveTab] = useState<"RECAP" | "RETUR" | "MASTERS" | "INTEGRATION" | "DEPLOYMENT">("RECAP");
 
   // Prefix Resi states
   const [newPrefixInput, setNewPrefixInput] = useState("");
@@ -2488,6 +2490,18 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           </button>
 
           <button
+            onClick={() => setActiveTab("RETUR")}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              activeTab === "RETUR"
+                ? "bg-white text-slate-900 shadow-sm font-extrabold"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <Package className="h-3.5 w-3.5 text-red-650" />
+            <span className="truncate">Paket Retur</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab("MASTERS")}
             className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
               activeTab === "MASTERS"
@@ -4348,6 +4362,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       </div>
       )}
 
+      {activeTab === "RETUR" && <ReturScreen isReadOnly={true} />}
       {activeTab === "MASTERS" && renderMastersTab()}
       {activeTab === "INTEGRATION" && renderIntegrationTab()}
       {activeTab === "DEPLOYMENT" && renderDeploymentTab()}

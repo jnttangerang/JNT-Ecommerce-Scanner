@@ -45,6 +45,8 @@ function doGet(e) {
       return handleGetMasters();
     } else if (action === "get_records") {
       return handleGetRecords();
+    } else if (action === "get_retur") {
+      return handleGetRetur();
     }
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -83,6 +85,12 @@ function doPost(e) {
       return handleGetRecords();
     } else if (action === "sync_masters") {
       return handleSyncMasters(payload.sellers, payload.operators, payload.outlets);
+    } else if (action === "save_retur_batch") {
+      return handleSaveReturBatch(payload.records);
+    } else if (action === "save_handover") {
+      return handleSaveHandover(payload.handover);
+    } else if (action === "get_retur") {
+      return handleGetRetur();
     }
     
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
@@ -620,6 +628,18 @@ function setupSheetHeaders() {
     { 
       name: "Daftar Outlet", 
       headers: ["Nama Outlet"] 
+    },
+    {
+      name: "DATA_RETUR",
+      headers: RETUR_HEADERS
+    },
+    {
+      name: "DATA_RETUR_SERAH",
+      headers: HANDOVER_HEADERS
+    },
+    {
+      name: "AUDIT_RETUR",
+      headers: AUDIT_RETUR_HEADERS
     }
   ];
   
@@ -977,4 +997,369 @@ function handleSyncMasters(sellers, operators, outlets) {
 
   try { updateDashboardSheet(ss); } catch (e) {}
   return jsonOut_({ success: true, message: "Berhasil disinkronkan ke Spreadsheet!", skippedEmpty: skipped });
+}
+
+// ==========================================
+// FITUR PAKET RETUR (TASK_11)
+// ==========================================
+
+const RETUR_HEADERS = [
+  "ReturID", "Resi", "SellerID", "Seller", "Outlet", "Sumber",
+  "TglTerima", "JamTerima", "AdminTerima", "Kondisi", "FotoTerimaURL",
+  "Status", "HandoverID", "Catatan", "CreatedAt", "UpdatedAt", "DeletedAt"
+];
+
+const HANDOVER_HEADERS = [
+  "HandoverID", "SellerID", "Seller", "Outlet", "TglSerah", "JamSerah",
+  "AdminSerah", "Metode", "JumlahPaket", "DaftarResi", "NamaPenerima",
+  "FotoBuktiURL", "Catatan", "CreatedAt", "DeletedAt"
+];
+
+const AUDIT_RETUR_HEADERS = [
+  "Waktu", "User", "Role", "Aksi", "RecordID", "Detail"
+];
+
+function getReturFolder_(driveFolder) {
+  const subFolders = driveFolder.getFoldersByName("Retur");
+  if (subFolders.hasNext()) {
+    return subFolders.next();
+  }
+  return driveFolder.createFolder("Retur");
+}
+
+function writeAuditRetur_(ss, user, role, aksi, recordId, detail) {
+  try {
+    let sheet = ss.getSheetByName("AUDIT_RETUR");
+    if (!sheet) {
+      sheet = ss.insertSheet("AUDIT_RETUR");
+      sheet.appendRow(AUDIT_RETUR_HEADERS);
+      sheet.getRange(1, 1, 1, AUDIT_RETUR_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
+    }
+    const nowStr = Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss");
+    sheet.appendRow([nowStr, user || "", role || "Operator", aksi, recordId || "", detail || ""]);
+  } catch (e) {
+    Logger.log("Audit retur error: " + e.toString());
+  }
+}
+
+function handleSaveReturBatch(records) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return jsonOut_({
+      success: false,
+      error: "Server sibuk (lock timeout), coba lagi dalam beberapa detik.",
+      failedIds: (records || []).map(function(r) { return r.ReturID; })
+    });
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    let sheet = ss.getSheetByName("DATA_RETUR");
+    if (!sheet) {
+      sheet = ss.insertSheet("DATA_RETUR");
+      sheet.appendRow(RETUR_HEADERS);
+      sheet.getRange(1, 1, 1, RETUR_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
+    }
+
+    const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
+    const returFolder = getReturFolder_(driveFolder);
+
+    const lastRow = sheet.getLastRow();
+    const existingResis = {};
+    if (lastRow > 1) {
+      const data = sheet.getRange(2, 1, lastRow - 1, 17).getValues();
+      for (let i = 0; i < data.length; i++) {
+        const resi = (data[i][1] || "").toString().trim().toUpperCase();
+        const deletedAt = data[i][16];
+        if (resi && !deletedAt) {
+          existingResis[resi] = true;
+        }
+      }
+    }
+
+    let addedCount = 0;
+    let duplicateCount = 0;
+    const failedIds = [];
+    const appends = [];
+    const nowIso = new Date().toISOString();
+
+    for (let i = 0; i < (records || []).length; i++) {
+      const r = records[i];
+      try {
+        const cleanResi = (r.Resi || "").toString().trim().toUpperCase();
+        if (!cleanResi) {
+          failedIds.push(r.ReturID);
+          continue;
+        }
+
+        // Cek duplikat resi retur aktif
+        if (existingResis[cleanResi]) {
+          duplicateCount++;
+          continue;
+        }
+
+        let finalPhotoUrl = r.FotoTerimaURL || "";
+        if (finalPhotoUrl && finalPhotoUrl.indexOf("data:image") === 0) {
+          try {
+            const rawBase64 = finalPhotoUrl.split(",")[1];
+            const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", "Retur_" + cleanResi + "_" + Date.now() + ".jpg");
+            const file = returFolder.createFile(blob);
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+            finalPhotoUrl = file.getUrl();
+          } catch (uploadErr) {
+            finalPhotoUrl = "Upload error: " + uploadErr.toString();
+          }
+        }
+
+        const row = [
+          r.ReturID || "",
+          cleanResi,
+          r.SellerID || "",
+          r.Seller || "",
+          r.Outlet || "",
+          r.Sumber || "",
+          r.TglTerima || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd"),
+          r.JamTerima || Utilities.formatDate(new Date(), "GMT+7", "HH:mm:ss"),
+          r.AdminTerima || "",
+          r.Kondisi || "Baik",
+          finalPhotoUrl,
+          r.Status || "DITERIMA",
+          r.HandoverID || "",
+          r.Catatan || "",
+          r.CreatedAt || nowIso,
+          r.UpdatedAt || nowIso,
+          ""
+        ];
+
+        appends.push(row);
+        existingResis[cleanResi] = true;
+        addedCount++;
+
+        writeAuditRetur_(ss, r.AdminTerima, "Admin/Operator", "TERIMA_RETUR", r.ReturID, "Terima resi " + cleanResi + " (" + (r.Kondisi || "Baik") + ") dari " + (r.Sumber || "-"));
+      } catch (err) {
+        Logger.log("Error processing retur record " + r.ReturID + ": " + err.toString());
+        failedIds.push(r.ReturID);
+      }
+    }
+
+    if (appends.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, RETUR_HEADERS.length).setValues(appends);
+    }
+
+    return jsonOut_({
+      success: true,
+      added: addedCount,
+      duplicates: duplicateCount,
+      failedIds: failedIds
+    });
+  } catch (outerErr) {
+    return jsonOut_({ success: false, error: outerErr.toString() });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleSaveHandover(handover) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return jsonOut_({
+      success: false,
+      error: "Server sibuk (lock timeout), coba lagi dalam beberapa detik."
+    });
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    let returSheet = ss.getSheetByName("DATA_RETUR");
+    if (!returSheet) return jsonOut_({ success: false, error: "Sheet DATA_RETUR belum ada" });
+
+    let hoSheet = ss.getSheetByName("DATA_RETUR_SERAH");
+    if (!hoSheet) {
+      hoSheet = ss.insertSheet("DATA_RETUR_SERAH");
+      hoSheet.appendRow(HANDOVER_HEADERS);
+      hoSheet.getRange(1, 1, 1, HANDOVER_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
+    }
+
+    const rawResis = (handover.DaftarResi || "").split(",").map(function(s) { return s.trim().toUpperCase(); }).filter(Boolean);
+    if (rawResis.length === 0) {
+      return jsonOut_({ success: false, error: "Daftar resi kosong" });
+    }
+
+    // Hitung ulang JumlahPaket di server secara ketat dari DaftarResi
+    const actualJumlah = rawResis.length;
+
+    // Baca DATA_RETUR untuk validasi semua resi
+    const lastRow = returSheet.getLastRow();
+    if (lastRow <= 1) {
+      return jsonOut_({ success: false, error: "Data retur masih kosong di spreadsheet" });
+    }
+
+    const returData = returSheet.getRange(2, 1, lastRow - 1, 17).getValues();
+    const resiToRowIdx = {};
+
+    for (let i = 0; i < returData.length; i++) {
+      const resi = (returData[i][1] || "").toString().trim().toUpperCase();
+      const deletedAt = returData[i][16];
+      if (resi && !deletedAt) {
+        resiToRowIdx[resi] = i;
+      }
+    }
+
+    // Validasi semua resi
+    for (let j = 0; j < rawResis.length; j++) {
+      const targetResi = rawResis[j];
+      const rIdx = resiToRowIdx[targetResi];
+      if (rIdx === undefined) {
+        return jsonOut_({ success: false, error: "Resi " + targetResi + " tidak ditemukan di DATA_RETUR" });
+      }
+      const currentStatus = (returData[rIdx][11] || "").toString().trim();
+      const currentSellerId = (returData[rIdx][2] || "").toString().trim();
+
+      if (currentStatus === "DISERAHKAN") {
+        return jsonOut_({ success: false, error: "Resi " + targetResi + " sudah berstatus DISERAHKAN sebelumnya" });
+      }
+      if (handover.SellerID && currentSellerId && currentSellerId !== handover.SellerID) {
+        return jsonOut_({ success: false, error: "Resi " + targetResi + " bukan milik seller " + handover.Seller });
+      }
+    }
+
+    // Upload Foto Bukti serah terima ke subfolder Retur
+    const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
+    const returFolder = getReturFolder_(driveFolder);
+    let finalPhotoUrl = handover.FotoBuktiURL || "";
+    if (finalPhotoUrl && finalPhotoUrl.indexOf("data:image") === 0) {
+      try {
+        const rawBase64 = finalPhotoUrl.split(",")[1];
+        const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", "Handover_" + handover.HandoverID + "_" + Date.now() + ".jpg");
+        const file = returFolder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        finalPhotoUrl = file.getUrl();
+      } catch (uploadErr) {
+        finalPhotoUrl = "Upload error: " + uploadErr.toString();
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // Update Status, HandoverID, UpdatedAt pada masing-masing baris di DATA_RETUR
+    for (let k = 0; k < rawResis.length; k++) {
+      const targetResi = rawResis[k];
+      const rIdx = resiToRowIdx[targetResi];
+      const sheetRowNum = rIdx + 2;
+
+      returSheet.getRange(sheetRowNum, 12).setValue("DISERAHKAN");
+      returSheet.getRange(sheetRowNum, 13).setValue(handover.HandoverID);
+      returSheet.getRange(sheetRowNum, 16).setValue(nowIso);
+    }
+
+    // Simpan ke DATA_RETUR_SERAH
+    hoSheet.appendRow([
+      handover.HandoverID,
+      handover.SellerID || "",
+      handover.Seller || "",
+      handover.Outlet || "",
+      handover.TglSerah || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd"),
+      handover.JamSerah || Utilities.formatDate(new Date(), "GMT+7", "HH:mm:ss"),
+      handover.AdminSerah || "",
+      handover.Metode || "AMBIL_DI_OUTLET",
+      actualJumlah,
+      rawResis.join(", "),
+      handover.NamaPenerima || "",
+      finalPhotoUrl,
+      handover.Catatan || "",
+      nowIso,
+      ""
+    ]);
+
+    writeAuditRetur_(ss, handover.AdminSerah, "Admin/Operator", "SERAH_TERIMA", handover.HandoverID, "Serahkan " + actualJumlah + " paket retur ke " + handover.NamaPenerima + " (" + (handover.Metode || "AMBIL_DI_OUTLET") + ")");
+
+    return jsonOut_({
+      success: true,
+      handoverId: handover.HandoverID,
+      photoUrl: finalPhotoUrl
+    });
+  } catch (outerErr) {
+    return jsonOut_({ success: false, error: outerErr.toString() });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleGetRetur() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const returSheet = ss.getSheetByName("DATA_RETUR");
+  const hoSheet = ss.getSheetByName("DATA_RETUR_SERAH");
+
+  const returs = [];
+  const handovers = [];
+
+  if (returSheet && returSheet.getLastRow() > 1) {
+    const data = returSheet.getRange(2, 1, returSheet.getLastRow() - 1, 17).getValues();
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const deletedAt = row[16] ? row[16].toString() : "";
+      if (deletedAt) continue;
+
+      let tglStr = row[6] instanceof Date ? Utilities.formatDate(row[6], "GMT+7", "yyyy-MM-dd") : (row[6] ? row[6].toString() : "");
+      let jamStr = row[7] instanceof Date ? Utilities.formatDate(row[7], "GMT+7", "HH:mm:ss") : (row[7] ? row[7].toString() : "");
+
+      returs.push({
+        ReturID: row[0] ? row[0].toString() : "",
+        Resi: row[1] ? row[1].toString() : "",
+        SellerID: row[2] ? row[2].toString() : "",
+        Seller: row[3] ? row[3].toString() : "",
+        Outlet: row[4] ? row[4].toString() : "",
+        Sumber: row[5] ? row[5].toString() : "",
+        TglTerima: tglStr,
+        JamTerima: jamStr,
+        AdminTerima: row[8] ? row[8].toString() : "",
+        Kondisi: row[9] ? row[9].toString() : "Baik",
+        FotoTerimaURL: row[10] ? row[10].toString() : "",
+        Status: row[11] ? row[11].toString() : "DITERIMA",
+        HandoverID: row[12] ? row[12].toString() : "",
+        Catatan: row[13] ? row[13].toString() : "",
+        CreatedAt: row[14] ? row[14].toString() : "",
+        UpdatedAt: row[15] ? row[15].toString() : "",
+        DeletedAt: deletedAt,
+        SyncStatus: "SYNCED"
+      });
+    }
+  }
+
+  if (hoSheet && hoSheet.getLastRow() > 1) {
+    const data = hoSheet.getRange(2, 1, hoSheet.getLastRow() - 1, 15).getValues();
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const deletedAt = row[14] ? row[14].toString() : "";
+      if (deletedAt) continue;
+
+      let tglStr = row[4] instanceof Date ? Utilities.formatDate(row[4], "GMT+7", "yyyy-MM-dd") : (row[4] ? row[4].toString() : "");
+      let jamStr = row[5] instanceof Date ? Utilities.formatDate(row[5], "GMT+7", "HH:mm:ss") : (row[5] ? row[5].toString() : "");
+
+      handovers.push({
+        HandoverID: row[0] ? row[0].toString() : "",
+        SellerID: row[1] ? row[1].toString() : "",
+        Seller: row[2] ? row[2].toString() : "",
+        Outlet: row[3] ? row[3].toString() : "",
+        TglSerah: tglStr,
+        JamSerah: jamStr,
+        AdminSerah: row[6] ? row[6].toString() : "",
+        Metode: row[7] ? row[7].toString() : "AMBIL_DI_OUTLET",
+        JumlahPaket: Number(row[8]) || 0,
+        DaftarResi: row[9] ? row[9].toString() : "",
+        NamaPenerima: row[10] ? row[10].toString() : "",
+        FotoBuktiURL: row[11] ? row[11].toString() : "",
+        Catatan: row[12] ? row[12].toString() : "",
+        CreatedAt: row[13] ? row[13].toString() : "",
+        DeletedAt: deletedAt,
+        SyncStatus: "SYNCED"
+      });
+    }
+  }
+
+  return jsonOut_({
+    success: true,
+    returs: returs,
+    handovers: handovers
+  });
 }

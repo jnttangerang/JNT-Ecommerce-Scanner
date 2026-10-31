@@ -11,6 +11,7 @@ import { Header } from "./components/Header";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ScannerScreen } from "./components/ScannerScreen";
 import { OwnerScreen } from "./components/OwnerScreen";
+import { ReturScreen } from "./components/ReturScreen";
 import { dbService } from "./utils/db";
 import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, AlertTriangle, X, Bell, RefreshCw, Check, HelpCircle, Layers } from "lucide-react";
@@ -384,10 +385,19 @@ export default function App() {
             {currentView === "WELCOME" && (
               <WelcomeScreen
                 onStartScanning={handleStartScanning}
+                onOpenRetur={() => changeView("RETUR")}
                 savedOutlet={selectedOutlet}
                 savedSeller={selectedSeller}
                 savedOperator={selectedOperator}
                 isPulling={isPulling}
+              />
+            )}
+
+            {currentView === "RETUR" && (
+              <ReturScreen
+                currentOutlet={selectedOutlet || "Outlet J&T"}
+                currentOperator={selectedOperator || "Admin Outlet"}
+                onBack={() => changeView("WELCOME")}
               />
             )}
 

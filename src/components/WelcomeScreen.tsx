@@ -5,7 +5,7 @@ import { SellerService } from '../utils/sellerService';
  */
 
 import React, { useState, useEffect } from "react";
-import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users, Calendar, SlidersHorizontal, Search, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Play, User, Home, Tag, HelpCircle, Check, BookOpen, Users, Calendar, SlidersHorizontal, Search, ChevronDown, ChevronUp, Package } from "lucide-react";
 import { Outlet, Seller, Operator, ScanRecord } from "../types";
 import { dbService, getTodayLocalDateString } from "../utils/db";
 import { Config, CONFIG_KEYS } from "../utils/config";
@@ -17,6 +17,7 @@ interface WelcomeScreenProps {
     seller: string;
     operator: string;
   }) => void;
+  onOpenRetur?: () => void;
   savedOutlet: string;
   savedSeller: string;
   savedOperator: string;
@@ -25,6 +26,7 @@ interface WelcomeScreenProps {
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   onStartScanning,
+  onOpenRetur,
   savedOutlet,
   savedSeller,
   savedOperator,
@@ -389,6 +391,19 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             <Play className="h-4 w-4 fill-current" />
             <span>MULAI SCAN SEKARANG</span>
           </button>
+
+          {/* Quick link to Paket Retur */}
+          {onOpenRetur && (
+            <button
+              type="button"
+              onClick={onOpenRetur}
+              className="w-full mt-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-3 px-4 rounded-xl flex items-center justify-center space-x-2 border border-slate-200 transition-all text-xs"
+              id="open-retur-button"
+            >
+              <Package className="h-4 w-4 text-red-600" />
+              <span>KELOLA PAKET RETUR</span>
+            </button>
+          )}
         </div>
       </div>
 

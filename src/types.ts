@@ -54,7 +54,72 @@ export interface Operator {
   NamaOperator: string;
 }
 
-export type AppView = "WELCOME" | "SCANNER" | "OWNER_LOGIN" | "OWNER_DASHBOARD";
+export type AppView = "WELCOME" | "SCANNER" | "OWNER_LOGIN" | "OWNER_DASHBOARD" | "RETUR";
+
+export type ReturStatus = "DITERIMA" | "DISERAHKAN";
+export type ReturKondisi = "Baik" | "Rusak" | "Segel terbuka";
+export type ReturMetode = "AMBIL_DI_OUTLET" | "ANTAR_KE_SELLER";
+
+export const RETUR_STATUS = {
+  DITERIMA: "DITERIMA" as const,
+  DISERAHKAN: "DISERAHKAN" as const
+};
+
+export const RETUR_KONDISI = {
+  BAIK: "Baik" as const,
+  RUSAK: "Rusak" as const,
+  SEGEL_TERBUKA: "Segel terbuka" as const
+};
+export const RETUR_KONDISI_LIST: ReturKondisi[] = ["Baik", "Rusak", "Segel terbuka"];
+
+export const RETUR_METODE = {
+  AMBIL_DI_OUTLET: "AMBIL_DI_OUTLET" as const,
+  ANTAR_KE_SELLER: "ANTAR_KE_SELLER" as const
+};
+export const RETUR_METODE_LIST: { id: ReturMetode; label: string }[] = [
+  { id: "AMBIL_DI_OUTLET", label: "Ambil di Outlet" },
+  { id: "ANTAR_KE_SELLER", label: "Antar ke Seller" }
+];
+
+export interface ReturRecord {
+  ReturID: string;
+  Resi: string;
+  SellerID: string;
+  Seller: string;
+  Outlet: string;
+  Sumber: string;
+  TglTerima: string;
+  JamTerima: string;
+  AdminTerima: string;
+  Kondisi: ReturKondisi;
+  FotoTerimaURL: string;
+  Status: ReturStatus;
+  HandoverID?: string;
+  Catatan?: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+  DeletedAt?: string;
+  SyncStatus?: SyncStatusType;
+}
+
+export interface ReturHandover {
+  HandoverID: string;
+  SellerID: string;
+  Seller: string;
+  Outlet: string;
+  TglSerah: string;
+  JamSerah: string;
+  AdminSerah: string;
+  Metode: ReturMetode;
+  JumlahPaket: number;
+  DaftarResi: string | string[];
+  NamaPenerima: string;
+  FotoBuktiURL: string;
+  Catatan?: string;
+  CreatedAt: string;
+  DeletedAt?: string;
+  SyncStatus?: SyncStatusType;
+}
 
 export interface DashboardStats {
   sellerDaily: Record<string, { count: number; totalWeight?: number }>;
