@@ -491,9 +491,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       const scanConfig = {
         fps: 25, // Increased slightly for snappier response
         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-          // Generous scanning box
-          const width = Math.min(480, Math.floor(viewfinderWidth * 0.85));
-          const height = Math.min(220, Math.floor(viewfinderHeight * 0.40));
+          // html5-qrcode strictly requires min dimension of at least 50px
+          const w = viewfinderWidth || 300;
+          const h = viewfinderHeight || 300;
+          const width = Math.max(50, Math.min(480, Math.floor(w * 0.85)));
+          const height = Math.max(50, Math.min(220, Math.floor(h * 0.40)));
           return { width, height };
         },
         formatsToSupport: [
