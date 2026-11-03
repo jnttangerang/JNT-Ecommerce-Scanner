@@ -779,13 +779,16 @@ Aplikasi harus memiliki karakteristik berikut.
 
 ---
 
-# 32. Arsitektur Data Paket Retur (TASK_11 - Fase 1)
+# 32. Arsitektur Data Paket Retur (TASK_11 & TASK_12)
 
 Modul Paket Retur menggunakan IndexedDB v2 untuk penyimpanan lokal offline-first dan sinkronisasi ke sheet terpisah di Google Spreadsheet tanpa mengubah sheet pickup lama:
 
-### A. Sheet `DATA_RETUR`
+### A. Sheet `DATA_RETUR` (19 Kolom)
 Satu sheet untuk semua outlet pencatatan retur masuk:
-`ReturID | Resi | SellerID | Seller | Outlet | Sumber | TglTerima | JamTerima | AdminTerima | Kondisi | FotoTerimaURL | Status | HandoverID | Catatan | CreatedAt | UpdatedAt | DeletedAt`
+`ReturID | Resi | SellerID | Seller | Outlet | Sumber | TglTerima | JamTerima | AdminTerima | Kondisi | FotoTerimaURL | Status | HandoverID | Catatan | CreatedAt | UpdatedAt | DeletedAt | TglDatang | IsiPaket`
+- **TglDatang (Kolom 18):** Tanggal kedatangan paket per sesi koli/DP (YYYY-MM-DD).
+- **IsiPaket (Kolom 19):** Keterangan isi paket per resi (opsional, maks 60 karakter).
+- *Catatan Migrasi:* Fungsi `ensureReturColumns_` otomatis menambahkan header kolom 18 & 19 jika sheet lama masih berisi 17 kolom.
 
 ### B. Sheet `DATA_RETUR_SERAH`
 Pencatatan batch serah terima paket retur ke pihak seller:
@@ -796,7 +799,7 @@ Audit trail penyerahan dan penerimaan retur:
 `Waktu | User | Role | Aksi | RecordID | Detail`
 
 ### D. IndexedDB Stores (Version 2)
-1. `retur_records`: keyPath `ReturID`, index: `Resi`, `SellerID`, `Status`
+1. `retur_records`: keyPath `ReturID`, index: `Resi`, `SellerID`, `Status` (dilengkapi `TglDatang` & `IsiPaket`)
 2. `retur_handovers`: keyPath `HandoverID`, index: `SellerID`
-*Catatan:* Foto base64 disimpan di IndexedDB, tidak dimasukkan ke LocalStorage agar tidak melanggar batas quota 5MB.
+*Catatan:* Foto base64 disimpan di IndexedDB, tidak dimasukkan ke LocalStorage agar tidak melanggar batas quota 5MB. Sesi kedatangan disimpan di `localStorage` key `jt_retur_session_tgldatang`.
 

@@ -507,11 +507,11 @@ function getAllHandoversFromIDB(): Promise<ReturHandover[] | null> {
 
 export class DatabaseService {
   private isSyncingInProgress = false;
-  private isReturSyncingInProgress = false;
   private recordsCache: ScanRecord[] = [];
   private retursCache: ReturRecord[] = [];
   private handoversCache: ReturHandover[] = [];
   private idbInitPromise: Promise<void> | null = null;
+  private activeReturSyncPromise: Promise<{ syncedReturs: number; syncedHandovers: number; errors: string[] }> | null = null;
 
   // STATE MACHINE VALIDATOR
   public validateStateTransition(current: StatusType, next: StatusType): boolean {
@@ -1139,7 +1139,7 @@ export class DatabaseService {
    * Batch Upload / Sync to Spreadsheet
    */
   private readonly SYNC_CHUNK_SIZE = 3;
-  private activeSyncPromise: Promise<{ successCount: number; failedCount: number; error?: string }> | null = null;
+  private activeSyncPromise: Promise<any> | null = null;
 
   public async syncPendingRecords(): Promise<{ successCount: number; failedCount: number; error?: string }> {
     // If a sync is already running, join the existing in-flight operation to avoid duplicate requests or dropped uploads
@@ -1645,17 +1645,81 @@ export class DatabaseService {
   // RETUR METHODS (TASK_11)
   // ==========================================
   public getReturs(): ReturRecord[] {
-    return [...this.retursCache];
+    return this.retursCache.filter(r => !r.DeletedAt);
   }
 
   public getHandovers(): ReturHandover[] {
-    return [...this.handoversCache];
+    return this.handoversCache.filter(h => !h.DeletedAt);
   }
 
   public getPendingReturCount(): number {
-    const pendingR = this.retursCache.filter(r => r.SyncStatus === "PENDING").length;
-    const pendingH = this.handoversCache.filter(h => h.SyncStatus === "PENDING").length;
+    const pendingR = this.retursCache.filter(r => r.SyncStatus === "PENDING" && !r.DeletedAt).length;
+    const pendingH = this.handoversCache.filter(h => h.SyncStatus === "PENDING" && !h.DeletedAt).length;
     return pendingR + pendingH;
+  }
+
+  public async deleteFailedRetur(returId: string): Promise<boolean> {
+    const found = this.retursCache.find(r => r.ReturID === returId);
+    if (!found || found.SyncStatus !== "FAILED") return false;
+    const nowIso = new Date().toISOString();
+    const updated: ReturRecord = {
+      ...found,
+      DeletedAt: nowIso,
+      UpdatedAt: nowIso
+    };
+    this.retursCache = this.retursCache.map(r => r.ReturID === returId ? updated : r);
+    await putReturToIDB(updated);
+    window.dispatchEvent(new Event("jt_retur_updated"));
+    return true;
+  }
+
+  public async clearAllFailedReturs(): Promise<number> {
+    const failed = this.retursCache.filter(r => r.SyncStatus === "FAILED" && !r.DeletedAt);
+    if (failed.length === 0) return 0;
+    const nowIso = new Date().toISOString();
+    const updatedBatch: ReturRecord[] = failed.map(r => ({
+      ...r,
+      DeletedAt: nowIso,
+      UpdatedAt: nowIso
+    }));
+    const failedSet = new Set(failed.map(r => r.ReturID));
+    this.retursCache = this.retursCache.map(r => {
+      if (failedSet.has(r.ReturID)) {
+        return { ...r, DeletedAt: nowIso, UpdatedAt: nowIso };
+      }
+      return r;
+    });
+    await putRetursBatchToIDB(updatedBatch);
+    window.dispatchEvent(new Event("jt_retur_updated"));
+    return updatedBatch.length;
+  }
+
+  public async findPickupRecordByResi(resi: string): Promise<{ found: boolean; record?: ScanRecord }> {
+    const cleanResi = (resi || "").trim().toUpperCase();
+    if (!cleanResi) return { found: false };
+
+    // 1. Cek in-memory cache (this.recordsCache) terlebih dahulu (instan)
+    if (this.recordsCache && this.recordsCache.length > 0) {
+      const match = this.recordsCache.find(r => r.Resi && r.Resi.trim().toUpperCase() === cleanResi);
+      if (match) {
+        return { found: true, record: match };
+      }
+    }
+
+    // 2. Cadangan: cari di IndexedDB jika cache memori belum bootstrap lengkap (tanpa panggilan jaringan)
+    try {
+      const allIdb = await getAllRecordsFromIDB();
+      if (allIdb && allIdb.length > 0) {
+        const matchIdb = allIdb.find(r => r.Resi && r.Resi.trim().toUpperCase() === cleanResi);
+        if (matchIdb) {
+          return { found: true, record: matchIdb };
+        }
+      }
+    } catch (e) {
+      console.warn("Lookup resi in IDB fallback err:", e);
+    }
+
+    return { found: false };
   }
 
   public async addRetur(params: {
@@ -1664,7 +1728,9 @@ export class DatabaseService {
     seller: string;
     outlet: string;
     sumber: string;
+    tglDatang?: string;
     kondisi: ReturKondisi;
+    isiPaket?: string;
     fotoTerima: string;
     catatan?: string;
     adminTerima: string;
@@ -1707,6 +1773,9 @@ export class DatabaseService {
     const jam = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
     const returId = `RET-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
+    const effectiveTglDatang = (params.tglDatang || "").trim() || tgl;
+    const cleanIsiPaket = (params.isiPaket || "").trim().slice(0, 60);
+
     const newRetur: ReturRecord = {
       ReturID: returId,
       Resi: cleanResi,
@@ -1714,10 +1783,12 @@ export class DatabaseService {
       Seller: params.seller,
       Outlet: params.outlet,
       Sumber: params.sumber.trim(),
+      TglDatang: effectiveTglDatang,
       TglTerima: tgl,
       JamTerima: jam,
       AdminTerima: params.adminTerima,
       Kondisi: params.kondisi,
+      IsiPaket: cleanIsiPaket || undefined,
       FotoTerimaURL: params.fotoTerima,
       Status: RETUR_STATUS.DITERIMA,
       Catatan: (params.catatan || "").trim(),
@@ -1831,29 +1902,54 @@ export class DatabaseService {
   }
 
   public async syncPendingReturs(): Promise<{ syncedReturs: number; syncedHandovers: number; errors: string[] }> {
-    if (this.isReturSyncingInProgress) {
-      return { syncedReturs: 0, syncedHandovers: 0, errors: ["Sinkronisasi retur sedang berjalan"] };
+    // 4. Sync retur: JANGAN memakai activeSyncPromise milik sync pickup.
+    // - Buat activeReturSyncPromise sendiri (dedupe antar panggilan retur saja).
+    // - Jika activeSyncPromise (pickup) sedang berjalan, tunggu sampai selesai LALU tetap jalankan sync retur (jangan return lebih awal).
+    // - syncPendingRecords (pickup) tidak boleh menerima atau mengembalikan hasil sync retur.
+    if (this.activeReturSyncPromise) {
+      console.log("Sinkronisasi retur sedang berlangsung. Menggabungkan permintaan ke proses aktif.");
+      return this.activeReturSyncPromise;
     }
+
+    if (this.activeSyncPromise) {
+      console.log("Sinkronisasi pickup sedang berlangsung. Menunggu hingga selesai sebelum memulai sync retur...");
+      try {
+        await this.activeSyncPromise;
+      } catch (_) {}
+    }
+
+    const syncPromise = this.executeSyncPendingReturs();
+    this.activeReturSyncPromise = syncPromise;
+    try {
+      return await syncPromise;
+    } finally {
+      this.activeReturSyncPromise = null;
+      window.dispatchEvent(new Event("jt_retur_updated"));
+    }
+  }
+
+  private async executeSyncPendingReturs(): Promise<{ syncedReturs: number; syncedHandovers: number; errors: string[] }> {
     const config = this.getCloudConfig();
     if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
       return { syncedReturs: 0, syncedHandovers: 0, errors: ["Apps Script URL belum disetting"] };
     }
 
-    this.isReturSyncingInProgress = true;
     let syncedReturs = 0;
     let syncedHandovers = 0;
     const errors: string[] = [];
 
+    const isHttpUrl = (url: any): boolean => typeof url === "string" && url.trim().toLowerCase().startsWith("http");
+
     try {
-      // 1. Sync pending returs
-      const pendingReturs = this.retursCache.filter(r => r.SyncStatus === "PENDING" && r.Status === RETUR_STATUS.DITERIMA);
+      // 1. Sync pending returs: Kirim SEMUA retur SyncStatus PENDING apa pun status lokalnya
+      const pendingReturs = this.retursCache.filter(r => r.SyncStatus === "PENDING" && !r.DeletedAt);
       if (pendingReturs.length > 0) {
-        const chunkSize = 5;
+        const chunkSize = 3;
         for (let i = 0; i < pendingReturs.length; i += chunkSize) {
           const chunk = pendingReturs.slice(i, i + chunkSize);
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 40000);
+            const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 detik timeout sama seperti sync pickup
             const res = await fetch(config.appsScriptUrl, {
               method: "POST",
               mode: "cors",
@@ -1872,24 +1968,71 @@ export class DatabaseService {
             const data = await res.json();
             if (data.success) {
               const failedIds: string[] = Array.isArray(data.failedIds) ? data.failedIds : [];
+              const duplicates: string[] = Array.isArray(data.duplicates) ? data.duplicates.map((s: any) => String(s).trim().toUpperCase()) : [];
+              const duplicateSet = new Set(duplicates);
+              const failedSet = new Set(failedIds);
+
+              const alreadySyncedRaw: Array<{ id?: string; resi?: string; photoUrl?: string }> = Array.isArray(data.alreadySynced) ? data.alreadySynced : [];
+              const alreadySyncedIdMap = new Map<string, string>();
+              const alreadySyncedResiMap = new Map<string, string>();
+              for (const item of alreadySyncedRaw) {
+                if (item.id) {
+                  alreadySyncedIdMap.set(item.id, item.photoUrl || "");
+                }
+                if (item.resi) {
+                  alreadySyncedResiMap.set(item.resi.trim().toUpperCase(), item.photoUrl || "");
+                }
+              }
+
               const results: Array<{ id: string; photoUrl?: string }> = Array.isArray(data.results) ? data.results : [];
               const resultMap = new Map(results.map(x => [x.id, x.photoUrl]));
 
               const toSave: ReturRecord[] = [];
               this.retursCache = this.retursCache.map(r => {
-                if (chunk.some(c => c.ReturID === r.ReturID) && !failedIds.includes(r.ReturID)) {
+                const cleanResi = (r.Resi || "").trim().toUpperCase();
+                if (chunk.some(c => c.ReturID === r.ReturID)) {
+                  if (failedSet.has(r.ReturID)) {
+                    // Gagal di server karena lock/error, tetap PENDING untuk di-retry
+                    return r;
+                  }
+                  // 1. alreadySynced: tandai SYNCED
+                  if (alreadySyncedIdMap.has(r.ReturID) || alreadySyncedResiMap.has(cleanResi)) {
+                    syncedReturs++;
+                    const serverPhotoUrl = alreadySyncedIdMap.get(r.ReturID) || alreadySyncedResiMap.get(cleanResi);
+                    const updated: ReturRecord = {
+                      ...r,
+                      SyncStatus: "SYNCED",
+                      FotoTerimaURL: isHttpUrl(serverPhotoUrl) ? serverPhotoUrl! : r.FotoTerimaURL
+                    };
+                    toSave.push(updated);
+                    return updated;
+                  }
+                  // 2. duplicates: tandai FAILED dengan pesan "Resi sudah diterima oleh perangkat/admin lain"
+                  if (duplicateSet.has(cleanResi)) {
+                    errors.push(`Resi ${cleanResi}: Resi sudah diterima oleh perangkat/admin lain`);
+                    const updated: ReturRecord = {
+                      ...r,
+                      SyncStatus: "FAILED"
+                    };
+                    toSave.push(updated);
+                    return updated;
+                  }
+                  // 3. Sukses baru ditambahkan ke server
                   syncedReturs++;
+                  const serverPhotoUrl = resultMap.get(r.ReturID);
                   const updated: ReturRecord = {
                     ...r,
                     SyncStatus: "SYNCED",
-                    FotoTerimaURL: resultMap.get(r.ReturID) || r.FotoTerimaURL
+                    FotoTerimaURL: isHttpUrl(serverPhotoUrl) ? serverPhotoUrl! : r.FotoTerimaURL
                   };
                   toSave.push(updated);
                   return updated;
                 }
                 return r;
               });
-              await putRetursBatchToIDB(toSave);
+              if (toSave.length > 0) {
+                await putRetursBatchToIDB(toSave);
+              }
             } else {
               errors.push(data.error || "Gagal menyimpan batch retur di server");
             }
@@ -1899,12 +2042,12 @@ export class DatabaseService {
         }
       }
 
-      // 2. Sync pending handovers
-      const pendingHandovers = this.handoversCache.filter(h => h.SyncStatus === "PENDING");
+      // 2. Sync pending handovers: WAJIB setelah retur
+      const pendingHandovers = this.handoversCache.filter(h => h.SyncStatus === "PENDING" && !h.DeletedAt);
       for (const h of pendingHandovers) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 40000);
+          const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 detik timeout
           const res = await fetch(config.appsScriptUrl, {
             method: "POST",
             mode: "cors",
@@ -1926,7 +2069,7 @@ export class DatabaseService {
             const updatedH: ReturHandover = {
               ...h,
               SyncStatus: "SYNCED",
-              FotoBuktiURL: data.photoUrl || h.FotoBuktiURL
+              FotoBuktiURL: isHttpUrl(data.photoUrl) ? data.photoUrl : h.FotoBuktiURL
             };
             this.handoversCache = this.handoversCache.map(x => x.HandoverID === h.HandoverID ? updatedH : x);
             await putHandoverToIDB(updatedH);
@@ -1942,7 +2085,9 @@ export class DatabaseService {
               }
               return r;
             });
-            await putRetursBatchToIDB(updatedR);
+            if (updatedR.length > 0) {
+              await putRetursBatchToIDB(updatedR);
+            }
           } else {
             errors.push(`Serah terima ${h.HandoverID} ditolak: ${data.error}`);
           }
@@ -1951,8 +2096,7 @@ export class DatabaseService {
         }
       }
     } finally {
-      this.isReturSyncingInProgress = false;
-      window.dispatchEvent(new Event("jt_retur_updated"));
+      // Concurrency lock released in wrapper
     }
 
     return { syncedReturs, syncedHandovers, errors };
@@ -1973,12 +2117,36 @@ export class DatabaseService {
       const serverReturs: ReturRecord[] = data.returs || [];
       const serverHandovers: ReturHandover[] = data.handovers || [];
 
-      // Merge returs (local pending status wins)
+      // Merge returs (TIDAK menimpa PENDING atau FAILED, dan TIDAK ubah jika UpdatedAt lokal lebih baru, preserve TglDatang & IsiPaket)
       const localMap = new Map(this.retursCache.map(r => [r.ReturID, r]));
       serverReturs.forEach(sr => {
         const loc = localMap.get(sr.ReturID);
-        if (!loc || loc.SyncStatus === "SYNCED") {
-          localMap.set(sr.ReturID, { ...sr, SyncStatus: "SYNCED" });
+        const resolvedTglDatang = sr.TglDatang || loc?.TglDatang || sr.TglTerima;
+        const resolvedIsiPaket = (sr.IsiPaket !== undefined && sr.IsiPaket !== "") ? sr.IsiPaket : (loc?.IsiPaket || undefined);
+        if (!loc) {
+          localMap.set(sr.ReturID, {
+            ...sr,
+            TglDatang: resolvedTglDatang,
+            IsiPaket: resolvedIsiPaket,
+            SyncStatus: "SYNCED"
+          });
+        } else {
+          // Jangan menimpa record lokal yang berstatus PENDING atau FAILED
+          if (loc.SyncStatus === "PENDING" || loc.SyncStatus === "FAILED") {
+            return;
+          }
+          // Jangan mengubah record lokal jika UpdatedAt lokal lebih baru dari server
+          const locTime = new Date(loc.UpdatedAt || loc.CreatedAt || 0).getTime();
+          const serverTime = new Date(sr.UpdatedAt || sr.CreatedAt || 0).getTime();
+          if (locTime > serverTime) {
+            return;
+          }
+          localMap.set(sr.ReturID, {
+            ...sr,
+            TglDatang: resolvedTglDatang,
+            IsiPaket: resolvedIsiPaket,
+            SyncStatus: "SYNCED"
+          });
         }
       });
       this.retursCache = Array.from(localMap.values()).sort(
@@ -1986,11 +2154,21 @@ export class DatabaseService {
       );
       await putRetursBatchToIDB(this.retursCache);
 
-      // Merge handovers
+      // Merge handovers (sama: proteksi lokal PENDING/FAILED dan timestamp)
       const localHoMap = new Map(this.handoversCache.map(h => [h.HandoverID, h]));
       serverHandovers.forEach(sh => {
         const loc = localHoMap.get(sh.HandoverID);
-        if (!loc || loc.SyncStatus === "SYNCED") {
+        if (!loc) {
+          localHoMap.set(sh.HandoverID, { ...sh, SyncStatus: "SYNCED" });
+        } else {
+          if (loc.SyncStatus === "PENDING" || loc.SyncStatus === "FAILED") {
+            return;
+          }
+          const locTime = new Date(loc.CreatedAt || 0).getTime();
+          const serverTime = new Date(sh.CreatedAt || 0).getTime();
+          if (locTime > serverTime) {
+            return;
+          }
           localHoMap.set(sh.HandoverID, { ...sh, SyncStatus: "SYNCED" });
         }
       });

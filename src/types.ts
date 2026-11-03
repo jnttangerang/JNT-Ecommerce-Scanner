@@ -88,10 +88,12 @@ export interface ReturRecord {
   Seller: string;
   Outlet: string;
   Sumber: string;
+  TglDatang: string; // Sesi kedatangan paket (YYYY-MM-DD)
   TglTerima: string;
   JamTerima: string;
   AdminTerima: string;
   Kondisi: ReturKondisi;
+  IsiPaket?: string; // Keterangan isi paket per resi (maks 60 char)
   FotoTerimaURL: string;
   Status: ReturStatus;
   HandoverID?: string;

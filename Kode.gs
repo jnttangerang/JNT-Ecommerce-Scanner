@@ -697,6 +697,7 @@ function setupSheetHeaders() {
         resultMsg += "• " + target.name + " (Sudah up-to-date - Dilewati)\\n";
       }
     }
+
   }
   
   // Setup Dashboard
@@ -1006,7 +1007,8 @@ function handleSyncMasters(sellers, operators, outlets) {
 const RETUR_HEADERS = [
   "ReturID", "Resi", "SellerID", "Seller", "Outlet", "Sumber",
   "TglTerima", "JamTerima", "AdminTerima", "Kondisi", "FotoTerimaURL",
-  "Status", "HandoverID", "Catatan", "CreatedAt", "UpdatedAt", "DeletedAt"
+  "Status", "HandoverID", "Catatan", "CreatedAt", "UpdatedAt", "DeletedAt",
+  "TglDatang", "IsiPaket"
 ];
 
 const HANDOVER_HEADERS = [
@@ -1018,6 +1020,17 @@ const HANDOVER_HEADERS = [
 const AUDIT_RETUR_HEADERS = [
   "Waktu", "User", "Role", "Aksi", "RecordID", "Detail"
 ];
+
+function ensureReturColumns_(sheet) {
+  if (!sheet) return;
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < RETUR_HEADERS.length) {
+    const missingCount = RETUR_HEADERS.length - lastCol;
+    sheet.insertColumnsAfter(lastCol, missingCount);
+    const missingHeaders = RETUR_HEADERS.slice(lastCol);
+    sheet.getRange(1, lastCol + 1, 1, missingCount).setValues([missingHeaders]).setFontWeight("bold").setBackground("#f1f5f9");
+  }
+}
 
 function getReturFolder_(driveFolder) {
   const subFolders = driveFolder.getFoldersByName("Retur");
@@ -1059,28 +1072,36 @@ function handleSaveReturBatch(records) {
       sheet = ss.insertSheet("DATA_RETUR");
       sheet.appendRow(RETUR_HEADERS);
       sheet.getRange(1, 1, 1, RETUR_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
+    } else {
+      ensureReturColumns_(sheet);
     }
 
     const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
     const returFolder = getReturFolder_(driveFolder);
 
     const lastRow = sheet.getLastRow();
-    const existingResis = {};
+    const existingByResi = {};
     if (lastRow > 1) {
-      const data = sheet.getRange(2, 1, lastRow - 1, 17).getValues();
+      const data = sheet.getRange(2, 1, lastRow - 1, RETUR_HEADERS.length).getValues();
       for (let i = 0; i < data.length; i++) {
         const resi = (data[i][1] || "").toString().trim().toUpperCase();
         const deletedAt = data[i][16];
         if (resi && !deletedAt) {
-          existingResis[resi] = true;
+          existingByResi[resi] = {
+            returId: (data[i][0] || "").toString().trim(),
+            photoUrl: (data[i][10] || "").toString().trim()
+          };
         }
       }
     }
 
     let addedCount = 0;
-    let duplicateCount = 0;
+    const alreadySynced = [];
+    const duplicates = [];
     const failedIds = [];
     const appends = [];
+    const results = [];
+    const auditItems = [];
     const nowIso = new Date().toISOString();
 
     for (let i = 0; i < (records || []).length; i++) {
@@ -1091,10 +1112,22 @@ function handleSaveReturBatch(records) {
           failedIds.push(r.ReturID);
           continue;
         }
+        const cleanReturId = (r.ReturID || "").toString().trim();
 
-        // Cek duplikat resi retur aktif
-        if (existingResis[cleanResi]) {
-          duplicateCount++;
+        // Cek apakah resi sudah ada di spreadsheet
+        if (existingByResi[cleanResi]) {
+          const existingRecord = existingByResi[cleanResi];
+          if (existingRecord.returId === cleanReturId) {
+            // Idempotent: ReturID sama, kembalikan di alreadySynced beserta photoUrl yang sudah tersimpan
+            alreadySynced.push({
+              id: cleanReturId,
+              resi: cleanResi,
+              photoUrl: existingRecord.photoUrl || ""
+            });
+          } else {
+            // ReturID BERBEDA, kembalikan di duplicates
+            duplicates.push(cleanResi);
+          }
           continue;
         }
 
@@ -1107,12 +1140,15 @@ function handleSaveReturBatch(records) {
             file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
             finalPhotoUrl = file.getUrl();
           } catch (uploadErr) {
-            finalPhotoUrl = "Upload error: " + uploadErr.toString();
+            // Foto tidak boleh hilang saat upload gagal: JANGAN append baris, masukkan ReturID ke failedIds (tetap PENDING di klien)
+            Logger.log("Upload foto retur gagal untuk " + cleanReturId + ": " + uploadErr.toString());
+            failedIds.push(cleanReturId);
+            continue;
           }
         }
 
         const row = [
-          r.ReturID || "",
+          cleanReturId,
           cleanResi,
           r.SellerID || "",
           r.Seller || "",
@@ -1123,19 +1159,28 @@ function handleSaveReturBatch(records) {
           r.AdminTerima || "",
           r.Kondisi || "Baik",
           finalPhotoUrl,
-          r.Status || "DITERIMA",
-          r.HandoverID || "",
+          "DITERIMA", // Server save_retur_batch harus SELALU menyimpan sebagai DITERIMA (status DISERAHKAN hanya boleh diubah oleh save_handover)
+          "", // HandoverID selalu "" saat save_retur_batch (jangan salin dari klien)
           r.Catatan || "",
           r.CreatedAt || nowIso,
           r.UpdatedAt || nowIso,
-          ""
+          "", // DeletedAt
+          r.TglDatang || r.TglTerima || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd"),
+          r.IsiPaket || ""
         ];
 
         appends.push(row);
-        existingResis[cleanResi] = true;
+        results.push({ id: cleanReturId, photoUrl: finalPhotoUrl });
+        existingByResi[cleanResi] = { returId: cleanReturId, photoUrl: finalPhotoUrl };
         addedCount++;
 
-        writeAuditRetur_(ss, r.AdminTerima, "Admin/Operator", "TERIMA_RETUR", r.ReturID, "Terima resi " + cleanResi + " (" + (r.Kondisi || "Baik") + ") dari " + (r.Sumber || "-"));
+        auditItems.push({
+          admin: r.AdminTerima,
+          returId: cleanReturId,
+          resi: cleanResi,
+          kondisi: r.Kondisi || "Baik",
+          sumber: r.Sumber || "-"
+        });
       } catch (err) {
         Logger.log("Error processing retur record " + r.ReturID + ": " + err.toString());
         failedIds.push(r.ReturID);
@@ -1143,14 +1188,32 @@ function handleSaveReturBatch(records) {
     }
 
     if (appends.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, RETUR_HEADERS.length).setValues(appends);
+      const startRow = sheet.getLastRow() + 1;
+      const count = appends.length;
+      const endRow = startRow + count - 1;
+      if (endRow > sheet.getMaxRows()) {
+        sheet.insertRowsAfter(sheet.getMaxRows(), endRow - sheet.getMaxRows());
+      }
+      sheet.getRange(startRow, 2, count, 1).setNumberFormat("@");
+      sheet.getRange(startRow, 7, count, 2).setNumberFormat("@");
+      sheet.getRange(startRow, 15, count, 3).setNumberFormat("@");
+      sheet.getRange(startRow, 18, count, 1).setNumberFormat("@");
+
+      sheet.getRange(startRow, 1, count, RETUR_HEADERS.length).setValues(appends);
+      // Pindahkan writeAuditRetur_ ke SETELAH setValues berhasil
+      for (let a = 0; a < auditItems.length; a++) {
+        const item = auditItems[a];
+        writeAuditRetur_(ss, item.admin, "Admin/Operator", "TERIMA_RETUR", item.returId, "Terima resi " + item.resi + " (" + item.kondisi + ") dari " + item.sumber);
+      }
     }
 
     return jsonOut_({
       success: true,
       added: addedCount,
-      duplicates: duplicateCount,
-      failedIds: failedIds
+      alreadySynced: alreadySynced,
+      duplicates: duplicates,
+      failedIds: failedIds,
+      results: results
     });
   } catch (outerErr) {
     return jsonOut_({ success: false, error: outerErr.toString() });
@@ -1180,12 +1243,39 @@ function handleSaveHandover(handover) {
       hoSheet.getRange(1, 1, 1, HANDOVER_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
     }
 
-    const rawResis = (handover.DaftarResi || "").split(",").map(function(s) { return s.trim().toUpperCase(); }).filter(Boolean);
+    const cleanHandoverId = (handover.HandoverID || "").toString().trim();
+    if (!cleanHandoverId) {
+      return jsonOut_({ success: false, error: "HandoverID kosong" });
+    }
+
+    // Idempotency check: jika HandoverID sudah ada di DATA_RETUR_SERAH, kembalikan success tanpa menulis ulang dan tanpa upload foto lagi
+    const hoLastRow = hoSheet.getLastRow();
+    if (hoLastRow > 1) {
+      const hoData = hoSheet.getRange(2, 1, hoLastRow - 1, 15).getValues();
+      for (let h = 0; h < hoData.length; h++) {
+        const existHoId = (hoData[h][0] || "").toString().trim();
+        const deletedAt = hoData[h][14];
+        if (existHoId === cleanHandoverId && !deletedAt) {
+          return jsonOut_({
+            success: true,
+            alreadySynced: true,
+            handoverId: cleanHandoverId,
+            photoUrl: (hoData[h][11] || "").toString().trim()
+          });
+        }
+      }
+    }
+
+    // 1. DaftarResi dari klien adalah ARRAY. Terima array maupun string, lalu hapus resi dobel (Set) SEBELUM menghitung actualJumlah
+    const parsedResis = (Array.isArray(handover.DaftarResi) ? handover.DaftarResi : String(handover.DaftarResi || "").split(","))
+      .map(function(s) { return s.toString().trim().toUpperCase(); })
+      .filter(Boolean);
+    const rawResis = Array.from(new Set(parsedResis));
     if (rawResis.length === 0) {
       return jsonOut_({ success: false, error: "Daftar resi kosong" });
     }
 
-    // Hitung ulang JumlahPaket di server secara ketat dari DaftarResi
+    // Hitung ulang JumlahPaket di server secara ketat dari DaftarResi unik
     const actualJumlah = rawResis.length;
 
     // Baca DATA_RETUR untuk validasi semua resi
@@ -1205,7 +1295,10 @@ function handleSaveHandover(handover) {
       }
     }
 
-    // Validasi semua resi
+    // 3. handleSaveHandover harus aman diulang (resume):
+    // Saat validasi, resi berstatus DISERAHKAN dengan HandoverID SAMA dengan handover ini dianggap valid (lewati update, jangan error).
+    // Hanya resi berstatus DISERAHKAN dengan HandoverID BERBEDA yang ditolak.
+    const resisToUpdate = [];
     for (let j = 0; j < rawResis.length; j++) {
       const targetResi = rawResis[j];
       const rIdx = resiToRowIdx[targetResi];
@@ -1213,48 +1306,69 @@ function handleSaveHandover(handover) {
         return jsonOut_({ success: false, error: "Resi " + targetResi + " tidak ditemukan di DATA_RETUR" });
       }
       const currentStatus = (returData[rIdx][11] || "").toString().trim();
+      const currentHoId = (returData[rIdx][12] || "").toString().trim();
       const currentSellerId = (returData[rIdx][2] || "").toString().trim();
 
       if (currentStatus === "DISERAHKAN") {
-        return jsonOut_({ success: false, error: "Resi " + targetResi + " sudah berstatus DISERAHKAN sebelumnya" });
+        if (currentHoId === cleanHandoverId) {
+          // HandoverID sama: lewati update status baris ini, aman diulang
+          continue;
+        } else {
+          return jsonOut_({
+            success: false,
+            error: "Resi " + targetResi + " sudah berstatus DISERAHKAN sebelumnya (Handover: " + (currentHoId || "-") + ")"
+          });
+        }
       }
+
       if (handover.SellerID && currentSellerId && currentSellerId !== handover.SellerID) {
         return jsonOut_({ success: false, error: "Resi " + targetResi + " bukan milik seller " + handover.Seller });
       }
+
+      resisToUpdate.push({ resi: targetResi, rowIdx: rIdx });
     }
 
-    // Upload Foto Bukti serah terima ke subfolder Retur
+    // 2. Foto tidak boleh hilang: Upload Foto Bukti serah terima ke subfolder Retur SEBELUM mengubah status resi apa pun
     const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
     const returFolder = getReturFolder_(driveFolder);
     let finalPhotoUrl = handover.FotoBuktiURL || "";
     if (finalPhotoUrl && finalPhotoUrl.indexOf("data:image") === 0) {
       try {
         const rawBase64 = finalPhotoUrl.split(",")[1];
-        const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", "Handover_" + handover.HandoverID + "_" + Date.now() + ".jpg");
+        const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", "Handover_" + cleanHandoverId + "_" + Date.now() + ".jpg");
         const file = returFolder.createFile(blob);
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         finalPhotoUrl = file.getUrl();
       } catch (uploadErr) {
-        finalPhotoUrl = "Upload error: " + uploadErr.toString();
+        return jsonOut_({
+          success: false,
+          error: "Upload foto bukti gagal, akan dicoba ulang"
+        });
       }
     }
 
     const nowIso = new Date().toISOString();
 
-    // Update Status, HandoverID, UpdatedAt pada masing-masing baris di DATA_RETUR
-    for (let k = 0; k < rawResis.length; k++) {
-      const targetResi = rawResis[k];
-      const rIdx = resiToRowIdx[targetResi];
-      const sheetRowNum = rIdx + 2;
+    // Update Status, HandoverID, UpdatedAt pada masing-masing baris di DATA_RETUR (kolom 12-13 setValues sekaligus, kolom 16 UpdatedAt)
+    for (let k = 0; k < resisToUpdate.length; k++) {
+      const item = resisToUpdate[k];
+      const sheetRowNum = item.rowIdx + 2;
 
-      returSheet.getRange(sheetRowNum, 12).setValue("DISERAHKAN");
-      returSheet.getRange(sheetRowNum, 13).setValue(handover.HandoverID);
+      returSheet.getRange(sheetRowNum, 12, 1, 2).setValues([["DISERAHKAN", cleanHandoverId]]);
       returSheet.getRange(sheetRowNum, 16).setValue(nowIso);
     }
 
-    // Simpan ke DATA_RETUR_SERAH
-    hoSheet.appendRow([
-      handover.HandoverID,
+    // 3. Tulis baris DATA_RETUR_SERAH dan audit SETELAH semua update status selesai
+    const targetRow = hoSheet.getLastRow() + 1;
+    if (targetRow > hoSheet.getMaxRows()) {
+      hoSheet.insertRowsAfter(hoSheet.getMaxRows(), targetRow - hoSheet.getMaxRows());
+    }
+    hoSheet.getRange(targetRow, 5, 1, 2).setNumberFormat("@");
+    hoSheet.getRange(targetRow, 10, 1, 1).setNumberFormat("@");
+    hoSheet.getRange(targetRow, 14, 1, 2).setNumberFormat("@");
+
+    hoSheet.getRange(targetRow, 1, 1, HANDOVER_HEADERS.length).setValues([[
+      cleanHandoverId,
       handover.SellerID || "",
       handover.Seller || "",
       handover.Outlet || "",
@@ -1269,13 +1383,13 @@ function handleSaveHandover(handover) {
       handover.Catatan || "",
       nowIso,
       ""
-    ]);
+    ]]);
 
-    writeAuditRetur_(ss, handover.AdminSerah, "Admin/Operator", "SERAH_TERIMA", handover.HandoverID, "Serahkan " + actualJumlah + " paket retur ke " + handover.NamaPenerima + " (" + (handover.Metode || "AMBIL_DI_OUTLET") + ")");
+    writeAuditRetur_(ss, handover.AdminSerah, "Admin/Operator", "SERAH_TERIMA", cleanHandoverId, "Serahkan " + actualJumlah + " paket retur ke " + handover.NamaPenerima + " (" + (handover.Metode || "AMBIL_DI_OUTLET") + ")");
 
     return jsonOut_({
       success: true,
-      handoverId: handover.HandoverID,
+      handoverId: cleanHandoverId,
       photoUrl: finalPhotoUrl
     });
   } catch (outerErr) {
@@ -1294,7 +1408,8 @@ function handleGetRetur() {
   const handovers = [];
 
   if (returSheet && returSheet.getLastRow() > 1) {
-    const data = returSheet.getRange(2, 1, returSheet.getLastRow() - 1, 17).getValues();
+    ensureReturColumns_(returSheet);
+    const data = returSheet.getRange(2, 1, returSheet.getLastRow() - 1, RETUR_HEADERS.length).getValues();
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const deletedAt = row[16] ? row[16].toString() : "";
@@ -1302,6 +1417,8 @@ function handleGetRetur() {
 
       let tglStr = row[6] instanceof Date ? Utilities.formatDate(row[6], "GMT+7", "yyyy-MM-dd") : (row[6] ? row[6].toString() : "");
       let jamStr = row[7] instanceof Date ? Utilities.formatDate(row[7], "GMT+7", "HH:mm:ss") : (row[7] ? row[7].toString() : "");
+      let tglDatangStr = row[17] instanceof Date ? Utilities.formatDate(row[17], "GMT+7", "yyyy-MM-dd") : (row[17] ? row[17].toString() : tglStr);
+      let isiPaketStr = row[18] ? row[18].toString() : "";
 
       returs.push({
         ReturID: row[0] ? row[0].toString() : "",
@@ -1310,10 +1427,12 @@ function handleGetRetur() {
         Seller: row[3] ? row[3].toString() : "",
         Outlet: row[4] ? row[4].toString() : "",
         Sumber: row[5] ? row[5].toString() : "",
+        TglDatang: tglDatangStr,
         TglTerima: tglStr,
         JamTerima: jamStr,
         AdminTerima: row[8] ? row[8].toString() : "",
         Kondisi: row[9] ? row[9].toString() : "Baik",
+        IsiPaket: isiPaketStr,
         FotoTerimaURL: row[10] ? row[10].toString() : "",
         Status: row[11] ? row[11].toString() : "DITERIMA",
         HandoverID: row[12] ? row[12].toString() : "",

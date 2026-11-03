@@ -280,8 +280,7 @@ Setelah seluruh roadmap selesai, aplikasi harus memiliki karakteristik berikut:
 
 # Log Progress Terkini (September 2026)
 
-| Tanggal | Fitur / Area | Ringkasan Pekerjaan | Status |
-|---|---|---|---|
+| November 2026 | Retur: Autofill Seller, Sesi, Manifest Cetak A4 (TASK_12) (`ReturScreen.tsx`, `db.ts`, `types.ts`, `Kode.gs`) | Penambahan autofill seller dari cache pickup records memori/IndexedDB dengan dukungan manual override nama toko, panel sesi kedatangan (TglDatang per koli/DP persist ke LocalStorage), input keterangan IsiPaket per resi (maks 60 char), sub-tab Manifest Hand Over Returan dengan cetak resmi A4 native browser (@media print terisolasi, min 10 baris, repeat table header, blok tanda tangan), dan penambahan kolom 18 (TglDatang) & kolom 19 (IsiPaket) di sheet DATA_RETUR melalui ensureReturColumns_. | Selesai |
 | Oktober 2026 | Paket Retur Fase 1 (TASK_11) (`ReturScreen.tsx`, `db.ts`, `Kode.gs`) | Implementasi pencatatan paket retur masuk (DP/Gudang ke outlet) dan serah terima ke seller secara offline-first dengan bukti foto terkompresi, batch handover, auto-lock di Apps Script, dan integrasi portal Operator & Owner. | Selesai |
 | September 2026 | Performance "Jelas & Simpan" (`db.ts`, `ScannerScreen.tsx`) | Mempercepat penyimpanan hasil scan dari 30-60 detik menjadi instan (<15ms) dengan IndexedDB connection pooling (`cachedDBPromise`) dan penulisan single-record langsung (`putRecordToIDB`) tanpa `store.clear()` wipe. Menambahkan feedback tombol "MENYIMPAN...". | Selesai |
 | September 2026 | Cloud Upload & Race Condition (`App.tsx`, `db.ts`) | Memperbaiki proses "UPLOAD SEKARANG": menghapus 2.6s artificial delay, menyatukan background sync dan manual upload via shared in-flight promise (`activeSyncPromise`) agar upload manual tidak tertolak/gagal, memangkas `SYNC_CHUNK_SIZE` ke 3 untuk stabilitas upload Google Drive, dan menambahkan AbortController timeout 35s. | Selesai |
