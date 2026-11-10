@@ -396,7 +396,7 @@ export default function App() {
             {currentView === "RETUR" && (
               <ReturScreen
                 currentOutlet={selectedOutlet || "Outlet J&T"}
-                currentOperator={selectedOperator || "Admin Outlet"}
+                currentOperator={selectedOperator || ""}
                 onBack={() => changeView("WELCOME")}
               />
             )}

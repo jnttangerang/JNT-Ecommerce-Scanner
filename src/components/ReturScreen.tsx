@@ -27,7 +27,9 @@ import {
   Trash2,
   Printer,
   Calendar,
-  Sparkles
+  Sparkles,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { 
   ReturRecord, 
@@ -88,17 +90,18 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     try {
       const ops = dbService.getOperators();
       const names = ops.map(o => o.NamaOperator).filter(Boolean);
-      if (currentOperator && !names.includes(currentOperator)) {
-        names.unshift(currentOperator);
+      const cleanCurrent = currentOperator && currentOperator !== "Admin Outlet" ? currentOperator : "";
+      if (cleanCurrent && !names.includes(cleanCurrent)) {
+        names.unshift(cleanCurrent);
       }
-      return names.length > 0 ? names : [currentOperator || "Admin Outlet"];
+      return names;
     } catch (_) {
-      return [currentOperator || "Admin Outlet"];
+      return [];
     }
   }, [currentOperator]);
 
   const [terimaOperator, setTerimaOperator] = useState<string>(() => {
-    return currentOperator || "Admin Outlet";
+    return currentOperator && currentOperator !== "Admin Outlet" ? currentOperator : "";
   });
 
   const [terimaResi, setTerimaResi] = useState("");
@@ -117,6 +120,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   const [pickupNotFoundHint, setPickupNotFoundHint] = useState(false);
   const [isManualSeller, setIsManualSeller] = useState(false);
   const [manualSellerText, setManualSellerText] = useState("");
+  const [showTerimaSellerDropdown, setShowTerimaSellerDropdown] = useState(false);
+  const [terimaSellerSearchQuery, setTerimaSellerSearchQuery] = useState("");
 
   // ==========================================
   // TAB 2: FORM SERAHKAN
@@ -374,6 +379,10 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       toast.error("Validasi Gagal", { description: "Pilih seller tujuan retur terlebih dahulu!" });
       return;
     }
+    if (!terimaOperator.trim()) {
+      toast.error("Validasi Gagal", { description: "Pilih nama petugas/admin penerima terlebih dahulu!" });
+      return;
+    }
     if (!terimaPhoto) {
       toast.error("Validasi Gagal", { description: "Foto kondisi paket + resi wajib diambil (Rule 1)!" });
       return;
@@ -392,7 +401,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         isiPaket: terimaIsiPaket,
         fotoTerima: terimaPhoto,
         catatan: terimaCatatan,
-        adminTerima: terimaOperator || currentOperator || "Admin Outlet"
+        adminTerima: terimaOperator
       });
 
       if (result.success) {
@@ -808,6 +817,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   onChange={(e) => setTerimaOperator(e.target.value)}
                   className="bg-white border border-amber-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
                 >
+                  <option value="" disabled>
+                    -- Pilih Nama Admin --
+                  </option>
                   {operatorsList.map((opName) => (
                     <option key={opName} value={opName}>
                       {opName}
@@ -946,34 +958,126 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   </p>
                 </div>
               ) : (
-                <select
-                  value={terimaSellerId}
-                  onChange={(e) => {
-                    const selId = e.target.value;
-                    setIsSellerAutoFilled(false);
-                    setAutofillBadge(null);
-                    setPickupNotFoundHint(false);
-                    if (selId === "__CUSTOM__") {
-                      setIsManualSeller(true);
-                      setManualSellerText("");
-                      setTerimaSellerId("");
-                      setTerimaSellerName("");
-                      return;
-                    }
-                    setTerimaSellerId(selId);
-                    const s = sellers.find(x => x.id === selId || x.kodeSeller === selId || x.nama === selId);
-                    setTerimaSellerName(s ? s.nama : selId);
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
-                >
-                  <option value="">-- Pilih Seller Pemilik Paket --</option>
-                  {sellers.map((s, idx) => (
-                    <option key={`sel-opt-${idx}-${s.id || s.nama}`} value={s.id || s.nama}>
-                      {s.nama}
-                    </option>
-                  ))}
-                  <option value="__CUSTOM__">+ Ketik Nama Toko / Seller Manual...</option>
-                </select>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowTerimaSellerDropdown((prev) => !prev)}
+                    className={`w-full bg-slate-50 border rounded-xl px-3.5 py-2.5 text-sm font-medium flex justify-between items-center transition-all ${
+                      !terimaSellerId
+                        ? "border-slate-300 text-slate-500"
+                        : "border-slate-200 text-slate-800 focus:border-red-600"
+                    } hover:bg-slate-100/70`}
+                  >
+                    <span className="truncate">
+                      {terimaSellerName || "-- Pilih Seller --"}
+                    </span>
+                    {showTerimaSellerDropdown ? (
+                      <ChevronUp className="h-4 w-4 text-slate-400 shrink-0 ml-2" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-slate-400 shrink-0 ml-2" />
+                    )}
+                  </button>
+
+                  {showTerimaSellerDropdown && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => {
+                          setShowTerimaSellerDropdown(false);
+                          setTerimaSellerSearchQuery("");
+                        }}
+                      />
+                      <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl max-h-[320px] flex flex-col">
+                        {/* Search Input Box */}
+                        <div className="p-2 border-b border-slate-100 flex items-center bg-slate-50 rounded-t-xl">
+                          <Search className="h-4 w-4 text-slate-400 ml-1.5 mr-2 shrink-0" />
+                          <input
+                            type="text"
+                            className="w-full text-xs text-slate-800 placeholder:text-slate-400 outline-none bg-transparent py-1 font-medium"
+                            placeholder="Cari nama seller..."
+                            value={terimaSellerSearchQuery}
+                            onChange={(e) => setTerimaSellerSearchQuery(e.target.value)}
+                            autoFocus
+                          />
+                          {terimaSellerSearchQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setTerimaSellerSearchQuery("")}
+                              className="p-1 text-slate-400 hover:text-slate-600"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Nilai default -- Pilih Seller -- (tidak bisa dipilih) */}
+                        <div className="px-3.5 py-2 text-xs font-semibold text-slate-400 bg-slate-50/50 border-b border-slate-100 cursor-not-allowed select-none">
+                          -- Pilih Seller --
+                        </div>
+
+                        {/* Filtered list of sellers */}
+                        <div className="overflow-y-auto overflow-x-hidden flex-grow divide-y divide-slate-50">
+                          {(() => {
+                            const q = terimaSellerSearchQuery.trim().toLowerCase();
+                            const filtered = sellers.filter((s) => {
+                              if (!q) return true;
+                              return (s?.nama || "").toLowerCase().includes(q);
+                            });
+
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="px-4 py-3 text-xs text-slate-500 text-center">
+                                  Seller "{terimaSellerSearchQuery}" tidak ditemukan
+                                </div>
+                              );
+                            }
+
+                            return filtered.map((s, idx) => {
+                              const selVal = s.id || s.nama;
+                              const isSelected = terimaSellerId === selVal || terimaSellerName === s.nama;
+                              return (
+                                <div
+                                  key={`terima-sel-${idx}-${selVal}`}
+                                  className={`px-3.5 py-2 text-xs cursor-pointer transition-colors ${
+                                    isSelected
+                                      ? "bg-red-50 text-red-700 font-bold"
+                                      : "text-slate-700 hover:bg-slate-100"
+                                  }`}
+                                  onClick={() => {
+                                    setIsSellerAutoFilled(false);
+                                    setAutofillBadge(null);
+                                    setPickupNotFoundHint(false);
+                                    setTerimaSellerId(selVal);
+                                    setTerimaSellerName(s.nama);
+                                    setShowTerimaSellerDropdown(false);
+                                    setTerimaSellerSearchQuery("");
+                                  }}
+                                >
+                                  {s.nama}
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+
+                        {/* Opsi Ketik Manual */}
+                        <div
+                          className="p-2.5 border-t border-slate-100 bg-slate-50 rounded-b-xl text-xs text-blue-600 hover:text-blue-800 font-bold cursor-pointer text-center hover:bg-blue-50 transition-colors"
+                          onClick={() => {
+                            setIsManualSeller(true);
+                            setManualSellerText("");
+                            setTerimaSellerId("");
+                            setTerimaSellerName("");
+                            setShowTerimaSellerDropdown(false);
+                            setTerimaSellerSearchQuery("");
+                          }}
+                        >
+                          + Ketik Nama Toko / Seller Manual...
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
             </div>
 
