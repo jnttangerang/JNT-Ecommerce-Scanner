@@ -1147,6 +1147,8 @@ function handleSaveReturBatch(records) {
           }
         }
 
+        const cleanIsiPaket = (r.IsiPaket || "").toString().trim().slice(0, 60);
+
         const row = [
           cleanReturId,
           cleanResi,
@@ -1166,7 +1168,7 @@ function handleSaveReturBatch(records) {
           r.UpdatedAt || nowIso,
           "", // DeletedAt
           r.TglDatang || r.TglTerima || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd"),
-          r.IsiPaket || ""
+          cleanIsiPaket
         ];
 
         appends.push(row);
@@ -1195,9 +1197,11 @@ function handleSaveReturBatch(records) {
         sheet.insertRowsAfter(sheet.getMaxRows(), endRow - sheet.getMaxRows());
       }
       sheet.getRange(startRow, 2, count, 1).setNumberFormat("@");
+      sheet.getRange(startRow, 4, count, 3).setNumberFormat("@");
       sheet.getRange(startRow, 7, count, 2).setNumberFormat("@");
+      sheet.getRange(startRow, 14, count, 1).setNumberFormat("@");
       sheet.getRange(startRow, 15, count, 3).setNumberFormat("@");
-      sheet.getRange(startRow, 18, count, 1).setNumberFormat("@");
+      sheet.getRange(startRow, 18, count, 2).setNumberFormat("@");
 
       sheet.getRange(startRow, 1, count, RETUR_HEADERS.length).setValues(appends);
       // Pindahkan writeAuditRetur_ ke SETELAH setValues berhasil
@@ -1408,40 +1412,44 @@ function handleGetRetur() {
   const handovers = [];
 
   if (returSheet && returSheet.getLastRow() > 1) {
-    ensureReturColumns_(returSheet);
-    const data = returSheet.getRange(2, 1, returSheet.getLastRow() - 1, RETUR_HEADERS.length).getValues();
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      const deletedAt = row[16] ? row[16].toString() : "";
-      if (deletedAt) continue;
+    const lastRow = returSheet.getLastRow();
+    const lastCol = returSheet.getLastColumn();
+    const numCols = Math.min(lastCol, RETUR_HEADERS.length);
+    if (numCols > 0) {
+      const data = returSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        const deletedAt = (row.length > 16 && row[16]) ? row[16].toString() : "";
+        if (deletedAt) continue;
 
-      let tglStr = row[6] instanceof Date ? Utilities.formatDate(row[6], "GMT+7", "yyyy-MM-dd") : (row[6] ? row[6].toString() : "");
-      let jamStr = row[7] instanceof Date ? Utilities.formatDate(row[7], "GMT+7", "HH:mm:ss") : (row[7] ? row[7].toString() : "");
-      let tglDatangStr = row[17] instanceof Date ? Utilities.formatDate(row[17], "GMT+7", "yyyy-MM-dd") : (row[17] ? row[17].toString() : tglStr);
-      let isiPaketStr = row[18] ? row[18].toString() : "";
+        let tglStr = (row.length > 6 && row[6] instanceof Date) ? Utilities.formatDate(row[6], "GMT+7", "yyyy-MM-dd") : ((row.length > 6 && row[6]) ? row[6].toString() : "");
+        let jamStr = (row.length > 7 && row[7] instanceof Date) ? Utilities.formatDate(row[7], "GMT+7", "HH:mm:ss") : ((row.length > 7 && row[7]) ? row[7].toString() : "");
+        let tglDatangStr = (row.length > 17 && row[17] instanceof Date) ? Utilities.formatDate(row[17], "GMT+7", "yyyy-MM-dd") : ((row.length > 17 && row[17]) ? row[17].toString() : tglStr);
+        let isiPaketStr = (row.length > 18 && row[18]) ? row[18].toString() : "";
 
-      returs.push({
-        ReturID: row[0] ? row[0].toString() : "",
-        Resi: row[1] ? row[1].toString() : "",
-        SellerID: row[2] ? row[2].toString() : "",
-        Seller: row[3] ? row[3].toString() : "",
-        Outlet: row[4] ? row[4].toString() : "",
-        Sumber: row[5] ? row[5].toString() : "",
-        TglDatang: tglDatangStr,
-        TglTerima: tglStr,
-        JamTerima: jamStr,
-        AdminTerima: row[8] ? row[8].toString() : "",
-        Kondisi: row[9] ? row[9].toString() : "Baik",
-        IsiPaket: isiPaketStr,
-        FotoTerimaURL: row[10] ? row[10].toString() : "",
-        Status: row[11] ? row[11].toString() : "DITERIMA",
-        HandoverID: row[12] ? row[12].toString() : "",
-        Catatan: row[13] ? row[13].toString() : "",
-        CreatedAt: row[14] ? row[14].toString() : "",
-        UpdatedAt: row[15] ? row[15].toString() : "",
-        DeletedAt: deletedAt,
-        SyncStatus: "SYNCED"
-      });
+        returs.push({
+          ReturID: (row.length > 0 && row[0]) ? row[0].toString() : "",
+          Resi: (row.length > 1 && row[1]) ? row[1].toString() : "",
+          SellerID: (row.length > 2 && row[2]) ? row[2].toString() : "",
+          Seller: (row.length > 3 && row[3]) ? row[3].toString() : "",
+          Outlet: (row.length > 4 && row[4]) ? row[4].toString() : "",
+          Sumber: (row.length > 5 && row[5]) ? row[5].toString() : "",
+          TglDatang: tglDatangStr,
+          TglTerima: tglStr,
+          JamTerima: jamStr,
+          AdminTerima: (row.length > 8 && row[8]) ? row[8].toString() : "",
+          Kondisi: (row.length > 9 && row[9]) ? row[9].toString() : "Baik",
+          IsiPaket: isiPaketStr,
+          FotoTerimaURL: (row.length > 10 && row[10]) ? row[10].toString() : "",
+          Status: (row.length > 11 && row[11]) ? row[11].toString() : "DITERIMA",
+          HandoverID: (row.length > 12 && row[12]) ? row[12].toString() : "",
+          Catatan: (row.length > 13 && row[13]) ? row[13].toString() : "",
+          CreatedAt: (row.length > 14 && row[14]) ? row[14].toString() : "",
+          UpdatedAt: (row.length > 15 && row[15]) ? row[15].toString() : "",
+          DeletedAt: deletedAt,
+          SyncStatus: "SYNCED"
+        });
+      }
     }
   }
 

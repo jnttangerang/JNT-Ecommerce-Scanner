@@ -1698,25 +1698,33 @@ export class DatabaseService {
     const cleanResi = (resi || "").trim().toUpperCase();
     if (!cleanResi) return { found: false };
 
+    let candidates: ScanRecord[] = [];
+
     // 1. Cek in-memory cache (this.recordsCache) terlebih dahulu (instan)
     if (this.recordsCache && this.recordsCache.length > 0) {
-      const match = this.recordsCache.find(r => r.Resi && r.Resi.trim().toUpperCase() === cleanResi);
-      if (match) {
-        return { found: true, record: match };
-      }
+      candidates = this.recordsCache.filter(r => r.Resi && r.Resi.trim().toUpperCase() === cleanResi);
     }
 
     // 2. Cadangan: cari di IndexedDB jika cache memori belum bootstrap lengkap (tanpa panggilan jaringan)
-    try {
-      const allIdb = await getAllRecordsFromIDB();
-      if (allIdb && allIdb.length > 0) {
-        const matchIdb = allIdb.find(r => r.Resi && r.Resi.trim().toUpperCase() === cleanResi);
-        if (matchIdb) {
-          return { found: true, record: matchIdb };
+    if (candidates.length === 0) {
+      try {
+        const allIdb = await getAllRecordsFromIDB();
+        if (allIdb && allIdb.length > 0) {
+          candidates = allIdb.filter(r => r.Resi && r.Resi.trim().toUpperCase() === cleanResi);
         }
+      } catch (e) {
+        console.warn("Lookup resi in IDB fallback err:", e);
       }
-    } catch (e) {
-      console.warn("Lookup resi in IDB fallback err:", e);
+    }
+
+    if (candidates.length > 0) {
+      // 3. Jika ada beberapa kecocokan di data pickup, pakai yang terbaru (ScanTimestamp terbesar)
+      candidates.sort((a, b) => {
+        const timeA = a.ScanTimestamp ? new Date(a.ScanTimestamp).getTime() : new Date(`${a.Tanggal || ""}T${a.Jam || "00:00:00"}`).getTime();
+        const timeB = b.ScanTimestamp ? new Date(b.ScanTimestamp).getTime() : new Date(`${b.Tanggal || ""}T${b.Jam || "00:00:00"}`).getTime();
+        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+      });
+      return { found: true, record: candidates[0] };
     }
 
     return { found: false };
@@ -1727,7 +1735,7 @@ export class DatabaseService {
     sellerId: string;
     seller: string;
     outlet: string;
-    sumber: string;
+    sumber?: string;
     tglDatang?: string;
     kondisi: ReturKondisi;
     isiPaket?: string;
@@ -1744,9 +1752,6 @@ export class DatabaseService {
     }
     if (!params.seller || !params.sellerId) {
       return { success: false, error: "Pilih seller terlebih dahulu" };
-    }
-    if (!params.sumber || !params.sumber.trim()) {
-      return { success: false, error: "Sumber pengirim (Gudang/DP) wajib diisi" };
     }
     if (!params.fotoTerima) {
       return { success: false, error: "Foto kondisi paket + resi wajib diambil" };
@@ -1782,7 +1787,7 @@ export class DatabaseService {
       SellerID: params.sellerId,
       Seller: params.seller,
       Outlet: params.outlet,
-      Sumber: params.sumber.trim(),
+      Sumber: (params.sumber || "").trim(),
       TglDatang: effectiveTglDatang,
       TglTerima: tgl,
       JamTerima: jam,

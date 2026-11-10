@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { 
   ArrowLeft, 
   Package, 
@@ -82,10 +83,27 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     return getTodayLocalDateString();
   });
 
+  // Master operator list for Terima Retur
+  const operatorsList = React.useMemo(() => {
+    try {
+      const ops = dbService.getOperators();
+      const names = ops.map(o => o.NamaOperator).filter(Boolean);
+      if (currentOperator && !names.includes(currentOperator)) {
+        names.unshift(currentOperator);
+      }
+      return names.length > 0 ? names : [currentOperator || "Admin Outlet"];
+    } catch (_) {
+      return [currentOperator || "Admin Outlet"];
+    }
+  }, [currentOperator]);
+
+  const [terimaOperator, setTerimaOperator] = useState<string>(() => {
+    return currentOperator || "Admin Outlet";
+  });
+
   const [terimaResi, setTerimaResi] = useState("");
   const [terimaSellerId, setTerimaSellerId] = useState("");
   const [terimaSellerName, setTerimaSellerName] = useState("");
-  const [terimaSumber, setTerimaSumber] = useState("");
   const [terimaKondisi, setTerimaKondisi] = useState<ReturKondisi>(RETUR_KONDISI.BAIK);
   const [terimaIsiPaket, setTerimaIsiPaket] = useState("");
   const [terimaCatatan, setTerimaCatatan] = useState("");
@@ -95,6 +113,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
   // Autofill & Manual Seller Input State
   const [autofillBadge, setAutofillBadge] = useState<{ found: boolean; tanggal?: string; seller?: string } | null>(null);
+  const [isSellerAutoFilled, setIsSellerAutoFilled] = useState(false);
+  const [pickupNotFoundHint, setPickupNotFoundHint] = useState(false);
   const [isManualSeller, setIsManualSeller] = useState(false);
   const [manualSellerText, setManualSellerText] = useState("");
 
@@ -115,9 +135,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   // TAB 3: MANIFEST HAND OVER RETURAN
   // ==========================================
   const [manifestSellerId, setManifestSellerId] = useState("");
+  const [manifestSellerName, setManifestSellerName] = useState("");
   const [manifestSelectedResis, setManifestSelectedResis] = useState<string[]>([]);
-  const [manifestOutlet, setManifestOutlet] = useState(currentOutlet || "J&T Express");
-  const [manifestPetugas, setManifestPetugas] = useState(currentOperator || "Admin J&T");
+  const [manifestTglPenyerahan, setManifestTglPenyerahan] = useState<string>(() => getTodayLocalDateString());
+  const [manifestOutlet, setManifestOutlet] = useState<string>(currentOutlet || "Pasir Jaha Balaraja");
+  const [manifestPicJnt, setManifestPicJnt] = useState<string>(() => {
+    return currentOperator ? `${currentOperator} - Admin MDP` : "Admin - Admin MDP";
+  });
 
   // ==========================================
   // TAB 4: DAFTAR FILTERS
@@ -161,16 +185,19 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   }, [activeTab]);
 
   // Helper lookup resi dari pickup record (memory cache dulu, fallback IndexedDB, tanpa network)
-  const lookupSellerForResi = async (rawResi: string) => {
-    const clean = rawResi.trim().toUpperCase();
+  const lookupSellerForResi = async (cleanResi: string) => {
+    const clean = cleanResi.trim().toUpperCase();
     if (!clean) {
       setAutofillBadge(null);
+      setPickupNotFoundHint(false);
       return;
     }
     const res = await dbService.findPickupRecordByResi(clean);
     if (res.found && res.record && res.record.Seller) {
       const sName = res.record.Seller.trim();
       setAutofillBadge({ found: true, tanggal: res.record.Tanggal, seller: sName });
+      setIsSellerAutoFilled(true);
+      setPickupNotFoundHint(false);
       const matched = sellers.find(s => s.nama.trim().toLowerCase() === sName.toLowerCase());
       if (matched) {
         setTerimaSellerId(matched.id || matched.kodeSeller || "SELLER-" + matched.nama);
@@ -185,7 +212,37 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       }
       toast.info(`Seller terdeteksi otomatis: ${sName}`);
     } else {
+      // A.2: Resi tidak ditemukan di data pickup: seller kosong, tampilkan hint "Resi tidak ditemukan di data pickup, pilih seller manual", dan tombol Simpan nonaktif sampai seller dipilih
       setAutofillBadge(null);
+      setPickupNotFoundHint(true);
+      setTerimaSellerId("");
+      setTerimaSellerName("");
+      setIsManualSeller(false);
+      setManualSellerText("");
+      setIsSellerAutoFilled(false);
+    }
+  };
+
+  // A.1: Setiap nilai resi berubah (ketik/scan baru): reset seller yang terisi OTOMATIS
+  const handleResiChange = (rawVal: string) => {
+    const clean = rawVal.trim().toUpperCase();
+    setTerimaResi(clean);
+
+    if (isSellerAutoFilled) {
+      setTerimaSellerId("");
+      setTerimaSellerName("");
+      setIsManualSeller(false);
+      setManualSellerText("");
+      setAutofillBadge(null);
+      setIsSellerAutoFilled(false);
+    }
+    setPickupNotFoundHint(false);
+
+    if (clean) {
+      lookupSellerForResi(clean);
+    } else {
+      setAutofillBadge(null);
+      setPickupNotFoundHint(false);
     }
   };
 
@@ -214,8 +271,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             },
             (decodedText) => {
               const cleaned = decodedText.trim().toUpperCase();
-              setTerimaResi(cleaned);
-              lookupSellerForResi(cleaned);
+              handleResiChange(cleaned);
               toast.success("Resi terdeteksi: " + cleaned);
               // Auto stop scanner after reading
               try {
@@ -318,10 +374,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       toast.error("Validasi Gagal", { description: "Pilih seller tujuan retur terlebih dahulu!" });
       return;
     }
-    if (!terimaSumber.trim()) {
-      toast.error("Validasi Gagal", { description: "Sumber pengirim (Gudang/DP) wajib diisi!" });
-      return;
-    }
     if (!terimaPhoto) {
       toast.error("Validasi Gagal", { description: "Foto kondisi paket + resi wajib diambil (Rule 1)!" });
       return;
@@ -334,13 +386,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         sellerId: terimaSellerId,
         seller: terimaSellerName,
         outlet: currentOutlet || "Outlet Pusat",
-        sumber: terimaSumber,
+        sumber: "",
         tglDatang: sessionTglDatang,
         kondisi: terimaKondisi,
         isiPaket: terimaIsiPaket,
         fotoTerima: terimaPhoto,
         catatan: terimaCatatan,
-        adminTerima: currentOperator || "Admin Outlet"
+        adminTerima: terimaOperator || currentOperator || "Admin Outlet"
       });
 
       if (result.success) {
@@ -350,11 +402,21 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         // Reset form (IsiPaket dikosongkan per resi, sessionTglDatang tetap utuh)
         setTerimaResi("");
         setTerimaIsiPaket("");
-        setTerimaSumber("");
         setTerimaCatatan("");
         setTerimaPhoto("");
         setAutofillBadge(null);
+        setPickupNotFoundHint(false);
         setTerimaKondisi(RETUR_KONDISI.BAIK);
+
+        // A.1: Setelah simpan berhasil: reset seller yang terisi OTOMATIS.
+        // Seller yang dipilih admin secara manual TIDAK dihapus selama resi belum berubah.
+        if (isSellerAutoFilled) {
+          setTerimaSellerId("");
+          setTerimaSellerName("");
+          setIsManualSeller(false);
+          setManualSellerText("");
+          setIsSellerAutoFilled(false);
+        }
         loadData();
       } else {
         toast.error("Gagal Menyimpan Retur", {
@@ -519,12 +581,28 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
   useEffect(() => {
     if (manifestSellerId) {
+      const currentSellerObj = sellersWithDiterima.find(s => s.id === manifestSellerId);
+      const sName = currentSellerObj?.name || manifestSellerId;
+      setManifestSellerName(sName);
       const items = returs.filter(r => r.SellerID === manifestSellerId && r.Status === RETUR_STATUS.DITERIMA && !r.DeletedAt);
       setManifestSelectedResis(items.map(r => r.Resi));
     } else {
+      setManifestSellerName("");
       setManifestSelectedResis([]);
     }
-  }, [manifestSellerId, returs]);
+  }, [manifestSellerId, returs, sellersWithDiterima]);
+
+  const formatIndoDate = (dateStr?: string) => {
+    if (!dateStr) return "";
+    try {
+      const parts = dateStr.split("-");
+      if (parts.length === 3) {
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        return d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+      }
+    } catch (_) {}
+    return dateStr;
+  };
 
   const selectedManifestRecords = manifestAvailableReturs.filter(r => manifestSelectedResis.includes(r.Resi));
   const blankRowsCount = Math.max(0, 10 - selectedManifestRecords.length);
@@ -556,8 +634,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       toast.error("Pilih minimal 1 resi retur terlebih dahulu!");
       return;
     }
-    const currentSellerObj = sellersWithDiterima.find(s => s.id === manifestSellerId);
-    const sName = currentSellerObj?.name || (selectedManifestRecords[0]?.Seller) || manifestSellerId;
+    const sName = manifestSellerName || (selectedManifestRecords[0]?.Seller) || manifestSellerId;
     setSerahSellerId(manifestSellerId);
     setSerahSellerName(sName);
     setSerahSelectedResis([...manifestSelectedResis]);
@@ -574,9 +651,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       const q = filterSearch.trim().toUpperCase();
       const matchResi = r.Resi.toUpperCase().includes(q);
       const matchSeller = r.Seller.toUpperCase().includes(q);
-      const matchSumber = (r.Sumber || "").toUpperCase().includes(q);
+      const matchAdmin = (r.AdminTerima || "").toUpperCase().includes(q);
       const matchHandover = (r.HandoverID || "").toUpperCase().includes(q);
-      if (!matchResi && !matchSeller && !matchSumber && !matchHandover) return false;
+      if (!matchResi && !matchSeller && !matchAdmin && !matchHandover) return false;
     }
     return true;
   });
@@ -701,27 +778,50 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             </p>
           </div>
 
-          {/* Panel Sesi Kedatangan (Per Koli / DP) */}
-          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-bold text-amber-900 flex items-center">
-                <Calendar className="h-4 w-4 mr-1 text-amber-700" /> Sesi Tanggal Kedatangan:
-              </span>
-              <input
-                type="date"
-                value={sessionTglDatang}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setSessionTglDatang(val);
-                  try {
-                    localStorage.setItem("jt_retur_session_tgldatang", val);
-                  } catch (_) {}
-                }}
-                className="bg-white border border-amber-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
-              />
+          {/* Panel Sesi Kedatangan & Petugas Penerima */}
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold text-amber-900 flex items-center">
+                  <Calendar className="h-4 w-4 mr-1 text-amber-700" /> Sesi Kedatangan:
+                </span>
+                <input
+                  type="date"
+                  value={sessionTglDatang}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSessionTglDatang(val);
+                    try {
+                      localStorage.setItem("jt_retur_session_tgldatang", val);
+                    } catch (_) {}
+                  }}
+                  className="bg-white border border-amber-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                />
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold text-amber-900 flex items-center">
+                  <User className="h-4 w-4 mr-1 text-amber-700" /> Petugas Penerima:
+                </span>
+                <select
+                  value={terimaOperator}
+                  onChange={(e) => setTerimaOperator(e.target.value)}
+                  className="bg-white border border-amber-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                >
+                  {operatorsList.map((opName) => (
+                    <option key={opName} value={opName}>
+                      {opName}
+                    </option>
+                  ))}
+                  {!operatorsList.includes(terimaOperator) && terimaOperator && (
+                    <option value={terimaOperator}>{terimaOperator}</option>
+                  )}
+                </select>
+              </div>
             </div>
+
             <span className="text-[11px] text-amber-800/80 italic">
-              * Tanggal kedatangan berlaku untuk seluruh resi dalam sesi kedatangan/koli ini.
+              * Tanggal &amp; nama petugas dicatat per sesi retur masuk.
             </span>
           </div>
 
@@ -735,13 +835,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 <input
                   type="text"
                   value={terimaResi}
-                  onChange={(e) => {
-                    const clean = e.target.value.trim().toUpperCase();
-                    setTerimaResi(clean);
-                    lookupSellerForResi(clean);
-                  }}
+                  onChange={(e) => handleResiChange(e.target.value)}
                   onBlur={() => {
-                    if (terimaResi) lookupSellerForResi(terimaResi);
+                    if (terimaResi && !terimaSellerId) lookupSellerForResi(terimaResi);
                   }}
                   placeholder="Scan atau ketik nomor resi..."
                   className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
@@ -772,7 +868,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               )}
             </div>
 
-            {/* Seller Selection with Autofill Badge & Manual Override */}
+            {/* Seller Selection with Autofill Badge, Hint & Manual Override */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -781,6 +877,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    setIsSellerAutoFilled(false);
+                    setAutofillBadge(null);
+                    setPickupNotFoundHint(false);
                     setIsManualSeller(prev => !prev);
                     if (!isManualSeller) {
                       setManualSellerText(terimaSellerName);
@@ -795,6 +894,14 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 </button>
               </div>
 
+              {/* A.2: Hint resi tidak ditemukan di data pickup */}
+              {pickupNotFoundHint && !terimaSellerId && (
+                <div className="flex items-center text-[11px] text-amber-800 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200">
+                  <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-amber-600 shrink-0" />
+                  <span>Resi tidak ditemukan di data pickup, pilih seller manual</span>
+                </div>
+              )}
+
               {autofillBadge?.found && (
                 <div className="flex items-center justify-between text-[11px] text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
                   <span className="flex items-center">
@@ -805,6 +912,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     type="button"
                     onClick={() => {
                       setAutofillBadge(null);
+                      setIsSellerAutoFilled(false);
                       setTerimaSellerId("");
                       setTerimaSellerName("");
                       setManualSellerText("");
@@ -823,9 +931,12 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     value={manualSellerText}
                     onChange={(e) => {
                       const val = e.target.value;
+                      setIsSellerAutoFilled(false);
+                      setAutofillBadge(null);
+                      setPickupNotFoundHint(false);
                       setManualSellerText(val);
                       setTerimaSellerName(val);
-                      setTerimaSellerId("MANUAL:" + val.toUpperCase().trim());
+                      setTerimaSellerId(val.trim() ? "MANUAL:" + val.toUpperCase().trim() : "");
                     }}
                     placeholder="Ketik nama toko/seller manual sesuai resi..."
                     className="w-full bg-slate-50 border border-blue-300 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white"
@@ -839,6 +950,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   value={terimaSellerId}
                   onChange={(e) => {
                     const selId = e.target.value;
+                    setIsSellerAutoFilled(false);
+                    setAutofillBadge(null);
+                    setPickupNotFoundHint(false);
                     if (selId === "__CUSTOM__") {
                       setIsManualSeller(true);
                       setManualSellerText("");
@@ -855,26 +969,12 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   <option value="">-- Pilih Seller Pemilik Paket --</option>
                   {sellers.map((s, idx) => (
                     <option key={`sel-opt-${idx}-${s.id || s.nama}`} value={s.id || s.nama}>
-                      {s.nama} ({s.kodeSeller || "Master"})
+                      {s.nama}
                     </option>
                   ))}
                   <option value="__CUSTOM__">+ Ketik Nama Toko / Seller Manual...</option>
                 </select>
               )}
-            </div>
-
-            {/* Sumber Pengirim (Gudang/DP) */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Sumber Pengirim (Gudang / DP) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={terimaSumber}
-                onChange={(e) => setTerimaSumber(e.target.value)}
-                placeholder="Contoh: DP Balaraja, Gudang DC Bitung, dll."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
-              />
             </div>
 
             {/* Kondisi Paket */}
@@ -993,13 +1093,22 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
           <div className="pt-3">
             <button
               type="submit"
-              disabled={isSubmittingTerima}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center space-x-2 shadow-sm transition-all text-sm"
+              disabled={isSubmittingTerima || !terimaSellerId || !terimaSellerName || !terimaResi.trim()}
+              className={`w-full font-bold py-3.5 px-4 rounded-xl flex items-center justify-center space-x-2 shadow-sm transition-all text-sm ${
+                isSubmittingTerima || !terimaSellerId || !terimaSellerName || !terimaResi.trim()
+                  ? "bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-200"
+                  : "bg-red-600 hover:bg-red-700 text-white"
+              }`}
             >
               {isSubmittingTerima ? (
                 <>
                   <RefreshCw className="h-4 w-4 animate-spin" />
                   <span>Menyimpan Retur...</span>
+                </>
+              ) : !terimaSellerId || !terimaSellerName ? (
+                <>
+                  <AlertTriangle className="h-4 w-4 text-slate-400" />
+                  <span>Pilih Seller Terlebih Dahulu</span>
                 </>
               ) : (
                 <>
@@ -1046,7 +1155,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               <option value="">-- Pilih Seller Penerima Paket --</option>
               {sellers.map((s, idx) => (
                 <option key={`serah-sel-${idx}-${s.id || s.nama}`} value={s.id || s.nama}>
-                  {s.nama} ({s.kodeSeller || "Master"})
+                  {s.nama}
                 </option>
               ))}
             </select>
@@ -1123,9 +1232,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                           <div>
                             <span className="font-mono font-bold text-xs">{r.Resi}</span>
                             <div className="text-[10px] text-slate-500 flex items-center space-x-2">
-                              <span>Dari: {r.Sumber}</span>
-                              <span>•</span>
                               <span>Kondisi: {r.Kondisi}</span>
+                              {r.IsiPaket && (
+                                <>
+                                  <span>•</span>
+                                  <span>Isi: {r.IsiPaket}</span>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1280,7 +1393,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       {/* ======================================================== */}
       {activeTab === "MANIFEST" && (
         <div className="space-y-4">
-          {/* Controls & Seller Selector (no-print) */}
+          {/* Controls & Editable Fields (no-print) */}
           <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4 no-print">
             <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div>
@@ -1289,7 +1402,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   Manifest Hand Over Returan
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Cetak lembar resmi serah terima paket retur A4 dengan tanda tangan dan paraf bukti fisik.
+                  Formulir resmi penyerahan paket retur ke seller dengan tanda tangan PIC.
                 </p>
               </div>
               <div className="flex items-center space-x-2">
@@ -1316,51 +1429,76 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {/* Seller filter (hanya seller yang punya paket DITERIMA) */}
+            {/* B.3: Field editable di luar area cetak */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* Tanggal penyerahan (default hari ini) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Pilih Seller (Ada Paket Diterima) <span className="text-red-500">*</span>
+                  Tanggal Penyerahan
                 </label>
-                <select
-                  value={manifestSellerId}
-                  onChange={(e) => setManifestSellerId(e.target.value)}
+                <input
+                  type="date"
+                  value={manifestTglPenyerahan}
+                  onChange={(e) => setManifestTglPenyerahan(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
-                >
-                  {sellersWithDiterima.length === 0 ? (
-                    <option value="">(Belum ada paket retur DITERIMA)</option>
-                  ) : (
-                    sellersWithDiterima.map((s) => (
-                      <option key={`man-sel-${s.id}`} value={s.id}>
-                        {s.name} ({s.count} paket)
-                      </option>
-                    ))
-                  )}
-                </select>
+                />
               </div>
 
-              {/* Outlet Name */}
+              {/* Mini Drop Point J&T (default Outlet sesi) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Nama Outlet
+                  Mini Drop Point J&T
                 </label>
                 <input
                   type="text"
                   value={manifestOutlet}
                   onChange={(e) => setManifestOutlet(e.target.value)}
+                  placeholder="Contoh: Pasir Jaha Balaraja"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
                 />
               </div>
 
-              {/* Petugas J&T */}
+              {/* Nama Seller (pilih seller & editable) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Nama Petugas J&T
+                  Nama Seller <span className="text-red-500">*</span>
+                </label>
+                <div className="space-y-1">
+                  <select
+                    value={manifestSellerId}
+                    onChange={(e) => setManifestSellerId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
+                  >
+                    {sellersWithDiterima.length === 0 ? (
+                      <option value="">(Belum ada paket retur DITERIMA)</option>
+                    ) : (
+                      sellersWithDiterima.map((s) => (
+                        <option key={`man-sel-${s.id}`} value={s.id}>
+                          {s.name} ({s.count} paket)
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <input
+                    type="text"
+                    value={manifestSellerName}
+                    onChange={(e) => setManifestSellerName(e.target.value)}
+                    placeholder="Nama Seller di lembar cetak"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Nama - Posisi PIC J&T (default nama admin + ' - Admin MDP') */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  PIC J&T (Nama - Posisi)
                 </label>
                 <input
                   type="text"
-                  value={manifestPetugas}
-                  onChange={(e) => setManifestPetugas(e.target.value)}
+                  value={manifestPicJnt}
+                  onChange={(e) => setManifestPicJnt(e.target.value)}
+                  placeholder="Contoh: Budi - Admin MDP"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
                 />
               </div>
@@ -1405,121 +1543,143 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             )}
           </div>
 
-          {/* Printable Manifest Sheet (.manifest-print-root) */}
-          <div className="manifest-print-root bg-white border border-slate-300 rounded-2xl p-6 sm:p-8 shadow-sm space-y-5 text-black">
-            {/* Scoped print CSS (strictly isolating .manifest-print-root) */}
-            <style>{`
-              @media print {
-                @page {
-                  size: A4 portrait;
-                  margin: 10mm 10mm 10mm 10mm;
-                }
-                body * {
-                  visibility: hidden !important;
-                }
-                .manifest-print-root, .manifest-print-root * {
-                  visibility: visible !important;
-                }
-                .manifest-print-root {
-                  position: absolute !important;
-                  left: 0 !important;
-                  top: 0 !important;
-                  width: 100% !important;
-                  margin: 0 !important;
-                  padding: 8mm 10mm !important;
-                  background: #ffffff !important;
-                  color: #000000 !important;
-                  border: none !important;
-                  box-shadow: none !important;
-                  display: block !important;
-                }
-                .no-print {
-                  display: none !important;
-                }
-                table.manifest-table {
-                  width: 100% !important;
-                  border-collapse: collapse !important;
-                }
-                table.manifest-table thead {
-                  display: table-header-group !important;
-                }
-                table.manifest-table tr {
-                  page-break-inside: avoid !important;
-                  break-inside: avoid !important;
-                }
-                table.manifest-table th, table.manifest-table td {
-                  border: 1px solid #111111 !important;
-                  color: #000000 !important;
-                }
-                .manifest-signature-block {
-                  page-break-inside: avoid !important;
-                  break-inside: avoid !important;
-                  margin-top: 20px !important;
-                }
-              }
-            `}</style>
+          {/* On-screen Preview of the Manifest Sheet (no-print) */}
+          <div className="bg-white border border-slate-300 rounded-2xl p-6 sm:p-8 shadow-sm text-black no-print overflow-x-auto">
+            {/* Judul tengah tebal: MANIFEST HAND OVER RETURAN */}
+            <div className="text-center mb-4">
+              <h2 className="text-base sm:text-lg font-bold tracking-wide uppercase text-black">
+                MANIFEST HAND OVER RETURAN
+              </h2>
+            </div>
 
-            {/* Manifest Header */}
-            <div className="border-b-2 border-black pb-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-xl font-black tracking-tight text-red-650 print:text-black">
-                    J&T EXPRESS
-                  </h1>
-                  <p className="text-[10px] text-slate-600 print:text-black font-semibold">
-                    PT. GLOBAL JET EXPRESS • E-COMMERCE PICKUP & RETUR
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] border border-black px-2 py-0.5 rounded font-mono font-bold">
-                    DOKUMEN RESMI OUTLET
-                  </span>
-                </div>
+            {/* Tiga baris: Tanggal penyerahan, Mini Drop Point J&T, Nama Seller (titik dua sejajar) */}
+            <div className="mb-4 text-xs font-semibold text-black space-y-1">
+              <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                <span>Tanggal penyerahan</span>
+                <span>:</span>
+                <span>{formatIndoDate(manifestTglPenyerahan)}</span>
               </div>
-
-              <div className="text-center pt-1 pb-1">
-                <h2 className="text-base sm:text-lg font-black tracking-wide uppercase underline">
-                  MANIFEST HAND OVER RETURAN
-                </h2>
-                <p className="text-[11px] text-slate-600 print:text-black italic">
-                  Lembar Tanda Terima Fisik Paket Retur dari Outlet ke Seller / Toko
-                </p>
+              <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                <span>Mini Drop Point J&T</span>
+                <span>:</span>
+                <span>{manifestOutlet || "-"}</span>
               </div>
-
-              {/* Header Info Meta Grid */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs border border-black p-2.5 rounded bg-slate-50/50 print:bg-transparent">
-                <div>
-                  <span className="font-bold">Nama Seller / Toko: </span>
-                  <span className="font-semibold underline">
-                    {sellersWithDiterima.find(s => s.id === manifestSellerId)?.name || (selectedManifestRecords[0]?.Seller) || "-"}
-                  </span>
-                </div>
-                <div>
-                  <span className="font-bold">Tanggal Cetak: </span>
-                  <span>{new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</span>
-                </div>
-                <div>
-                  <span className="font-bold">Outlet Asal: </span>
-                  <span>{manifestOutlet || "-"}</span>
-                </div>
-                <div>
-                  <span className="font-bold">Petugas J&T: </span>
-                  <span>{manifestPetugas || "-"}</span>
-                </div>
+              <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                <span>Nama Seller</span>
+                <span>:</span>
+                <span>{manifestSellerName || "-"}</span>
               </div>
             </div>
 
-            {/* Table Resi with Repeating Header and Minimum 10 Rows */}
-            <div className="overflow-x-auto">
-              <table className="manifest-table w-full border-collapse border border-black text-xs">
+            {/* Tabel 4 kolom: No. | Resi | Isi Paket | Ceklist */}
+            <table className="manifest-table w-full border-collapse border border-black text-xs text-black">
+              <thead>
+                <tr className="bg-slate-100 font-bold border-b border-black">
+                  <th className="border border-black px-2 py-1.5 text-center w-12 font-bold">No.</th>
+                  <th className="border border-black px-2 py-1.5 text-left w-52 font-bold">Resi</th>
+                  <th className="border border-black px-2 py-1.5 text-left font-bold">Isi Paket</th>
+                  <th className="border border-black px-2 py-1.5 text-center w-20 font-bold">Ceklist</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedManifestRecords.map((r, idx) => (
+                  <tr key={r.ReturID} className="border-b border-black">
+                    <td className="border border-black px-2 py-1.5 text-center font-mono">{idx + 1}</td>
+                    <td className="border border-black px-2 py-1.5 font-mono font-bold">{r.Resi}</td>
+                    <td className="border border-black px-2 py-1.5">{r.IsiPaket || ""}</td>
+                    <td className="border border-black px-2 py-1.5 text-center">
+                      <span className="inline-block w-3.5 h-3.5 border border-black"></span>
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Minimal 10 baris: baris kosong = sel kosong bergaris (tanpa titik-titik) */}
+                {Array.from({ length: blankRowsCount }).map((_, bIdx) => {
+                  const rowNum = selectedManifestRecords.length + bIdx + 1;
+                  return (
+                    <tr key={`preview-blank-row-${bIdx}`} className="border-b border-black">
+                      <td className="border border-black px-2 py-1.5 text-center font-mono">{rowNum}</td>
+                      <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                      <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                      <td className="border border-black px-2 py-1.5 text-center">
+                        <span className="inline-block w-3.5 h-3.5 border border-black"></span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Di bawah tabel: "Total paket: N" */}
+            <div className="text-xs font-bold my-3 text-black">
+              Total paket: {selectedManifestRecords.length}
+            </div>
+
+            {/* Di bawah: "Tangerang, <tanggal penyerahan format d MMMM yyyy>" */}
+            <div className="text-xs font-semibold mt-4 mb-2 text-black">
+              Tangerang, {formatIndoDate(manifestTglPenyerahan)}
+            </div>
+
+            {/* Dua kolom tanda tangan */}
+            <div className="manifest-signature-block mt-4 text-black">
+              <div className="grid grid-cols-2 gap-8 text-xs">
+                {/* Kolom Kiri: Yang menyerahkan */}
+                <div className="space-y-1">
+                  <p className="font-semibold">Yang menyerahkan,</p>
+                  <p className="font-semibold">PIC J&T Express</p>
+                  <div className="min-h-[25mm] h-[28mm]"></div>
+                  <p className="font-bold">{manifestPicJnt || "Admin - Admin MDP"}</p>
+                </div>
+
+                {/* Kolom Kanan: Diterima */}
+                <div className="space-y-1">
+                  <p className="font-semibold">Diterima,</p>
+                  <p className="font-semibold">PIC Seller</p>
+                  <div className="min-h-[25mm] h-[28mm]"></div>
+                  <div className="border-b border-black w-48 sm:w-56 mb-1"></div>
+                  <p className="text-[11px] text-slate-800">Nama - Posisi</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* B.4: React Portal rendered directly in document.body (.manifest-print-root) */}
+          {typeof document !== "undefined" && createPortal(
+            <div className="manifest-print-root">
+              {/* Judul tengah tebal: MANIFEST HAND OVER RETURAN */}
+              <div className="text-center mb-4">
+                <h2 className="text-base sm:text-lg font-bold tracking-wide uppercase text-black">
+                  MANIFEST HAND OVER RETURAN
+                </h2>
+              </div>
+
+              {/* Tiga baris: Tanggal penyerahan, Mini Drop Point J&T, Nama Seller (titik dua sejajar) */}
+              <div className="mb-4 text-xs font-semibold text-black space-y-1">
+                <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                  <span>Tanggal penyerahan</span>
+                  <span>:</span>
+                  <span>{formatIndoDate(manifestTglPenyerahan)}</span>
+                </div>
+                <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                  <span>Mini Drop Point J&T</span>
+                  <span>:</span>
+                  <span>{manifestOutlet || "-"}</span>
+                </div>
+                <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                  <span>Nama Seller</span>
+                  <span>:</span>
+                  <span>{manifestSellerName || "-"}</span>
+                </div>
+              </div>
+
+              {/* Tabel 4 kolom: No. | Resi | Isi Paket | Ceklist */}
+              <table className="manifest-table w-full border-collapse border border-black text-xs text-black">
                 <thead>
-                  <tr className="bg-slate-100 print:bg-slate-200 text-black font-bold border-b border-black">
-                    <th className="border border-black px-2 py-1.5 text-center w-10">No</th>
-                    <th className="border border-black px-2 py-1.5 text-left w-36">No. Resi Retur</th>
-                    <th className="border border-black px-2 py-1.5 text-center w-24">Tgl Datang</th>
-                    <th className="border border-black px-2 py-1.5 text-center w-24">Kondisi</th>
-                    <th className="border border-black px-2 py-1.5 text-left">Isi Paket / Keterangan</th>
-                    <th className="border border-black px-2 py-1.5 text-center w-24">Paraf Cek</th>
+                  <tr className="bg-transparent font-bold border-b border-black">
+                    <th className="border border-black px-2 py-1.5 text-center w-12 font-bold">No.</th>
+                    <th className="border border-black px-2 py-1.5 text-left w-52 font-bold">Resi</th>
+                    <th className="border border-black px-2 py-1.5 text-left font-bold">Isi Paket</th>
+                    <th className="border border-black px-2 py-1.5 text-center w-20 font-bold">Ceklist</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1527,87 +1687,117 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     <tr key={r.ReturID} className="border-b border-black">
                       <td className="border border-black px-2 py-1.5 text-center font-mono">{idx + 1}</td>
                       <td className="border border-black px-2 py-1.5 font-mono font-bold">{r.Resi}</td>
-                      <td className="border border-black px-2 py-1.5 text-center font-mono">{r.TglDatang || r.TglTerima}</td>
-                      <td className="border border-black px-2 py-1.5 text-center font-bold">{r.Kondisi}</td>
-                      <td className="border border-black px-2 py-1.5">{r.IsiPaket || r.Catatan || "-"}</td>
-                      <td className="border border-black px-2 py-1.5 text-center"></td>
+                      <td className="border border-black px-2 py-1.5">{r.IsiPaket || ""}</td>
+                      <td className="border border-black px-2 py-1.5 text-center">
+                        <span className="inline-block w-3.5 h-3.5 border border-black"></span>
+                      </td>
                     </tr>
                   ))}
 
-                  {/* Render Blank Rows if Fewer than 10 */}
+                  {/* Minimal 10 baris: baris kosong = sel kosong bergaris (tanpa titik-titik) */}
                   {Array.from({ length: blankRowsCount }).map((_, bIdx) => {
                     const rowNum = selectedManifestRecords.length + bIdx + 1;
                     return (
-                      <tr key={`blank-row-${bIdx}`} className="border-b border-black text-slate-400 print:text-slate-500">
-                        <td className="border border-black px-2 py-2 text-center font-mono">{rowNum}</td>
-                        <td className="border border-black px-2 py-2 font-mono">................................</td>
-                        <td className="border border-black px-2 py-2 text-center font-mono">....-..-..</td>
-                        <td className="border border-black px-2 py-2 text-center">........</td>
-                        <td className="border border-black px-2 py-2">................................................</td>
-                        <td className="border border-black px-2 py-2 text-center"></td>
+                      <tr key={`print-blank-row-${bIdx}`} className="border-b border-black">
+                        <td className="border border-black px-2 py-1.5 text-center font-mono">{rowNum}</td>
+                        <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                        <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                        <td className="border border-black px-2 py-1.5 text-center">
+                          <span className="inline-block w-3.5 h-3.5 border border-black"></span>
+                        </td>
                       </tr>
                     );
                   })}
-
-                  {/* Summary Total Row */}
-                  <tr className="bg-slate-50 print:bg-slate-100 font-bold border-t-2 border-black">
-                    <td colSpan={4} className="border border-black px-3 py-2 text-right uppercase">
-                      Total Paket Retur:
-                    </td>
-                    <td colSpan={2} className="border border-black px-3 py-2 text-left font-mono text-sm">
-                      <strong>{selectedManifestRecords.length} Paket</strong>
-                    </td>
-                  </tr>
                 </tbody>
               </table>
-            </div>
 
-            {/* Signature Block (break-inside avoid) */}
-            <div className="manifest-signature-block pt-6">
-              <p className="text-[10px] text-slate-600 print:text-black italic mb-4">
-                * Dengan menandatangani manifest ini, pihak seller menyatakan telah menerima paket retur di atas dalam kondisi sesuai catatan.
-              </p>
-              <div className="grid grid-cols-2 gap-8">
-                <div className="text-center space-y-1">
-                  <p className="text-xs font-bold text-black uppercase">
-                    Diserahkan Oleh (J&T Express)
-                  </p>
-                  <p className="text-[10px] text-slate-500 print:text-black">
-                    Petugas Outlet
-                  </p>
-                  <div className="h-16 flex items-end justify-center">
-                    <span className="text-slate-300 text-[10px] italic print:hidden">(Tanda Tangan)</span>
-                  </div>
-                  <div className="border-b border-black w-48 mx-auto"></div>
-                  <p className="text-xs font-bold text-black mt-1 font-mono">
-                    ( {manifestPetugas || "......................."} )
-                  </p>
-                  <p className="text-[10px] text-slate-600 print:text-black">
-                    Tgl: {new Date().toLocaleDateString("id-ID")}
-                  </p>
-                </div>
+              {/* Di bawah tabel: "Total paket: N" */}
+              <div className="text-xs font-bold my-3 text-black">
+                Total paket: {selectedManifestRecords.length}
+              </div>
 
-                <div className="text-center space-y-1">
-                  <p className="text-xs font-bold text-black uppercase">
-                    Diterima Oleh (Seller / Toko)
-                  </p>
-                  <p className="text-[10px] text-slate-500 print:text-black">
-                    Penerima / Pemilik Paket
-                  </p>
-                  <div className="h-16 flex items-end justify-center">
-                    <span className="text-slate-300 text-[10px] italic print:hidden">(Tanda Tangan & Cap)</span>
+              {/* Di bawah: "Tangerang, <tanggal penyerahan format d MMMM yyyy>" */}
+              <div className="text-xs font-semibold mt-4 mb-2 text-black">
+                Tangerang, {formatIndoDate(manifestTglPenyerahan)}
+              </div>
+
+              {/* Dua kolom tanda tangan */}
+              <div className="manifest-signature-block mt-4 text-black">
+                <div className="grid grid-cols-2 gap-8 text-xs">
+                  {/* Kolom Kiri */}
+                  <div className="space-y-1">
+                    <p className="font-semibold">Yang menyerahkan,</p>
+                    <p className="font-semibold">PIC J&T Express</p>
+                    <div className="min-h-[25mm] h-[28mm]"></div>
+                    <p className="font-bold">{manifestPicJnt || "Admin - Admin MDP"}</p>
                   </div>
-                  <div className="border-b border-black w-48 mx-auto"></div>
-                  <p className="text-xs font-bold text-black mt-1 font-mono">
-                    ( ..................................... )
-                  </p>
-                  <p className="text-[10px] text-slate-600 print:text-black">
-                    Tgl: ..... / ..... / 202...
-                  </p>
+
+                  {/* Kolom Kanan */}
+                  <div className="space-y-1">
+                    <p className="font-semibold">Diterima,</p>
+                    <p className="font-semibold">PIC Seller</p>
+                    <div className="min-h-[25mm] h-[28mm]"></div>
+                    <div className="border-b border-black w-48 sm:w-56 mb-1"></div>
+                    <p className="text-[11px] text-slate-800">Nama - Posisi</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
+            </div>,
+            document.body
+          )}
+
+          {/* B.4: Scoped print CSS: hide body > *:not(.manifest-print-root), keep manifest static */}
+          <style>{`
+            @media print {
+              @page {
+                size: A4 portrait;
+                margin: 12mm 12mm 12mm 12mm;
+              }
+              body > *:not(.manifest-print-root) {
+                display: none !important;
+              }
+              .manifest-print-root {
+                display: block !important;
+                position: static !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #ffffff !important;
+                color: #000000 !important;
+                box-shadow: none !important;
+                border: none !important;
+              }
+              .manifest-print-root * {
+                color: #000000 !important;
+              }
+              table.manifest-table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+              }
+              table.manifest-table thead {
+                display: table-header-group !important;
+              }
+              table.manifest-table tr {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+              table.manifest-table th, table.manifest-table td {
+                border: 1px solid #000000 !important;
+                padding: 4px 6px !important;
+                color: #000000 !important;
+              }
+              .manifest-signature-block {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                margin-top: 18px !important;
+              }
+            }
+            @media screen {
+              .manifest-print-root {
+                display: none !important;
+              }
+            }
+          `}</style>
         </div>
       )}
 
@@ -1791,8 +1981,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                         <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
                           <span>Sesi Kedatangan: <strong className="text-slate-700">{r.TglDatang || r.TglTerima}</strong></span>
                           <span>•</span>
-                          <span>Sumber: {r.Sumber || "-"}</span>
-                          <span>•</span>
                           <span>Kondisi: <strong className={r.Kondisi === RETUR_KONDISI.BAIK ? "text-emerald-600" : "text-red-600"}>{r.Kondisi}</strong></span>
                           <span>•</span>
                           <span>Outlet: {r.Outlet}</span>
@@ -1815,7 +2003,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     {/* Timeline & Metadata */}
                     <div className="text-left sm:text-right text-[11px] text-slate-500 font-mono space-y-0.5 flex-shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200">
                       <div>Terima: {r.TglTerima} {r.JamTerima}</div>
-                      <div className="text-slate-400">Oleh: {r.AdminTerima}</div>
+                      <div className="text-slate-600 font-medium">Petugas: {r.AdminTerima || "-"}</div>
                       {isDiserahkan && r.HandoverID && (
                         <div className="text-blue-600 font-bold text-[10px]">
                           ID Serah: {r.HandoverID}

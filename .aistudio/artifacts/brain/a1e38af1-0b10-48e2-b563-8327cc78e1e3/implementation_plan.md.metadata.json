@@ -1,0 +1,6 @@
+{
+  "summary":  "Rencana penyesuaian fitur Paket Retur: penghapusan kolom Sumber Pengiriman dari form dan daftar retur, penyederhanaan dropdown seller menjadi nama seller saja tanpa kode seller, dan penambahan pemilih/penampil admin operator penerima di form Terima Retur berbasis sesi login aktif dengan opsi ganti langsung di form.",
+  "updatedAt":  "2026-11-10T18:00:36.276305937Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
