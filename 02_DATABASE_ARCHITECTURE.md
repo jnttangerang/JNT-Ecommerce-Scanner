@@ -327,30 +327,36 @@ Minimal field.
 
 # 14. MASTER_PREFIX_RESI
 
-Seluruh prefix berasal dari database.
+Seluruh prefix berasal dari database/konfigurasi (`DATA_MASTER` -> key `RESI_PREFIXES`).
 
-Tidak boleh di-hardcode.
+Tidak boleh di-hardcode di komponen scanner.
 
-| Field |
-|---------|
-| PrefixID |
-| Prefix |
-| Category |
-| Description |
-| Active |
-| CreatedAt |
-| UpdatedAt |
+Sejak **TASK_13**, `RESI_PREFIXES` menyimpan array JSON aturan berbasis objek `ResiRule` (tetap kompatibel mundur bila berisi string lama seperti `"JX, JY, JZ"` dan melakukan seed non-destruktif otomatis):
 
-Contoh:
+```json
+[
+  { "prefix": "JX", "panjangTotal": 12, "panjangMax": 14, "tipe": "HURUF_ANGKA", "layanan": "Express Ecommerce", "aktif": true, "bawaan": true },
+  { "prefix": "JY", "panjangTotal": 12, "panjangMax": 14, "tipe": "HURUF_ANGKA", "layanan": "Express Ecommerce", "aktif": true, "bawaan": true },
+  { "prefix": "JZ", "panjangTotal": 12, "panjangMax": 14, "tipe": "HURUF_ANGKA", "layanan": "Express Ecommerce", "aktif": true, "bawaan": true },
+  { "prefix": "JO", "panjangTotal": 12, "panjangMax": 14, "tipe": "HURUF_ANGKA", "layanan": "Express Ecommerce", "aktif": true, "bawaan": true },
+  { "prefix": "JD", "panjangTotal": 12, "tipe": "HURUF_ANGKA", "layanan": "Express Reguler", "aktif": true, "bawaan": true },
+  { "prefix": "2018", "panjangTotal": 12, "tipe": "ANGKA", "layanan": "J&T Cargo", "aktif": true, "bawaan": true },
+  { "prefix": "5707", "panjangTotal": 12, "tipe": "ANGKA", "layanan": "J&T Cargo", "aktif": true, "bawaan": true },
+  { "prefix": "136", "panjangTotal": 10, "tipe": "ANGKA", "layanan": "Express VIP", "aktif": true, "bawaan": true }
+]
+```
 
-| Prefix | Category |
-|---------|----------|
-| JX | Ecommerce |
-| JY | Ecommerce |
-| JZ | Ecommerce |
-| JD | Regular |
+| Field | Keterangan |
+|---------|------------|
+| `prefix` | Kode awalan resi (uppercase/angka) |
+| `panjangTotal` | Panjang total minimum karakter resi |
+| `panjangMax` | Panjang maksimum opsional (mis. 14 untuk toleransi Lazada) |
+| `tipe` | `"HURUF_ANGKA"` \| `"ANGKA"` |
+| `layanan` | Label layanan yang diturunkan saat tampil (mis. `Express Reguler`, `Express Ecommerce`, `Express VIP`, `J&T Cargo`) |
+| `aktif` | Boolean status aktif/nonaktif |
+| `bawaan` | Penanda aturan bawaan (dilindungi dari hapus; bisa dinonaktifkan) |
 
-Owner dapat menambah atau menonaktifkan prefix tanpa mengubah source code.
+Owner dapat menambah awalan kustom, mengubah status aktif/nonaktif, atau menghapus awalan kustom melalui Dashboard Owner tanpa mengubah source code, dan tersinkronisasi melalui `DATA_MASTER`.
 
 ---
 

@@ -40,6 +40,8 @@ import { dbService, createMockResiPhoto, getDirectDriveImageUrl, getTodayLocalDa
 import { audioService } from "../utils/audio";
 import { triggerHaptic } from "../utils/haptics";
 import { estimateSharpness, BLUR_WARNING_THRESHOLD } from "../utils/blur";
+import { analisaResi, AnalisaResiResult, getResiRules, normalizeResi } from "../utils/resiRules";
+import { ServiceBadge } from "./ServiceBadge";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { toast } from "sonner";
 
@@ -138,6 +140,11 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // Manual input and live real-time validation states
   const [manualInput, setManualInput] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [pendingNumericConfirm, setPendingNumericConfirm] = useState<{
+    result: AnalisaResiResult;
+    source: "CAMERA" | "MANUAL";
+  } | null>(null);
   const [liveWarning, setLiveWarning] = useState<{
     type: "DUPLICATE" | "CANCELLED" | "RETAKE" | "OK";
     title: string;
@@ -145,7 +152,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   } | null>(null);
 
   const handleLiveCheck = (val: string) => {
-    const rawCode = val.trim().toUpperCase();
+    const rawCode = normalizeResi(val);
     if (!rawCode) {
       setLiveWarning(null);
       return;
@@ -866,13 +873,98 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // Fallback if camera is off or denied (generated high-fidelity J&T tracking ticket!)
     lastCaptureSharpnessRef.current = Infinity; // Not a real capture, so never flag it as blurry
     
-    const validPrefixesStr = Config.get(CONFIG_KEYS.RESI_PREFIXES);
-    // Parse prefixes safely using a regex separator for robustness
-    const validPrefixes = validPrefixesStr ? validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean) : [];
-    const defaultPrefix = validPrefixes.length > 0 ? validPrefixes[0] : "";
-    
+    const activeRules = getResiRules().filter(r => r.aktif);
+    const defaultPrefix = activeRules.length > 0 ? activeRules[0].prefix : "JX";
+
     const simulatedBarcode = scannedResi || `${defaultPrefix}${Math.floor(1000000000 + Math.random() * 9000000000)}`;
     return createMockResiPhoto(simulatedBarcode, config.seller);
+  };
+
+  /**
+   * Proses lanjutan setelah nomor resi lolos validasi (atau dikonfirmasi user)
+   * Dipakai bersama oleh kamera, ketik manual, dan paste.
+   */
+  const proceedValidatedResi = async (rawCode: string) => {
+    isScanningLocked.current = true;
+    try {
+      setDuplicateWarning(null);
+      setCancelledWarning(null);
+
+      const todayStr = getTodayLocalDateString();
+      const records = dbService.getRecords();
+
+      // Check if there is a pending retake first (can be from any day)
+      const pendingRetake = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.RetakeStatus === "PENDING");
+      if (pendingRetake) {
+        audioService.playRetake();
+        triggerHaptic([100, 50, 100]);
+        toast.info(`Resi ${rawCode} terdeteksi memiliki instruksi FOTO ULANG (RETAKE) dari Owner!`, {
+          duration: 5000,
+        });
+        handleOpenRetakeModal(pendingRetake.Resi);
+        return;
+      }
+
+      // Check if it already exists in today's cache (duplicate or cancelled today)
+      const existingToday = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
+      if (existingToday) {
+        if (existingToday.Status === "CANCELLED") {
+          audioService.playCancelled();
+          triggerHaptic([200, 100, 200, 100, 200]);
+          setCancelledWarning(rawCode);
+          return;
+        }
+
+        audioService.playError();
+        triggerHaptic([150, 100, 150]);
+        setDuplicateWarning(rawCode);
+        return;
+      }
+
+      // Double check with service
+      if (dbService.isDuplicate(rawCode)) {
+        audioService.playError();
+        triggerHaptic([150, 100, 150]);
+        setDuplicateWarning(rawCode);
+        return;
+      }
+
+      // Capture corresponding photo from webcam frame (foto wajib)
+      setIsCapturing(true);
+      let photoData = "";
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        photoData = captureFrame(rawCode);
+        if (photoData) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+      setIsCapturing(false);
+
+      if (!photoData) {
+        audioService.playError();
+        toast.error("Gagal mengambil foto. Coba lagi.");
+        consecutiveScansRef.current = { barcode: "", count: 0 };
+        unlockScannerAndFocus();
+        return;
+      }
+
+      const isBlurry = lastCaptureSharpnessRef.current < BLUR_WARNING_THRESHOLD;
+      if (isBlurry) {
+        audioService.playError();
+        triggerHaptic([120, 60, 120]);
+        toast.warning("FOTO KEMUNGKINAN BURAM", {
+          description: "Sistem mendeteksi foto ini kurang tajam. Periksa dulu sebelum menyimpan.",
+        });
+      }
+
+      setPendingValidation({
+        resi: rawCode,
+        photoURL: photoData,
+        isBlurry
+      });
+    } catch (err) {
+      console.error("Scan processing error:", err);
+      unlockScannerAndFocus();
+    }
   };
 
   /**
@@ -881,54 +973,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const handleBarcodeScanned = (scannedResi: string) => {
     if (isScanningLocked.current) return;
 
-    console.log("html5-qrcode decodedText:", JSON.stringify(scannedResi));
-
-    const rawCode = scannedResi.trim().toUpperCase();
-    console.group("=== CAMERA BARCODE AUDIT ===");
-    console.log("Original scannedResi:", scannedResi);
-    console.log("Normalized rawCode:", rawCode);
-    console.log("JSON:", JSON.stringify(rawCode));
-    console.log("Length:", rawCode.length);
-    console.table(
-      Array.from(rawCode).map((c, index) => ({
-        index,
-        character: c,
-        charCode: c.charCodeAt(0),
-        hex: "0x" + c.charCodeAt(0).toString(16).toUpperCase()
-      }))
-    );
-    console.groupEnd();
-
+    const analisa = analisaResi(scannedResi);
+    const rawCode = analisa.resi;
     if (!rawCode) return;
 
-    // VALIDASI FORMAT BARCODE J&T (Robust parsing supports any prefix dynamically)
-    const validPrefixesStr = Config.get(CONFIG_KEYS.RESI_PREFIXES);
-    const validPrefixes = validPrefixesStr ? validPrefixesStr.split(/[\s,;]+/).map(p => p.trim().toUpperCase()).filter(Boolean) : [];
-    const prefixRegexPart = validPrefixes.length > 0 ? `(?:${validPrefixes.join("|")})?` : "";
-    const regex = new RegExp(`^${prefixRegexPart}\\d{10,12}$`);
-
-    console.group("=== REGEX AUDIT ===");
-    console.log("Prefixes:", validPrefixes);
-    console.log("Regex:", regex.source);
-    console.log("Regex Result:", regex.test(rawCode));
-    console.groupEnd();
-
-    console.group("Barcode Validation");
-    console.log("Raw barcode:", scannedResi);
-    console.log("Normalized barcode:", rawCode);
-    console.log("localStorage:", Config.get(CONFIG_KEYS.RESI_PREFIXES));
-    console.log("Parsed prefixes:", validPrefixes);
-    console.log("Regex:", regex);
-    console.log("Regex source:", regex.source);
-    console.log("Regex test:", regex.test(rawCode));
-    console.groupEnd();
-
-    const isValidFormat = regex.test(rawCode);
-
-    if (!isValidFormat) {
-      // Only surface a warning once the SAME unrecognized code has been read stably a
-      // few times (avoids reacting to single-frame noise), and at most once every few
-      // seconds (avoids spamming toasts while the camera keeps re-reading it).
+    if (!analisa.valid && analisa.status !== "CONFIRM_NUMERIC") {
+      // Tolak huruf salah pola / format tak dikenal setelah stabilisasi 5 frame agar tidak spam toast
       if (invalidFormatScanRef.current.code === rawCode) {
         invalidFormatScanRef.current.count += 1;
       } else {
@@ -938,16 +988,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       const now = Date.now();
       if (invalidFormatScanRef.current.count >= 5 && now - lastInvalidFormatToastRef.current > 4000) {
         lastInvalidFormatToastRef.current = now;
-        toast.warning("FORMAT RESI TIDAK DIKENALI", {
-          description: `Barcode terbaca (${rawCode}) tapi formatnya tidak sesuai pola resi J&T. Pastikan ini resi yang benar.`,
-        });
+        audioService.playError();
+        toast.warning(
+          analisa.status === "REJECT" ? "FORMAT RESI TIDAK VALID" : "FORMAT RESI TIDAK DIKENALI",
+          { description: analisa.pesan }
+        );
       }
-      return; // Ignore for saving purposes; scanner keeps looking for a valid resi
+      return;
     }
     invalidFormatScanRef.current = { code: "", count: 0 };
 
-    // MULTI-FRAME VERIFICATION
-    // Mencegah false positive dengan mengharuskan scanner membaca barcode yang sama 3x berturut-turut
+    // MULTI-FRAME VERIFICATION (3x berturut-turut)
     if (consecutiveScansRef.current.barcode === rawCode) {
       consecutiveScansRef.current.count += 1;
     } else {
@@ -955,132 +1006,70 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     }
 
     if (consecutiveScansRef.current.count < 3) {
-      return; // Belum 3x berturut-turut, abaikan dan tunggu frame berikutnya
+      return;
     }
 
     // DEBOUNCE: Mencegah callback ganda untuk barcode yang sama dalam 1.5 detik setelah sukses
     const now = Date.now();
     if (lastScannedBarcodeRef.current === rawCode && (now - lastScannedTimeRef.current) < 1500) {
-      console.log(`[SCAN IGNORED] Debounced duplicate callback for ${rawCode}`);
       return;
     }
 
-    console.log(`\n[SCAN START]`);
-    console.log(`Barcode : ${rawCode}`);
-    console.log(`Regex : PASS`);
-    console.log(`Frames : ${consecutiveScansRef.current.count}`);
-
     lastScannedBarcodeRef.current = rawCode;
     lastScannedTimeRef.current = now;
-    consecutiveScansRef.current = { barcode: "", count: 0 }; // Reset setelah lolos verifikasi
+    consecutiveScansRef.current = { barcode: "", count: 0 };
 
-    // LOCK IMMEDIATELY to prevent high-frequency decode callbacks from piling up
-    // during the synchronous canvas rendering / toDataURL compression of captureFrame
-    isScanningLocked.current = true;
+    if (analisa.status === "CONFIRM_NUMERIC") {
+      isScanningLocked.current = true;
+      audioService.playError();
+      triggerHaptic([120, 60, 120]);
+      setPendingNumericConfirm({ result: analisa, source: "CAMERA" });
+      return;
+    }
 
-    // Wrap in async handler to prevent UI collision and decoupled execution
-    (async () => {
-      try {
-        setDuplicateWarning(null);
-        setCancelledWarning(null);
+    proceedValidatedResi(rawCode);
+  };
 
-        const todayStr = getTodayLocalDateString();
-        const records = dbService.getRecords();
+  /**
+   * Handler ketik manual & paste nomor resi (memakai validator terpusat yang sama)
+   */
+  const handleManualSubmit = (rawOverride?: string) => {
+    if (isScanningLocked.current) return;
+    const rawVal = rawOverride !== undefined ? rawOverride : manualInput;
+    const analisa = analisaResi(rawVal);
 
-        // Check if there is a pending retake first (can be from any day)
-        const pendingRetake = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.RetakeStatus === "PENDING");
-        if (pendingRetake) {
-          audioService.playRetake();
-          triggerHaptic([100, 50, 100]); // Distinct double-pulse for retake
-          toast.info(`Resi ${rawCode} terdeteksi memiliki instruksi FOTO ULANG (RETAKE) dari Owner!`, {
-            duration: 5000,
-          });
-          handleOpenRetakeModal(pendingRetake.Resi);
-          return;
-        }
+    if (!analisa.resi) {
+      setManualError(analisa.pesan);
+      toast.error("Nomor resi kosong", { description: analisa.pesan });
+      return;
+    }
 
-        // Check if it already exists in today's cache (duplicate or cancelled today)
-        const existingToday = records.find(r => r.Resi.toLowerCase() === rawCode.toLowerCase() && r.Tanggal === todayStr);
-        if (existingToday) {
-          if (existingToday.Status === "CANCELLED") {
-            console.log(`Duplicate : CANCELLED`);
-            audioService.playCancelled();
-            triggerHaptic([200, 100, 200, 100, 200]); // Long warning vibration sequence for cancel
-            setCancelledWarning(rawCode);
-            return;
-          }
+    setManualInput(analisa.resi);
+    handleLiveCheck(analisa.resi);
 
-          // If it exists today and is not cancelled, it is a duplicate!
-          console.log(`Duplicate : TRUE (Cache)`);
-          audioService.playError();
-          triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
-          setDuplicateWarning(rawCode);
-          return;
-        }
+    if (analisa.status === "REJECT" || analisa.status === "INVALID_FALLBACK") {
+      audioService.playError();
+      triggerHaptic([120, 60, 120]);
+      setManualError(analisa.pesan);
+      toast.error(analisa.status === "REJECT" ? "Format Resi Ditolak" : "Format Resi Tidak Dikenali", {
+        description: analisa.pesan,
+      });
+      return;
+    }
 
-        // Double check with service
-        if (dbService.isDuplicate(rawCode)) {
-          console.log(`Duplicate : TRUE (DB)`);
-          audioService.playError();
-          triggerHaptic([150, 100, 150]); // Short warning vibration sequence for duplicate alert
-          setDuplicateWarning(rawCode);
-          return;
-        }
+    setManualError(null);
 
-        console.log(`Duplicate : NO`);
+    if (analisa.status === "CONFIRM_NUMERIC") {
+      isScanningLocked.current = true;
+      audioService.playError();
+      triggerHaptic([120, 60, 120]);
+      setPendingNumericConfirm({ result: analisa, source: "MANUAL" });
+      return;
+    }
 
-        // 2. Capture corresponding photo from webcam frame
-        setIsCapturing(true);
-        
-        let photoData = "";
-        const startCaptureTime = Date.now();
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          photoData = captureFrame(rawCode);
-          if (photoData) break; // Success
-          console.log(`Capture Attempt ${attempt} Failed. Retrying...`);
-          await new Promise(r => setTimeout(r, 50));
-        }
-        
-        const captureTime = Date.now() - startCaptureTime;
-        setIsCapturing(false);
-
-        if (photoData) {
-          console.log(`Capture : SUCCESS (${captureTime}ms)`);
-        } else {
-          console.log(`Capture : FAILED (${captureTime}ms)`);
-          // If photo failed completely, unlock and abort
-          audioService.playError();
-          toast.error("Gagal mengambil foto. Coba lagi.");
-          consecutiveScansRef.current = { barcode: "", count: 0 };
-          unlockScannerAndFocus();
-          return;
-        }
-
-        // 2b. Automatic blur check on the frame we just captured. This doesn't replace
-        // the manual "Validasi Foto" step below - it just flags a likely-blurry photo
-        // so the operator pays extra attention before confirming it as clear.
-        const isBlurry = lastCaptureSharpnessRef.current < BLUR_WARNING_THRESHOLD;
-        if (isBlurry) {
-          console.log(`Sharpness : ${lastCaptureSharpnessRef.current.toFixed(1)} (BLUR WARNING, threshold ${BLUR_WARNING_THRESHOLD})`);
-          audioService.playError();
-          triggerHaptic([120, 60, 120]);
-          toast.warning("FOTO KEMUNGKINAN BURAM", {
-            description: "Sistem mendeteksi foto ini kurang tajam. Periksa dulu sebelum menyimpan.",
-          });
-        }
-
-        // 3. Initiate visibility verification ("Validasi Foto")
-        // Operator must confirm the picture looks clear before it is inserted
-        setPendingValidation({
-          resi: rawCode,
-          photoURL: photoData,
-          isBlurry
-        });
-      } catch (err) {
-        console.error("Scan processing error:", err);
-        unlockScannerAndFocus();
-      }
-    })();
+    setManualInput("");
+    setLiveWarning(null);
+    proceedValidatedResi(analisa.resi);
   };
 
   // Accept verification and persist
@@ -1606,7 +1595,10 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 >
                   <div className="w-full text-center py-4 border-b border-slate-900 sticky top-0 bg-slate-950/90 backdrop-blur-md z-10 shrink-0">
                     <span className="text-xs font-black text-red-500 uppercase tracking-widest block">VALIDASI KUALITAS FOTO</span>
-                    <span className="text-sm text-slate-200 font-bold font-mono mt-1 block">RESI: {pendingValidation.resi}</span>
+                    <div className="flex items-center justify-center gap-2 mt-1 flex-wrap">
+                      <span className="text-sm text-slate-200 font-bold font-mono">RESI: {pendingValidation.resi}</span>
+                      <ServiceBadge resi={pendingValidation.resi} dark />
+                    </div>
                   </div>
 
                   {/* Thumbnail display */}
@@ -1656,6 +1648,60 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                       <CheckCircle className="h-6 w-6 text-white" />
                       <span>{isSavingValidation ? "MENYIMPAN..." : "JELAS & SIMPAN"}</span>
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Numeric Prefix Wrong-Length Confirmation Modal */}
+              {pendingNumericConfirm && (
+                <div
+                  className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+                  id="numeric-length-confirm-modal"
+                >
+                  <div className="bg-slate-900 border border-amber-500/40 rounded-3xl w-full max-w-sm p-6 text-center space-y-4 shadow-[0_0_50px_rgba(245,158,11,0.2)] animate-in zoom-in-95 duration-200">
+                    <div className="bg-amber-500/10 text-amber-400 rounded-full h-14 w-14 flex items-center justify-center mx-auto border border-amber-500/30">
+                      <AlertTriangle className="h-7 w-7 text-amber-400" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h3 className="text-base font-extrabold text-zinc-100 tracking-wider uppercase">
+                        PERIKSA PANJANG RESI ANGKA
+                      </h3>
+                      <p className="text-amber-300 font-bold font-mono text-xs bg-amber-500/10 px-3 py-1 rounded-full inline-block border border-amber-500/20">
+                        {pendingNumericConfirm.result.resi}
+                      </p>
+                    </div>
+                    <p className="text-slate-300 text-xs leading-relaxed">
+                      {pendingNumericConfirm.result.pesan}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingNumericConfirm(null);
+                          unlockScannerAndFocus();
+                        }}
+                        className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs py-3 px-3 rounded-xl transition-all cursor-pointer uppercase"
+                      >
+                        Scan Ulang
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetResi = pendingNumericConfirm.result.resi;
+                          const isManual = pendingNumericConfirm.source === "MANUAL";
+                          setPendingNumericConfirm(null);
+                          if (isManual) {
+                            setManualInput("");
+                            setLiveWarning(null);
+                            setManualError(null);
+                          }
+                          proceedValidatedResi(targetResi);
+                        }}
+                        className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs py-3 px-3 rounded-xl transition-all shadow-lg cursor-pointer uppercase"
+                      >
+                        Tetap Simpan
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1924,14 +1970,90 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
             )}
           </div>
 
+          {/* Manual / Paste Resi Input Bar */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleManualSubmit();
+            }}
+            className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-2.5"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="manual-resi-input"
+                className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider"
+              >
+                Input Manual / Paste Nomor Resi
+              </label>
+              {manualInput && <ServiceBadge resi={manualInput} />}
+            </div>
+
+            <div className="flex gap-2">
+              <input
+                id="manual-resi-input"
+                type="text"
+                value={manualInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setManualInput(val);
+                  setManualError(null);
+                  handleLiveCheck(val);
+                }}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData?.getData("text");
+                  if (pasted !== undefined) {
+                    e.preventDefault();
+                    const normalized = normalizeResi(pasted);
+                    setManualInput(normalized);
+                    setManualError(null);
+                    handleLiveCheck(normalized);
+                  }
+                }}
+                placeholder="Ketik atau paste resi (JD..., JO..., 2018..., 5707..., 136...)..."
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-800 uppercase placeholder:normal-case placeholder:font-sans placeholder:font-normal focus:outline-none focus:border-red-600 focus:bg-white"
+              />
+              <button
+                type="submit"
+                className="bg-slate-900 hover:bg-black text-white font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer shrink-0"
+              >
+                Proses
+              </button>
+            </div>
+
+            {manualError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-[11px] font-medium flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                <span>{manualError}</span>
+              </div>
+            )}
+
+            {!manualError && liveWarning && (
+              <div
+                className={`rounded-xl px-3 py-2 text-[11px] border ${
+                  liveWarning.type === "CANCELLED"
+                    ? "bg-red-50 border-red-200 text-red-700"
+                    : liveWarning.type === "DUPLICATE" || liveWarning.type === "RETAKE"
+                    ? "bg-amber-50 border-amber-200 text-amber-800"
+                    : "bg-sky-50 border-sky-200 text-sky-700"
+                }`}
+              >
+                <span className="font-bold">{liveWarning.title}: </span>
+                <span>{liveWarning.desc}</span>
+              </div>
+            )}
+          </form>
+
           {/* Big Active Tracking Screen banner */}
           {latestResi && (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between text-white">
               <div>
                 <span className="text-[10px] font-mono text-slate-400">RESI TERAKHIR SUKSES:</span>
-                <p className="text-2xl font-black text-green-400 font-mono tracking-wider mt-0.5" id="last-scanned-resi-display">
-                  {latestResi}
-                </p>
+                <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                  <p className="text-2xl font-black text-green-400 font-mono tracking-wider" id="last-scanned-resi-display">
+                    {latestResi}
+                  </p>
+                  <ServiceBadge resi={latestResi} dark />
+                </div>
               </div>
               <div className="bg-green-950/80 border border-green-900 px-3 py-1.5 rounded-xl text-right">
                 <span className="text-[9px] font-bold text-green-400 block">STATUS</span>
@@ -2182,9 +2304,12 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
                       {/* Code and Meta info */}
                       <div className="min-w-0">
-                        <span className="text-xs font-bold font-mono text-slate-800 tracking-wide block truncate">
-                          {r.Resi}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold font-mono text-slate-800 tracking-wide truncate">
+                            {r.Resi}
+                          </span>
+                          <ServiceBadge resi={r.Resi} />
+                        </div>
                         
                         <div className="flex items-center text-[10px] text-slate-500 space-x-1.5 mt-0.5">
                           <span className="font-mono text-[9px] bg-slate-200/60 text-slate-600 px-1 rounded">{r.Tanggal}</span>

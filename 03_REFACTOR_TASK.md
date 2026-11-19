@@ -69,12 +69,12 @@ Dokumen:
 ## Prefix Resi
 
 - [x] Prefix berasal dari database/config (`CONFIG_KEYS.RESI_PREFIXES`).
-- [x] Tidak ada hardcode prefix scanner (Regex dinamis membaca konfigurasi, mendukung JX, JY, JZ Lazada, dll).
-- [x] Owner dapat mengelola prefix.
-- [x] Validasi scanner membaca konfigurasi database & toleran terhadap resi e-commerce 12-13 digit tanpa false error toast.
+- [x] Tidak ada hardcode prefix scanner (Regex dinamis membaca konfigurasi, mendukung JX, JY, JZ Lazada, JO, JD, 2018, 5707, 136).
+- [x] Owner dapat mengelola aturan prefix (tambah kustom, aktif/nonaktif, hapus kustom) dan melihat layanan/panjang.
+- [x] Validasi terpusat (`analisaResi`) untuk kamera, ketik manual, dan paste dengan normalisasi uppercase+trim serta toleransi panjang JZ Lazada.
 
 Dokumen:
-**TASK_09_PREFIX_RESI.md**
+**TASK_09_PREFIX_RESI.md** & **TASK_13**
 
 ---
 
@@ -278,8 +278,9 @@ Setelah seluruh roadmap selesai, aplikasi harus memiliki karakteristik berikut:
 
 ---
 
-# Log Progress Terkini (September 2026)
+# Log Progress Terkini (November 2026)
 
+| November 2026 | Dukungan Format Resi Cargo, Reguler, Ecommerce JO, & VIP (TASK_13) (`resiRules.ts`, `ServiceBadge.tsx`, `config.ts`, `ScannerScreen.tsx`, `OwnerScreen.tsx`) | Memperluas `CONFIG_KEYS.RESI_PREFIXES` menjadi aturan terstruktur `{ prefix, panjangTotal, tipe, layanan, aktif }` yang kompatibel mundur dengan format string lama dan seed non-destruktif untuk `JD` (Express Reguler), `JO` (Express Ecommerce), `2018`/`5707` (J&T Cargo), dan `136` (Express VIP). Menyatukan validasi kamera, ketik manual, dan paste melalui `analisaResi(raw)` dengan konfirmasi panjang numerik, badge layanan turunan (`ServiceBadge`) khusus modul Pickup & Owner, serta UI kelola aturan prefix pada Dashboard Owner. | Selesai |
 | November 2026 | Retur: Autofill Seller, Sesi, Manifest Cetak A4 (TASK_12) (`ReturScreen.tsx`, `db.ts`, `types.ts`, `Kode.gs`) | Penambahan autofill seller dari cache pickup records memori/IndexedDB (prioritas ScanTimestamp terbaru) dengan reset seller otomatis saat resi berubah atau simpan sukses (seller manual tetap utuh jika belum ganti resi), hint resi tidak ditemukan di pickup & disable tombol simpan, formulir resmi Manifest Hand Over Returan A4 sesuai format outlet (judul tengah, 3 baris meta sejajar, 4 kolom: No|Resi|Isi Paket|Ceklist, min 10 baris bordered tanpa titik-titik, total paket, tanda tangan min 25mm), render portal document.body (.manifest-print-root) untuk cetak multi-halaman akurat (5 resi = 1 hal, 40 resi = 2 hal), serta sanitasi backend (potong IsiPaket maks 60 char, set format teks @ kolom 4-6, 14, 19, dan pembacaan dinamis get_retur tanpa ensureReturColumns_). | Selesai |
 | Oktober 2026 | Paket Retur Fase 1 (TASK_11) (`ReturScreen.tsx`, `db.ts`, `Kode.gs`) | Implementasi pencatatan paket retur masuk (DP/Gudang ke outlet) dan serah terima ke seller secara offline-first dengan bukti foto terkompresi, batch handover, auto-lock di Apps Script, dan integrasi portal Operator & Owner. | Selesai |
 | September 2026 | Performance "Jelas & Simpan" (`db.ts`, `ScannerScreen.tsx`) | Mempercepat penyimpanan hasil scan dari 30-60 detik menjadi instan (<15ms) dengan IndexedDB connection pooling (`cachedDBPromise`) dan penulisan single-record langsung (`putRecordToIDB`) tanpa `store.clear()` wipe. Menambahkan feedback tombol "MENYIMPAN...". | Selesai |

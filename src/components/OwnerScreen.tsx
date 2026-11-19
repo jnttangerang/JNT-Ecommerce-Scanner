@@ -1,5 +1,7 @@
 import { SellerService } from '../utils/sellerService';
 import { Config, CONFIG_KEYS } from '../utils/config';
+import { ResiRule, ResiRuleType, getResiRules, saveResiRules } from '../utils/resiRules';
+import { ServiceBadge } from './ServiceBadge';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -176,13 +178,19 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [apiTestStatus, setApiTestStatus] = useState<"IDLE" | "TESTING" | "SUCCESS" | "FAILED">("IDLE");
   const [activeTab, setActiveTab] = useState<"RECAP" | "RETUR" | "MASTERS" | "INTEGRATION" | "DEPLOYMENT">("RECAP");
 
-  // Prefix Resi states
+  // Prefix Resi states (rule-based config + backward compatible)
   const [newPrefixInput, setNewPrefixInput] = useState("");
-  const [savedPrefixes, setSavedPrefixes] = useState<string[]>(() => {
-    const stored = Config.get(CONFIG_KEYS.RESI_PREFIXES) || "JX, JY, JZ";
-    return stored.split(",").map(p => p.trim().toUpperCase()).filter(Boolean);
-  });
-  const [resiPrefixSuccess, setResiPrefixSuccess] = useState(false);
+  const [newPrefixType, setNewPrefixType] = useState<ResiRuleType>("HURUF_ANGKA");
+  const [newPrefixLength, setNewPrefixLength] = useState("12");
+  const [newPrefixLayanan, setNewPrefixLayanan] = useState("");
+  const [resiRules, setResiRules] = useState<ResiRule[]>(() => getResiRules());
+  const [resiPrefixSuccess, setResiPrefixSuccess] = useState("");
+
+  useEffect(() => {
+    const handleConfigUpdate = () => setResiRules(getResiRules());
+    window.addEventListener("jt_config_updated", handleConfigUpdate);
+    return () => window.removeEventListener("jt_config_updated", handleConfigUpdate);
+  }, []);
 
   // Password change states
   const [oldPassword, setOldPassword] = useState("");
@@ -489,33 +497,56 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
   const handleAddResiPrefix = (e: React.FormEvent) => {
     e.preventDefault();
-    const formatted = newPrefixInput.trim().toUpperCase();
-    if (!formatted) return;
-
-    let currentPrefixes = [...savedPrefixes];
-    if (!currentPrefixes.includes(formatted)) {
-      currentPrefixes.push(formatted);
+    const formatted = newPrefixInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!formatted) {
+      toast.error("Kode awalan resi wajib diisi.");
+      return;
     }
-    
-    const formattedStr = currentPrefixes.join(", ");
-    setSavedPrefixes(currentPrefixes);
-    Config.set(CONFIG_KEYS.RESI_PREFIXES, formattedStr);
-    Config.saveToSheet();
-    
+    if (resiRules.some((r) => r.prefix === formatted)) {
+      toast.error(`Awalan ${formatted} sudah terdaftar.`);
+      return;
+    }
+
+    const parsedLen = parseInt(newPrefixLength, 10);
+    const panjangTotal = !isNaN(parsedLen) && parsedLen > formatted.length ? parsedLen : formatted.length + 10;
+
+    const newRule: ResiRule = {
+      prefix: formatted,
+      panjangTotal,
+      tipe: newPrefixType,
+      layanan: newPrefixLayanan.trim(),
+      aktif: true,
+      bawaan: false,
+    };
+
+    const updated = saveResiRules([...resiRules, newRule], true);
+    setResiRules(updated);
     setNewPrefixInput("");
-    setResiPrefixSuccess(true);
-    setTimeout(() => setResiPrefixSuccess(false), 3000);
+    setNewPrefixLayanan("");
+    setResiPrefixSuccess(`Awalan ${formatted} berhasil ditambahkan & disinkronkan!`);
+    setTimeout(() => setResiPrefixSuccess(""), 3000);
+  };
+
+  const handleTogglePrefixActive = (prefix: string) => {
+    const updated = saveResiRules(
+      resiRules.map((r) => (r.prefix === prefix ? { ...r, aktif: !r.aktif } : r)),
+      true
+    );
+    setResiRules(updated);
   };
 
   const handleDeletePrefix = (prefixToDelete: string) => {
-    let currentPrefixes = savedPrefixes.filter(p => p !== prefixToDelete);
-    if (currentPrefixes.length === 0) {
-      currentPrefixes = ["JX", "JY", "JZ"];
+    const target = resiRules.find((r) => r.prefix === prefixToDelete);
+    if (!target || target.bawaan) {
+      toast.error("Aturan bawaan tidak dapat dihapus, gunakan tombol Nonaktif.");
+      return;
     }
-    const formatted = currentPrefixes.join(", ");
-    setSavedPrefixes(currentPrefixes);
-    Config.set(CONFIG_KEYS.RESI_PREFIXES, formatted);
-    Config.saveToSheet();
+    const updated = saveResiRules(
+      resiRules.filter((r) => r.prefix !== prefixToDelete),
+      true
+    );
+    setResiRules(updated);
+    toast.success(`Awalan kustom ${prefixToDelete} dihapus.`);
   };
 
   const handleSaveCloudConfigField = (field: string, value: string) => {
@@ -967,63 +998,135 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               </div>
             </div>
 
-            <form onSubmit={handleAddResiPrefix} className="space-y-4">
-              <div className="space-y-1.55">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Tambah Awalan Baru:</label>
-                <div className="flex gap-2">
+            <form onSubmit={handleAddResiPrefix} className="space-y-3">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Tambah Awalan Kustom Baru:</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <input
                     type="text"
                     value={newPrefixInput}
-                    onChange={(e) => setNewPrefixInput(e.target.value)}
-                    placeholder="Contoh: JX"
-                    className="flex-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-2.5 text-[#333333] text-xs focus:outline-none focus:border-red-650 focus:bg-white selection:bg-red-200 selection:text-red-900 font-mono uppercase transition-all duration-300"
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase();
+                      setNewPrefixInput(val);
+                      if (val && /^\d+$/.test(val.trim())) {
+                        setNewPrefixType("ANGKA");
+                      } else if (val && /[A-Z]/.test(val)) {
+                        setNewPrefixType("HURUF_ANGKA");
+                      }
+                    }}
+                    placeholder="Awalan (mis. JT)"
+                    className="bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-[#333333] text-xs focus:outline-none focus:border-red-650 focus:bg-white font-mono uppercase"
                   />
-                  <button
-                    type="submit"
-                    className="bg-slate-900 hover:bg-black text-white font-bold px-4 rounded-xl cursor-pointer text-xs flex items-center justify-center border border-slate-900 transition-all shadow-sm"
+                  <select
+                    value={newPrefixType}
+                    onChange={(e) => setNewPrefixType(e.target.value as ResiRuleType)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs text-slate-700 font-semibold focus:outline-none focus:border-red-650"
+                    title="Tipe Awalan"
                   >
-                    <Plus className="h-4 w-4" />
-                  </button>
+                    <option value="HURUF_ANGKA">Huruf + Angka</option>
+                    <option value="ANGKA">Angka Saja</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={5}
+                    max={24}
+                    value={newPrefixLength}
+                    onChange={(e) => setNewPrefixLength(e.target.value)}
+                    placeholder="Panjang (12)"
+                    title="Panjang total karakter resi"
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-red-650"
+                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={newPrefixLayanan}
+                      onChange={(e) => setNewPrefixLayanan(e.target.value)}
+                      placeholder="Layanan (opsional)"
+                      className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs text-slate-700 focus:outline-none focus:border-red-650"
+                    />
+                    <button
+                      type="submit"
+                      title="Tambah Awalan"
+                      className="bg-slate-900 hover:bg-black text-white font-bold px-3 rounded-xl cursor-pointer text-xs flex items-center justify-center border border-slate-900 transition-all shadow-sm shrink-0"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
               {resiPrefixSuccess && (
-                <p className="text-[10px] text-emerald-600 font-bold">✓ Daftar awalan resi berhasil disimpan!</p>
+                <p className="text-[10px] text-emerald-600 font-bold">✓ {resiPrefixSuccess}</p>
               )}
             </form>
             
             <div className="mt-5 border-t border-slate-100 pt-4">
-              <h5 className="text-[10px] font-bold text-slate-500 uppercase mb-2">Awalan Tersimpan:</h5>
-              <div className="max-h-[150px] overflow-y-auto pr-1 custom-scrollbar">
+              <h5 className="text-[10px] font-bold text-slate-500 uppercase mb-2">Aturan Awalan Resi ({resiRules.length}):</h5>
+              <div className="max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
                 <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-50 sticky top-0">
+                  <thead className="bg-slate-50 sticky top-0 z-10">
                     <tr>
-                      <th className="py-2 px-3 font-bold text-slate-600 uppercase text-[10px] rounded-l-lg border-b border-slate-200">Kode Awalan</th>
-                      <th className="py-2 px-3 font-bold text-slate-600 uppercase text-[10px] text-right rounded-r-lg border-b border-slate-200 w-16">Aksi</th>
+                      <th className="py-2 px-2.5 font-bold text-slate-600 uppercase text-[10px] rounded-l-lg border-b border-slate-200">Awalan</th>
+                      <th className="py-2 px-2.5 font-bold text-slate-600 uppercase text-[10px] border-b border-slate-200">Layanan</th>
+                      <th className="py-2 px-2.5 font-bold text-slate-600 uppercase text-[10px] border-b border-slate-200">Panjang / Pola</th>
+                      <th className="py-2 px-2.5 font-bold text-slate-600 uppercase text-[10px] border-b border-slate-200 text-center">Status</th>
+                      <th className="py-2 px-2.5 font-bold text-slate-600 uppercase text-[10px] text-right rounded-r-lg border-b border-slate-200 w-16">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {savedPrefixes.map((prefix) => (
-                      <tr key={prefix} className="hover:bg-slate-50 transition-colors group">
-                        <td className="py-2 px-3 font-mono font-bold text-slate-700">{prefix}</td>
-                        <td className="py-2 px-3 text-right">
-                          <button
-                            onClick={() => handleDeletePrefix(prefix)}
-                            className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
-                            title="Hapus Awalan"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {resiRules.map((rule) => {
+                      const lengthText =
+                        rule.panjangMax && rule.panjangMax > rule.panjangTotal
+                          ? `${rule.panjangTotal}-${rule.panjangMax} kar.`
+                          : `${rule.panjangTotal} kar.`;
+                      return (
+                        <tr key={rule.prefix} className={`hover:bg-slate-50 transition-colors ${!rule.aktif ? "opacity-55" : ""}`}>
+                          <td className="py-2 px-2.5 font-mono font-bold text-slate-800 whitespace-nowrap">
+                            {rule.prefix}
+                          </td>
+                          <td className="py-2 px-2.5 text-[11px] font-semibold text-slate-700">
+                            {rule.layanan ? <ServiceBadge layanan={rule.layanan} /> : <span className="text-slate-400">-</span>}
+                          </td>
+                          <td className="py-2 px-2.5 text-[10px] text-slate-500 font-mono whitespace-nowrap">
+                            {lengthText} ({rule.tipe === "ANGKA" ? "Angka" : "Huruf+Angka"})
+                          </td>
+                          <td className="py-2 px-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePrefixActive(rule.prefix)}
+                              className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider cursor-pointer border transition-colors ${
+                                rule.aktif
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                  : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+                              }`}
+                            >
+                              {rule.aktif ? "Aktif" : "Nonaktif"}
+                            </button>
+                          </td>
+                          <td className="py-2 px-2.5 text-right">
+                            {rule.bawaan ? (
+                              <span className="text-[9px] font-bold text-slate-400 uppercase px-1.5 py-0.5 bg-slate-100 rounded">Bawaan</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePrefix(rule.prefix)}
+                                className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                                title="Hapus Awalan Kustom"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
           <p className="text-[10px] text-slate-400 mt-4 leading-relaxed italic">
-            * Awalan resi digunakan untuk memvalidasi barcode yang dipindai kamera. Format standar J&T adalah 2 huruf diikuti 10 angka.
+            * Aturan awalan disinkronkan lewat konfigurasi Spreadsheet (DATA_MASTER). Aturan bawaan tidak dapat dihapus, namun bisa dinonaktifkan kapan saja.
           </p>
         </div>
 
@@ -2354,6 +2457,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                     <div className="text-3xl md:text-4xl font-black text-white font-mono tracking-wider break-all leading-none selection:bg-red-500 mt-2">
                       {activeReviewRecord.Resi}
                     </div>
+                    <ServiceBadge resi={activeReviewRecord.Resi} dark className="mt-2" />
                   </div>
                   <div className="bg-white p-3 rounded-2xl shadow-xl flex-shrink-0" title="Scan dengan aplikasi J&T Sprinter">
                     <QRCodeSVG 
@@ -3540,6 +3644,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                     <div className="text-xl lg:text-2xl font-black text-slate-850 font-mono tracking-wider mt-1 truncate" id="review-barcode-text">
                       {activeReviewRecord.Resi}
                     </div>
+                    <ServiceBadge resi={activeReviewRecord.Resi} className="mt-1" />
                   </div>
                   <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-sm flex-shrink-0" title="Scan dengan aplikasi J&T Sprinter">
                     <QRCodeSVG 
@@ -3701,7 +3806,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 pendingCancelRecords.map((r, idx) => (
                   <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
                     <div className="text-xs space-y-1">
-                      <span className="font-mono font-bold text-slate-800 block tracking-wider">{r.Resi}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono font-bold text-slate-800 tracking-wider">{r.Resi}</span>
+                        <ServiceBadge resi={r.Resi} />
+                      </div>
                       <div className="text-[10px] text-slate-500 font-medium">
                         Seller: {r.Seller} • Operator: {r.Operator}
                       </div>
@@ -3734,7 +3842,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 resolvedCancelRecords.map((r, idx) => (
                   <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
                     <div className="text-xs space-y-1 min-w-0 flex-1 pr-2">
-                      <span className="font-mono font-bold text-slate-800 block tracking-wider">{r.Resi}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono font-bold text-slate-800 tracking-wider">{r.Resi}</span>
+                        <ServiceBadge resi={r.Resi} />
+                      </div>
                       <div className="text-[10px] text-slate-500 font-medium truncate">
                         Seller: {r.Seller} • Pemisah: {r.CancelHandledBy || r.Operator}
                       </div>
@@ -3904,7 +4015,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                       
                       {/* Column 2: No. Resi */}
                       <td className="p-3.5 font-bold font-mono text-slate-900 tracking-wider text-[12px]">
-                        <div>{r.Resi}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{r.Resi}</span>
+                          <ServiceBadge resi={r.Resi} />
+                        </div>
                         <div className="text-[10px] text-slate-400 font-mono font-medium mt-0.5">
                           {fileName}
                         </div>
@@ -4250,7 +4364,10 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                       <div className="grid grid-cols-2 gap-y-3 text-xs">
                         <div>
                           <span className="text-slate-400 block font-medium">No. Resi</span>
-                          <span className="font-extrabold font-mono text-slate-800 tracking-wider text-sm">{r.Resi}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-extrabold font-mono text-slate-800 tracking-wider text-sm">{r.Resi}</span>
+                            <ServiceBadge resi={r.Resi} />
+                          </div>
                         </div>
                         <div>
                           <span className="text-slate-400 block font-medium">Nama File Drive</span>
