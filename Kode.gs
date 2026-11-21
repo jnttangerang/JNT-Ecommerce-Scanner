@@ -47,6 +47,8 @@ function doGet(e) {
       return handleGetRecords();
     } else if (action === "get_retur") {
       return handleGetRetur();
+    } else if (action === "get_retur_bagging") {
+      return handleGetReturBagging(e.parameter.kodeBagging);
     }
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -91,6 +93,8 @@ function doPost(e) {
       return handleSaveHandover(payload.handover);
     } else if (action === "get_retur") {
       return handleGetRetur();
+    } else if (action === "get_retur_bagging") {
+      return handleGetReturBagging(payload.kodeBagging);
     }
     
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
@@ -1004,12 +1008,12 @@ function handleSyncMasters(sellers, operators, outlets) {
 // FITUR PAKET RETUR (TASK_11)
 // ==========================================
 
-// ponytail: append kolom 20-22 pada RETUR_HEADERS agar ensureReturColumns_ otomatis migrasi non-destruktif
+// ponytail: 21 kolom (hapus DP; KodeBagging=col20, JumlahManifest=col21)
 const RETUR_HEADERS = [
   "ReturID", "Resi", "SellerID", "Seller", "Outlet", "Sumber",
   "TglTerima", "JamTerima", "AdminTerima", "Kondisi", "FotoTerimaURL",
   "Status", "HandoverID", "Catatan", "CreatedAt", "UpdatedAt", "DeletedAt",
-  "TglDatang", "IsiPaket", "KodeBagging", "DP", "JumlahManifest"
+  "TglDatang", "IsiPaket", "KodeBagging", "JumlahManifest"
 ];
 
 const HANDOVER_HEADERS = [
@@ -1024,7 +1028,16 @@ const AUDIT_RETUR_HEADERS = [
 
 function ensureReturColumns_(sheet) {
   if (!sheet) return;
-  const lastCol = sheet.getLastColumn();
+  let lastCol = sheet.getLastColumn();
+  if (lastCol > 0) {
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    for (let i = headers.length - 1; i >= 0; i--) {
+      if ((headers[i] || "").toString().trim().toUpperCase() === "DP") {
+        sheet.deleteColumn(i + 1);
+      }
+    }
+    lastCol = sheet.getLastColumn();
+  }
   if (lastCol < RETUR_HEADERS.length) {
     const missingCount = RETUR_HEADERS.length - lastCol;
     sheet.insertColumnsAfter(lastCol, missingCount);
@@ -1150,7 +1163,6 @@ function handleSaveReturBatch(records) {
 
         const cleanIsiPaket = (r.IsiPaket || "").toString().trim().slice(0, 60);
         const cleanKodeBagging = (r.KodeBagging || "").toString().trim().toUpperCase();
-        const cleanDp = (r.DP || "").toString().trim().toUpperCase();
         const cleanJumlahManifest = Math.max(0, Number(r.JumlahManifest) || 0);
 
         const row = [
@@ -1174,7 +1186,6 @@ function handleSaveReturBatch(records) {
           r.TglDatang || r.TglTerima || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd"),
           cleanIsiPaket,
           cleanKodeBagging,
-          cleanDp,
           cleanJumlahManifest
         ];
 
@@ -1208,7 +1219,7 @@ function handleSaveReturBatch(records) {
       sheet.getRange(startRow, 7, count, 2).setNumberFormat("@");
       sheet.getRange(startRow, 14, count, 1).setNumberFormat("@");
       sheet.getRange(startRow, 15, count, 3).setNumberFormat("@");
-      sheet.getRange(startRow, 18, count, 4).setNumberFormat("@");
+      sheet.getRange(startRow, 18, count, 3).setNumberFormat("@");
 
       sheet.getRange(startRow, 1, count, RETUR_HEADERS.length).setValues(appends);
       // Pindahkan writeAuditRetur_ ke SETELAH setValues berhasil
@@ -1434,8 +1445,7 @@ function handleGetRetur() {
         let tglDatangStr = (row.length > 17 && row[17] instanceof Date) ? Utilities.formatDate(row[17], "GMT+7", "yyyy-MM-dd") : ((row.length > 17 && row[17]) ? row[17].toString() : tglStr);
         let isiPaketStr = (row.length > 18 && row[18]) ? row[18].toString() : "";
         let kodeBaggingStr = (row.length > 19 && row[19]) ? row[19].toString().trim().toUpperCase() : "";
-        let dpStr = (row.length > 20 && row[20]) ? row[20].toString().trim().toUpperCase() : "";
-        let jumlahManifestNum = (row.length > 21 && row[21] !== "" && row[21] !== null && row[21] !== undefined) ? (Number(row[21]) || 0) : 0;
+        let jumlahManifestNum = (row.length > 20 && row[20] !== "" && row[20] !== null && row[20] !== undefined) ? (Number(row[20]) || 0) : 0;
 
         returs.push({
           ReturID: (row.length > 0 && row[0]) ? row[0].toString() : "",
@@ -1446,7 +1456,6 @@ function handleGetRetur() {
           Sumber: (row.length > 5 && row[5]) ? row[5].toString() : "",
           TglDatang: tglDatangStr,
           KodeBagging: kodeBaggingStr,
-          DP: dpStr,
           JumlahManifest: jumlahManifestNum,
           TglTerima: tglStr,
           JamTerima: jamStr,
@@ -1502,4 +1511,32 @@ function handleGetRetur() {
     returs: returs,
     handovers: handovers
   });
+}
+
+function handleGetReturBagging(kodeBaggingRaw) {
+  const cleanCode = (kodeBaggingRaw || "").toString().trim().toUpperCase();
+  if (!cleanCode) {
+    return jsonOut_({ success: true, kodeBagging: "", ids: [] });
+  }
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const returSheet = ss.getSheetByName("DATA_RETUR");
+  if (!returSheet || returSheet.getLastRow() <= 1 || returSheet.getLastColumn() < 20) {
+    return jsonOut_({ success: true, kodeBagging: cleanCode, ids: [] });
+  }
+  const lastRow = returSheet.getLastRow();
+  const data = returSheet.getRange(2, 1, lastRow - 1, 20).getValues();
+  const seen = {};
+  const ids = [];
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const deletedAt = row[16];
+    if (deletedAt) continue;
+    const kb = (row[19] || "").toString().trim().toUpperCase();
+    const id = (row[0] || "").toString().trim();
+    if (kb === cleanCode && id && !seen[id]) {
+      seen[id] = true;
+      ids.push(id);
+    }
+  }
+  return jsonOut_({ success: true, kodeBagging: cleanCode, ids: ids });
 }

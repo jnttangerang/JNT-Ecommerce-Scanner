@@ -81,13 +81,18 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     const saved = getReturSesi();
     return {
       kodeBagging: saved?.kodeBagging || "",
-      dp: saved?.dp || "",
       tglDatang: saved?.tglDatang && /^\d{4}-\d{2}-\d{2}$/.test(saved.tglDatang)
         ? saved.tglDatang
         : getTodayLocalDateString(),
       jumlahManifest: saved?.jumlahManifest || 0,
+      status: saved?.status === "OPEN" ? "OPEN" : "CLOSED",
+      ...(saved?.startedAt ? { startedAt: saved.startedAt } : {}),
+      ...(saved?.endedAt ? { endedAt: saved.endedAt } : {}),
     };
   });
+  const [remoteBaggingIds, setRemoteBaggingIds] = useState<string[]>([]);
+  const isSessionOpen = sesi.status === "OPEN";
+  const canStartSession = Boolean(sesi.kodeBagging.trim() && sesi.jumlahManifest > 0);
 
   const updateSesi = (patch: Partial<ReturSesi>) => {
     setSesi((prev) => {
@@ -288,6 +293,14 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       await stopActiveScanner();
       return;
     }
+    if (target === "BAGGING" && sesi.status === "OPEN") {
+      toast.error("Tutup sesi terlebih dahulu untuk mengubah Kode Bagging.");
+      return;
+    }
+    if (target === "RESI" && sesi.status !== "OPEN") {
+      toast.error("Mulai sesi karung terlebih dahulu sebelum scan resi!");
+      return;
+    }
     await stopActiveScanner();
     setScannerTarget(target);
     setTimeout(async () => {
@@ -396,11 +409,62 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     }
   };
 
+  const handleStartSession = async () => {
+    const cleanBagging = sesi.kodeBagging.trim().toUpperCase();
+    if (!cleanBagging || sesi.jumlahManifest <= 0) {
+      toast.error("Lengkapi Sesi Karung", {
+        description: "Isi Kode Bagging dan Jml Manifest (> 0) sebelum mulai sesi."
+      });
+      return;
+    }
+    if (scannerTarget === "BAGGING") {
+      await stopActiveScanner();
+    }
+    const next: ReturSesi = {
+      kodeBagging: cleanBagging,
+      tglDatang: sesi.tglDatang || getTodayLocalDateString(),
+      jumlahManifest: sesi.jumlahManifest,
+      status: "OPEN",
+      startedAt: new Date().toISOString(),
+    };
+    setSesi(next);
+    setReturSesi(next);
+    toast.success(`Sesi Bagging ${cleanBagging} DIBUKA.`);
+  };
+
+  const handleCloseSession = async () => {
+    await stopActiveScanner();
+    const next: ReturSesi = {
+      ...sesi,
+      status: "CLOSED",
+      endedAt: new Date().toISOString(),
+    };
+    setSesi(next);
+    setReturSesi(next);
+    setRemoteBaggingIds([]);
+    toast.info(`Sesi Bagging ${next.kodeBagging || "-"} DITUTUP. Menyinkronkan data...`);
+    if (typeof navigator === "undefined" || navigator.onLine) {
+      try {
+        const res = await dbService.syncPendingReturs();
+        if (res.errors.length > 0) {
+          toast.error("Sinkronisasi Parsial", { description: res.errors.join("; ") });
+        } else if (res.syncedReturs > 0) {
+          toast.success(`Sinkron selesai: ${res.syncedReturs} retur terupload.`);
+        }
+        loadData();
+      } catch (_) {}
+    }
+  };
+
   // Submit Alur A: Terima Retur
   const handleSubmitTerima = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingTerima) return;
 
+    if (sesi.status !== "OPEN") {
+      toast.error("Sesi Belum Dibuka", { description: "Klik 'Mulai Sesi' terlebih dahulu sebelum scan resi." });
+      return;
+    }
     if (!terimaResi.trim()) {
       toast.error("Validasi Gagal", { description: "Nomor resi retur wajib diisi!" });
       return;
@@ -428,7 +492,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         sumber: "",
         tglDatang: sesi.tglDatang,
         kodeBagging: sesi.kodeBagging,
-        dp: sesi.dp,
         jumlahManifest: sesi.jumlahManifest,
         kondisi: terimaKondisi,
         isiPaket: terimaIsiPaket,
@@ -693,15 +756,51 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     toast.success(`${manifestSelectedResis.length} resi dialihkan ke tab Serah Terima`);
   };
 
-  // Live reconciliation for active bagging session (dihitung dari store lokal termasuk hasil pull operator lain)
+  // Live cross-device reconciliation for active bagging session (Set union by ReturID)
   const activeBaggingCode = sesi.kodeBagging.trim().toUpperCase();
-  const scannedInBagging = React.useMemo(() => {
-    if (!activeBaggingCode) return 0;
-    return returs.filter(
-      (r) => !r.DeletedAt && (r.KodeBagging || "").trim().toUpperCase() === activeBaggingCode
-    ).length;
+
+  // ponytail: offline device's own scans appear on peers only after its sync flushes.
+  useEffect(() => {
+    if (sesi.status !== "OPEN" || !activeBaggingCode) {
+      setRemoteBaggingIds([]);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return;
+      const ids = await dbService.fetchBaggingRemoteIds(activeBaggingCode);
+      if (!cancelled) setRemoteBaggingIds(ids);
+    };
+    poll();
+    const timer = window.setInterval(poll, 20000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [sesi.status, activeBaggingCode]);
+
+  const localBaggingIds = React.useMemo(() => {
+    if (!activeBaggingCode) return new Set<string>();
+    return new Set(
+      returs
+        .filter((r) => !r.DeletedAt && (r.KodeBagging || "").trim().toUpperCase() === activeBaggingCode)
+        .map((r) => r.ReturID)
+    );
   }, [returs, activeBaggingCode]);
-  const selisihBagging = scannedInBagging - (sesi.jumlahManifest || 0);
+
+  const remoteOnlyCount = React.useMemo(() => {
+    const seen = new Set<string>();
+    for (const id of remoteBaggingIds) {
+      if (id && !localBaggingIds.has(id)) seen.add(id);
+    }
+    return seen.size;
+  }, [remoteBaggingIds, localBaggingIds]);
+
+  const totalScannedBagging = React.useMemo(() => {
+    return new Set<string>([...localBaggingIds, ...remoteBaggingIds]).size;
+  }, [localBaggingIds, remoteBaggingIds]);
+
+  const selisihBagging = totalScannedBagging - (sesi.jumlahManifest || 0);
 
   // Distinct bagging codes for Daftar filter
   const distinctBaggings = React.useMemo(() => {
@@ -730,8 +829,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       const matchAdmin = (r.AdminTerima || "").toUpperCase().includes(q);
       const matchHandover = (r.HandoverID || "").toUpperCase().includes(q);
       const matchBagging = (r.KodeBagging || "").toUpperCase().includes(q);
-      const matchDp = (r.DP || "").toUpperCase().includes(q);
-      if (!matchResi && !matchSeller && !matchAdmin && !matchHandover && !matchBagging && !matchDp) return false;
+      if (!matchResi && !matchSeller && !matchAdmin && !matchHandover && !matchBagging) return false;
     }
     return true;
   });
@@ -778,7 +876,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Pencatatan siklus paket retur dari DP/Gudang ke outlet hingga serah terima seller.
+              Pencatatan siklus paket retur masuk ke outlet hingga serah terima seller.
             </p>
           </div>
         </div>
@@ -876,25 +974,72 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
           {/* Panel Sesi Bagging (Karung LY) & Petugas Penerima */}
           <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3.5 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border uppercase ${
+                    isSessionOpen
+                      ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                      : "bg-slate-200 text-slate-700 border-slate-300"
+                  }`}
+                >
+                  Sesi: {sesi.status}
+                </span>
+                {isSessionOpen && sesi.startedAt && (
+                  <span className="text-[10px] text-amber-900 font-mono">
+                    Mulai: {new Date(sesi.startedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
+              </div>
+              {isSessionOpen ? (
+                <button
+                  type="button"
+                  onClick={handleCloseSession}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-black text-white rounded-lg text-xs font-bold transition-all shadow-sm"
+                >
+                  Tutup Sesi
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartSession}
+                  disabled={!canStartSession}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm ${
+                    canStartSession
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300"
+                  }`}
+                >
+                  Mulai Sesi
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
               {/* Kode Bagging (LY) + Tombol Scan */}
               <div className="lg:col-span-2 space-y-1">
                 <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">
-                  Kode Bagging / Karung
+                  Kode Bagging / Karung <span className="text-red-500">*</span>
                 </label>
                 <div className="flex space-x-1.5">
                   <input
                     type="text"
+                    disabled={isSessionOpen}
                     value={sesi.kodeBagging}
                     onChange={(e) => updateSesi({ kodeBagging: e.target.value.toUpperCase() })}
                     placeholder="Contoh: LY000042553913"
-                    className="flex-1 bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 uppercase focus:outline-none focus:border-red-600"
+                    className={`flex-1 border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold uppercase focus:outline-none focus:border-red-600 ${
+                      isSessionOpen ? "bg-amber-100/60 text-slate-600 cursor-not-allowed" : "bg-white text-slate-800"
+                    }`}
                   />
                   <button
                     type="button"
+                    disabled={isSessionOpen}
                     onClick={() => toggleScanner("BAGGING")}
                     className={`px-2.5 py-1.5 rounded-lg border flex items-center text-xs font-bold transition-all ${
-                      scannerTarget === "BAGGING"
+                      isSessionOpen
+                        ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                        : scannerTarget === "BAGGING"
                         ? "bg-red-600 text-white border-red-700"
                         : "bg-white hover:bg-amber-100 text-amber-900 border-amber-300"
                     }`}
@@ -906,20 +1051,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 </div>
               </div>
 
-              {/* DP Asal */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">
-                  DP Asal
-                </label>
-                <input
-                  type="text"
-                  value={sesi.dp}
-                  onChange={(e) => updateSesi({ dp: e.target.value.toUpperCase() })}
-                  placeholder="CANGKUDU/DPS999"
-                  className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 uppercase focus:outline-none focus:border-red-600"
-                />
-              </div>
-
               {/* Tgl Datang */}
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider flex items-center">
@@ -927,28 +1058,34 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 </label>
                 <input
                   type="date"
+                  disabled={isSessionOpen}
                   value={sesi.tglDatang}
                   onChange={(e) => updateSesi({ tglDatang: e.target.value })}
-                  className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                  className={`w-full border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-bold focus:outline-none focus:border-red-600 ${
+                    isSessionOpen ? "bg-amber-100/60 text-slate-600 cursor-not-allowed" : "bg-white text-slate-800"
+                  }`}
                 />
               </div>
 
               {/* Jumlah Manifest */}
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">
-                  Jml Manifest
+                  Jml Manifest <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="number"
                   min={0}
+                  disabled={isSessionOpen}
                   value={sesi.jumlahManifest}
                   onChange={(e) => updateSesi({ jumlahManifest: Math.max(0, Number(e.target.value) || 0) })}
-                  className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                  className={`w-full border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none focus:border-red-600 ${
+                    isSessionOpen ? "bg-amber-100/60 text-slate-600 cursor-not-allowed" : "bg-white text-slate-800"
+                  }`}
                 />
               </div>
             </div>
 
-            {scannerTarget === "BAGGING" && (
+            {scannerTarget === "BAGGING" && !isSessionOpen && (
               <div className="border-2 border-red-400 rounded-2xl p-2 bg-black overflow-hidden">
                 <div id="retur-bagging-camera-reader" className="w-full h-48 rounded-xl overflow-hidden bg-black" />
                 <p className="text-center text-[10px] text-zinc-300 mt-1 font-medium">
@@ -981,10 +1118,10 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 </select>
               </div>
 
-              {/* Live Badge Rekonsiliasi Karung vs Manifest */}
+              {/* Live Badge Rekonsiliasi Karung vs Manifest (Lokal + Perangkat Lain) */}
               {activeBaggingCode ? (
                 <div
-                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg border text-xs font-bold ${
+                  className={`inline-flex flex-wrap items-center gap-x-1.5 px-3 py-1 rounded-lg border text-xs font-bold ${
                     selisihBagging > 0
                       ? "bg-blue-50 text-blue-800 border-blue-200"
                       : selisihBagging < 0
@@ -993,7 +1130,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   }`}
                 >
                   <span className="font-mono">
-                    {scannedInBagging} / {sesi.jumlahManifest} discan
+                    {totalScannedBagging}/{sesi.jumlahManifest} discan
                   </span>
                   <span>•</span>
                   <span>
@@ -1003,10 +1140,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                       ? `${selisihBagging} belum discan`
                       : "sesuai"}
                   </span>
+                  <span className="text-[11px] font-normal">
+                    (lokal {localBaggingIds.size} + perangkat lain {remoteOnlyCount})
+                  </span>
                 </div>
               ) : (
                 <span className="text-[11px] text-amber-800/80 italic">
-                  * Isi Kode Bagging (LY) untuk pantau rekonsiliasi jumlah manifest secara live.
+                  * Isi Kode Bagging & Jml Manifest (&gt;0), lalu klik Mulai Sesi.
                 </span>
               )}
             </div>
@@ -1021,31 +1161,44 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               <div className="flex space-x-2">
                 <input
                   type="text"
+                  disabled={!isSessionOpen}
                   value={terimaResi}
                   onChange={(e) => handleResiChange(e.target.value)}
                   onBlur={() => {
-                    if (terimaResi && !terimaSellerId) lookupSellerForResi(terimaResi, false);
+                    if (isSessionOpen && terimaResi && !terimaSellerId) lookupSellerForResi(terimaResi, false);
                   }}
-                  placeholder="Scan atau ketik nomor resi..."
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
+                  placeholder={isSessionOpen ? "Scan atau ketik nomor resi..." : "Klik 'Mulai Sesi' dulu untuk scan resi..."}
+                  className={`flex-1 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold focus:outline-none ${
+                    isSessionOpen
+                      ? "bg-slate-50 text-slate-800 focus:border-red-600 focus:bg-white"
+                      : "bg-slate-100 text-slate-400 cursor-not-allowed opacity-70"
+                  }`}
                 />
                 <button
                   type="button"
+                  disabled={!isSessionOpen}
                   onClick={() => toggleScanner("RESI")}
                   className={`px-3 py-2.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
-                    scannerTarget === "RESI"
+                    !isSessionOpen
+                      ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-70"
+                      : scannerTarget === "RESI"
                       ? "bg-red-50 text-red-600 border-red-200"
                       : "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
                   }`}
-                  title="Scan pakai kamera"
+                  title={isSessionOpen ? "Scan pakai kamera" : "Mulai sesi terlebih dahulu"}
                 >
                   <Camera className="h-4 w-4 mr-1" />
                   <span>{scannerTarget === "RESI" ? "Tutup" : "Scan"}</span>
                 </button>
               </div>
+              {!isSessionOpen && (
+                <p className="text-[11px] text-amber-700 font-semibold">
+                  Input &amp; kamera resi terkunci sampai tombol &quot;Mulai Sesi&quot; diklik.
+                </p>
+              )}
 
               {/* In-page Camera Reader Container */}
-              {scannerTarget === "RESI" && (
+              {scannerTarget === "RESI" && isSessionOpen && (
                 <div className="mt-2 border-2 border-red-400 rounded-2xl p-2 bg-black overflow-hidden relative">
                   <div id="retur-camera-reader" className="w-full h-56 rounded-xl overflow-hidden bg-black" />
                   <p className="text-center text-[10px] text-zinc-400 mt-1 font-medium">
@@ -1372,9 +1525,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
           <div className="pt-3">
             <button
               type="submit"
-              disabled={isSubmittingTerima || !terimaSellerId || !terimaSellerName || !terimaResi.trim()}
+              disabled={!isSessionOpen || isSubmittingTerima || !terimaSellerId || !terimaSellerName || !terimaResi.trim()}
               className={`w-full font-bold py-3.5 px-4 rounded-xl flex items-center justify-center space-x-2 shadow-sm transition-all text-sm ${
-                isSubmittingTerima || !terimaSellerId || !terimaSellerName || !terimaResi.trim()
+                !isSessionOpen || isSubmittingTerima || !terimaSellerId || !terimaSellerName || !terimaResi.trim()
                   ? "bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-200"
                   : "bg-red-600 hover:bg-red-700 text-white"
               }`}
@@ -1563,7 +1716,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                         </div>
                         <div className="text-[10px] text-slate-400 font-mono text-right">
                           <div>{r.TglDatang || r.TglTerima}</div>
-                          {r.DP && <div className="text-[9px]">{r.DP}</div>}
                         </div>
                       </div>
                     );
@@ -2193,14 +2345,14 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
           {/* Filter Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-            {/* Search Resi / Bagging / DP */}
+            {/* Search Resi / Bagging */}
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <input
                 type="text"
                 value={filterSearch}
                 onChange={(e) => setFilterSearch(e.target.value)}
-                placeholder="Cari resi / seller / LY bagging / DP..."
+                placeholder="Cari resi / seller / LY bagging..."
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
               />
             </div>
@@ -2389,12 +2541,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
                         <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
                           <span>Tgl Datang: <strong className="text-slate-700">{r.TglDatang || r.TglTerima}</strong></span>
-                          {r.DP && (
-                            <>
-                              <span>•</span>
-                              <span>DP: <strong className="text-slate-700">{r.DP}</strong></span>
-                            </>
-                          )}
                           <span>•</span>
                           <span>Kondisi: <strong className={r.Kondisi === RETUR_KONDISI.BAIK ? "text-emerald-600" : "text-red-600"}>{r.Kondisi}</strong></span>
                           <span>•</span>
@@ -2433,7 +2579,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               }
 
               return groupedReturs.map((grp) => {
-                const sample = grp.items[0];
                 const manifestCount = Math.max(...grp.items.map((x) => Number(x.JumlahManifest) || 0), 0);
                 const diff = grp.items.length - manifestCount;
                 return (
@@ -2441,11 +2586,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     <div className="bg-slate-100/90 px-3.5 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
                       <div className="flex items-center flex-wrap gap-2">
                         <span className="font-mono font-extrabold text-slate-900">{grp.key}</span>
-                        {groupBy === "BAGGING" && sample?.DP && (
-                          <span className="text-[10px] font-bold bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">
-                            DP: {sample.DP}
-                          </span>
-                        )}
                         <span className="text-[11px] font-bold text-slate-600">
                           ({grp.items.length} paket)
                         </span>

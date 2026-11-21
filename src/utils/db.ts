@@ -269,9 +269,11 @@ const HANDOVER_STORE_NAME = "retur_handovers";
 
 export type ReturSesi = {
   kodeBagging: string;
-  dp: string;
   tglDatang: string;
   jumlahManifest: number;
+  status: "OPEN" | "CLOSED";
+  startedAt?: string;
+  endedAt?: string;
 };
 
 const RETUR_SESI_KEY = "jt_retur_session";
@@ -284,18 +286,21 @@ export function parseReturSesiRaw(raw: string | null): ReturSesi | null {
   if (trimmed.startsWith("{")) {
     try {
       const parsed = JSON.parse(trimmed);
+      const status: "OPEN" | "CLOSED" = parsed?.status === "OPEN" ? "OPEN" : "CLOSED";
       return {
         kodeBagging: String(parsed?.kodeBagging || "").trim().toUpperCase(),
-        dp: String(parsed?.dp || "").trim().toUpperCase(),
         tglDatang: String(parsed?.tglDatang || "").trim(),
         jumlahManifest: Math.max(0, Number(parsed?.jumlahManifest) || 0),
+        status,
+        ...(parsed?.startedAt ? { startedAt: String(parsed.startedAt) } : {}),
+        ...(parsed?.endedAt ? { endedAt: String(parsed.endedAt) } : {}),
       };
     } catch {
       return null;
     }
   }
-  // ponytail: fallback baca key lama (string tanggal) tanpa migrasi paksa
-  return { kodeBagging: "", dp: "", tglDatang: trimmed, jumlahManifest: 0 };
+  // ponytail: fallback baca key lama (string tanggal) dengan default status CLOSED
+  return { kodeBagging: "", tglDatang: trimmed, jumlahManifest: 0, status: "CLOSED" };
 }
 
 export function getReturSesi(): ReturSesi | null {
@@ -315,9 +320,11 @@ export function setReturSesi(s: ReturSesi): void {
       RETUR_SESI_KEY,
       JSON.stringify({
         kodeBagging: (s.kodeBagging || "").trim().toUpperCase(),
-        dp: (s.dp || "").trim().toUpperCase(),
         tglDatang: (s.tglDatang || "").trim(),
         jumlahManifest: Math.max(0, Number(s.jumlahManifest) || 0),
+        status: s.status === "OPEN" ? "OPEN" : "CLOSED",
+        ...(s.startedAt ? { startedAt: s.startedAt } : {}),
+        ...(s.endedAt ? { endedAt: s.endedAt } : {}),
       })
     );
   } catch (_) {}
@@ -1805,7 +1812,6 @@ export class DatabaseService {
     sumber?: string;
     tglDatang?: string;
     kodeBagging?: string;
-    dp?: string;
     jumlahManifest?: number;
     kondisi: ReturKondisi;
     isiPaket?: string;
@@ -1851,7 +1857,6 @@ export class DatabaseService {
     const effectiveTglDatang = (params.tglDatang || "").trim() || tgl;
     const cleanIsiPaket = (params.isiPaket || "").trim().slice(0, 60);
     const cleanKodeBagging = (params.kodeBagging || "").trim().toUpperCase();
-    const cleanDp = (params.dp || "").trim().toUpperCase();
     const cleanJumlahManifest = params.jumlahManifest !== undefined ? Math.max(0, Number(params.jumlahManifest) || 0) : undefined;
 
     const newRetur: ReturRecord = {
@@ -1863,7 +1868,6 @@ export class DatabaseService {
       Sumber: (params.sumber || "").trim(),
       TglDatang: effectiveTglDatang,
       ...(cleanKodeBagging ? { KodeBagging: cleanKodeBagging } : {}),
-      ...(cleanDp ? { DP: cleanDp } : {}),
       ...(cleanJumlahManifest !== undefined ? { JumlahManifest: cleanJumlahManifest } : {}),
       TglTerima: tgl,
       JamTerima: jam,
@@ -2205,7 +2209,6 @@ export class DatabaseService {
         const resolvedTglDatang = sr.TglDatang || loc?.TglDatang || sr.TglTerima;
         const resolvedIsiPaket = (sr.IsiPaket !== undefined && sr.IsiPaket !== "") ? sr.IsiPaket : (loc?.IsiPaket || undefined);
         const resolvedKodeBagging = (sr.KodeBagging !== undefined && sr.KodeBagging !== "") ? sr.KodeBagging.trim().toUpperCase() : (loc?.KodeBagging || undefined);
-        const resolvedDP = (sr.DP !== undefined && sr.DP !== "") ? sr.DP.trim().toUpperCase() : (loc?.DP || undefined);
         const resolvedJumlahManifest =
           sr.JumlahManifest !== undefined && Number(sr.JumlahManifest) > 0
             ? Number(sr.JumlahManifest)
@@ -2216,7 +2219,6 @@ export class DatabaseService {
             TglDatang: resolvedTglDatang,
             IsiPaket: resolvedIsiPaket,
             ...(resolvedKodeBagging ? { KodeBagging: resolvedKodeBagging } : {}),
-            ...(resolvedDP ? { DP: resolvedDP } : {}),
             ...(resolvedJumlahManifest !== undefined ? { JumlahManifest: resolvedJumlahManifest } : {}),
             SyncStatus: "SYNCED"
           });
@@ -2236,7 +2238,6 @@ export class DatabaseService {
             TglDatang: resolvedTglDatang,
             IsiPaket: resolvedIsiPaket,
             ...(resolvedKodeBagging ? { KodeBagging: resolvedKodeBagging } : {}),
-            ...(resolvedDP ? { DP: resolvedDP } : {}),
             ...(resolvedJumlahManifest !== undefined ? { JumlahManifest: resolvedJumlahManifest } : {}),
             SyncStatus: "SYNCED"
           });
@@ -2275,6 +2276,27 @@ export class DatabaseService {
     } catch (e) {
       console.warn("pullReturs failed:", e);
       return false;
+    }
+  }
+
+  // ponytail: polling ringan tanpa websocket untuk rekonsiliasi karung lintas perangkat
+  public async fetchBaggingRemoteIds(kodeBagging: string): Promise<string[]> {
+    const cleanCode = (kodeBagging || "").trim().toUpperCase();
+    if (!cleanCode) return [];
+    const config = this.getCloudConfig();
+    if (!config.appsScriptUrl || config.appsScriptUrl.includes("Example_Apps_Script_Web_App") || config.appsScriptUrl.includes("AKfycbz_Example")) {
+      return [];
+    }
+    try {
+      const sep = config.appsScriptUrl.includes("?") ? "&" : "?";
+      const url = `${config.appsScriptUrl}${sep}action=get_retur_bagging&kodeBagging=${encodeURIComponent(cleanCode)}`;
+      const res = await fetch(url, { method: "GET", mode: "cors" });
+      if (!res.ok) return [];
+      const data = await res.json();
+      if (!data?.success || !Array.isArray(data.ids)) return [];
+      return data.ids.map((id: any) => String(id || "").trim()).filter(Boolean);
+    } catch {
+      return [];
     }
   }
 
