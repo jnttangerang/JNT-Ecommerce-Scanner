@@ -1516,27 +1516,27 @@ function handleGetRetur() {
 function handleGetReturBagging(kodeBaggingRaw) {
   const cleanCode = (kodeBaggingRaw || "").toString().trim().toUpperCase();
   if (!cleanCode) {
-    return jsonOut_({ success: true, kodeBagging: "", ids: [] });
+    return jsonOut_({ success: true, kodeBagging: "", resis: [] });
   }
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const returSheet = ss.getSheetByName("DATA_RETUR");
   if (!returSheet || returSheet.getLastRow() <= 1 || returSheet.getLastColumn() < 20) {
-    return jsonOut_({ success: true, kodeBagging: cleanCode, ids: [] });
+    return jsonOut_({ success: true, kodeBagging: cleanCode, resis: [] });
   }
   const lastRow = returSheet.getLastRow();
   const data = returSheet.getRange(2, 1, lastRow - 1, 20).getValues();
   const seen = {};
-  const ids = [];
+  const resis = [];
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     const deletedAt = row[16];
     if (deletedAt) continue;
     const kb = (row[19] || "").toString().trim().toUpperCase();
-    const id = (row[0] || "").toString().trim();
-    if (kb === cleanCode && id && !seen[id]) {
-      seen[id] = true;
-      ids.push(id);
+    const resi = (row[1] || "").toString().trim().toUpperCase();
+    if (kb === cleanCode && resi && !seen[resi]) {
+      seen[resi] = true;
+      resis.push(resi);
     }
   }
-  return jsonOut_({ success: true, kodeBagging: cleanCode, ids: ids });
+  return jsonOut_({ success: true, kodeBagging: cleanCode, resis: resis });
 }

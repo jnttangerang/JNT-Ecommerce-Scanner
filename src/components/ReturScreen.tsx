@@ -90,7 +90,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       ...(saved?.endedAt ? { endedAt: saved.endedAt } : {}),
     };
   });
-  const [remoteBaggingIds, setRemoteBaggingIds] = useState<string[]>([]);
+  const [remoteBaggingResis, setRemoteBaggingResis] = useState<string[]>([]);
   const isSessionOpen = sesi.status === "OPEN";
   const canStartSession = Boolean(sesi.kodeBagging.trim() && sesi.jumlahManifest > 0);
 
@@ -441,7 +441,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     };
     setSesi(next);
     setReturSesi(next);
-    setRemoteBaggingIds([]);
+    setRemoteBaggingResis([]);
     toast.info(`Sesi Bagging ${next.kodeBagging || "-"} DITUTUP. Menyinkronkan data...`);
     if (typeof navigator === "undefined" || navigator.onLine) {
       try {
@@ -756,20 +756,20 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     toast.success(`${manifestSelectedResis.length} resi dialihkan ke tab Serah Terima`);
   };
 
-  // Live cross-device reconciliation for active bagging session (Set union by ReturID)
+  // Live cross-device reconciliation for active bagging session (Set union by Resi)
   const activeBaggingCode = sesi.kodeBagging.trim().toUpperCase();
 
-  // ponytail: offline device's own scans appear on peers only after its sync flushes.
+  // ponytail: union by Resi (1 paket fisik = 1 AWB); scan offline muncul di perangkat lain setelah sync selesai.
   useEffect(() => {
     if (sesi.status !== "OPEN" || !activeBaggingCode) {
-      setRemoteBaggingIds([]);
+      setRemoteBaggingResis([]);
       return;
     }
     let cancelled = false;
     const poll = async () => {
       if (typeof navigator !== "undefined" && !navigator.onLine) return;
-      const ids = await dbService.fetchBaggingRemoteIds(activeBaggingCode);
-      if (!cancelled) setRemoteBaggingIds(ids);
+      const resis = await dbService.fetchBaggingRemoteIds(activeBaggingCode);
+      if (!cancelled) setRemoteBaggingResis(resis);
     };
     poll();
     const timer = window.setInterval(poll, 20000);
@@ -779,26 +779,27 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     };
   }, [sesi.status, activeBaggingCode]);
 
-  const localBaggingIds = React.useMemo(() => {
+  const localBaggingResis = React.useMemo(() => {
     if (!activeBaggingCode) return new Set<string>();
     return new Set(
       returs
         .filter((r) => !r.DeletedAt && (r.KodeBagging || "").trim().toUpperCase() === activeBaggingCode)
-        .map((r) => r.ReturID)
+        .map((r) => (r.Resi || "").trim().toUpperCase())
+        .filter(Boolean)
     );
   }, [returs, activeBaggingCode]);
 
   const remoteOnlyCount = React.useMemo(() => {
     const seen = new Set<string>();
-    for (const id of remoteBaggingIds) {
-      if (id && !localBaggingIds.has(id)) seen.add(id);
+    for (const resi of remoteBaggingResis) {
+      if (resi && !localBaggingResis.has(resi)) seen.add(resi);
     }
     return seen.size;
-  }, [remoteBaggingIds, localBaggingIds]);
+  }, [remoteBaggingResis, localBaggingResis]);
 
   const totalScannedBagging = React.useMemo(() => {
-    return new Set<string>([...localBaggingIds, ...remoteBaggingIds]).size;
-  }, [localBaggingIds, remoteBaggingIds]);
+    return new Set<string>([...localBaggingResis, ...remoteBaggingResis]).size;
+  }, [localBaggingResis, remoteBaggingResis]);
 
   const selisihBagging = totalScannedBagging - (sesi.jumlahManifest || 0);
 
@@ -1141,7 +1142,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                       : "sesuai"}
                   </span>
                   <span className="text-[11px] font-normal">
-                    (lokal {localBaggingIds.size} + perangkat lain {remoteOnlyCount})
+                    (lokal {localBaggingResis.size} + perangkat lain {remoteOnlyCount})
                   </span>
                 </div>
               ) : (

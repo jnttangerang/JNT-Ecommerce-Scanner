@@ -2293,8 +2293,8 @@ export class DatabaseService {
       const res = await fetch(url, { method: "GET", mode: "cors" });
       if (!res.ok) return [];
       const data = await res.json();
-      if (!data?.success || !Array.isArray(data.ids)) return [];
-      return data.ids.map((id: any) => String(id || "").trim()).filter(Boolean);
+      if (!data?.success || !Array.isArray(data.resis)) return [];
+      return data.resis.map((r: any) => String(r || "").trim().toUpperCase()).filter(Boolean);
     } catch {
       return [];
     }
