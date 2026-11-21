@@ -89,6 +89,9 @@ export interface ReturRecord {
   Outlet: string;
   Sumber: string;
   TglDatang: string; // Sesi kedatangan paket (YYYY-MM-DD)
+  KodeBagging?: string; // Kode karung/bagging (mis. LY000042553913)
+  DP?: string; // Drop Point asal (mis. CANGKUDU/DPS999)
+  JumlahManifest?: number; // Jumlah paket menurut manifest kertas karung
   TglTerima: string;
   JamTerima: string;
   AdminTerima: string;

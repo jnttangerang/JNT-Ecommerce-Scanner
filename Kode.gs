@@ -1004,11 +1004,12 @@ function handleSyncMasters(sellers, operators, outlets) {
 // FITUR PAKET RETUR (TASK_11)
 // ==========================================
 
+// ponytail: append kolom 20-22 pada RETUR_HEADERS agar ensureReturColumns_ otomatis migrasi non-destruktif
 const RETUR_HEADERS = [
   "ReturID", "Resi", "SellerID", "Seller", "Outlet", "Sumber",
   "TglTerima", "JamTerima", "AdminTerima", "Kondisi", "FotoTerimaURL",
   "Status", "HandoverID", "Catatan", "CreatedAt", "UpdatedAt", "DeletedAt",
-  "TglDatang", "IsiPaket"
+  "TglDatang", "IsiPaket", "KodeBagging", "DP", "JumlahManifest"
 ];
 
 const HANDOVER_HEADERS = [
@@ -1148,6 +1149,9 @@ function handleSaveReturBatch(records) {
         }
 
         const cleanIsiPaket = (r.IsiPaket || "").toString().trim().slice(0, 60);
+        const cleanKodeBagging = (r.KodeBagging || "").toString().trim().toUpperCase();
+        const cleanDp = (r.DP || "").toString().trim().toUpperCase();
+        const cleanJumlahManifest = Math.max(0, Number(r.JumlahManifest) || 0);
 
         const row = [
           cleanReturId,
@@ -1168,7 +1172,10 @@ function handleSaveReturBatch(records) {
           r.UpdatedAt || nowIso,
           "", // DeletedAt
           r.TglDatang || r.TglTerima || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd"),
-          cleanIsiPaket
+          cleanIsiPaket,
+          cleanKodeBagging,
+          cleanDp,
+          cleanJumlahManifest
         ];
 
         appends.push(row);
@@ -1201,7 +1208,7 @@ function handleSaveReturBatch(records) {
       sheet.getRange(startRow, 7, count, 2).setNumberFormat("@");
       sheet.getRange(startRow, 14, count, 1).setNumberFormat("@");
       sheet.getRange(startRow, 15, count, 3).setNumberFormat("@");
-      sheet.getRange(startRow, 18, count, 2).setNumberFormat("@");
+      sheet.getRange(startRow, 18, count, 4).setNumberFormat("@");
 
       sheet.getRange(startRow, 1, count, RETUR_HEADERS.length).setValues(appends);
       // Pindahkan writeAuditRetur_ ke SETELAH setValues berhasil
@@ -1426,6 +1433,9 @@ function handleGetRetur() {
         let jamStr = (row.length > 7 && row[7] instanceof Date) ? Utilities.formatDate(row[7], "GMT+7", "HH:mm:ss") : ((row.length > 7 && row[7]) ? row[7].toString() : "");
         let tglDatangStr = (row.length > 17 && row[17] instanceof Date) ? Utilities.formatDate(row[17], "GMT+7", "yyyy-MM-dd") : ((row.length > 17 && row[17]) ? row[17].toString() : tglStr);
         let isiPaketStr = (row.length > 18 && row[18]) ? row[18].toString() : "";
+        let kodeBaggingStr = (row.length > 19 && row[19]) ? row[19].toString().trim().toUpperCase() : "";
+        let dpStr = (row.length > 20 && row[20]) ? row[20].toString().trim().toUpperCase() : "";
+        let jumlahManifestNum = (row.length > 21 && row[21] !== "" && row[21] !== null && row[21] !== undefined) ? (Number(row[21]) || 0) : 0;
 
         returs.push({
           ReturID: (row.length > 0 && row[0]) ? row[0].toString() : "",
@@ -1435,6 +1445,9 @@ function handleGetRetur() {
           Outlet: (row.length > 4 && row[4]) ? row[4].toString() : "",
           Sumber: (row.length > 5 && row[5]) ? row[5].toString() : "",
           TglDatang: tglDatangStr,
+          KodeBagging: kodeBaggingStr,
+          DP: dpStr,
+          JumlahManifest: jumlahManifestNum,
           TglTerima: tglStr,
           JamTerima: jamStr,
           AdminTerima: (row.length > 8 && row[8]) ? row[8].toString() : "",

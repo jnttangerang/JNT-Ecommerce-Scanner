@@ -1,0 +1,48 @@
+db.ts
+// ponytail: tambah index saja, tidak ubah keyPath → data lama aman, tanpa migrasi record.
+const DB_VERSION = 3;
+// di onupgradeneeded:
+if (oldVersion < 3) {
+  const s = db.transaction.objectStore('retur_records');
+  s.createIndex('KodeBagging', 'KodeBagging', { unique: false });
+  s.createIndex('TglDatang',    'TglDatang',    { unique: false });
+}
+
+// Sesi per-karung (menggantikan sesi tanggal saja). Fallback baca key lama.
+export type ReturSesi = { kodeBagging: string; dp: string; tglDatang: string; jumlahManifest: number };
+const SESI_KEY = 'jt_retur_session';
+export function getSesi(): ReturSesi | null {
+  const raw = localStorage.getItem(SESI_KEY) ?? localStorage.getItem('jt_retur_session_tgldatang');
+  if (!raw) return null;
+  try { return JSON.parse(raw); }                 // format baru (objek)
+  catch { return { kodeBagging:'', dp:'', tglDatang: raw, jumlahManifest: 0 }; } // key lama = string tanggal
+}
+export const setSesi = (s: ReturSesi) => localStorage.setItem(SESI_KEY, JSON.stringify(s));
+
+
+=====================================================================================================
+ReturScreen.tsx
+// saat simpan record scan masuk, ambil dari sesi aktif:
+const rec = {
+  ...existingRecord,
+  TglDatang:  sesi.tglDatang,
+  KodeBagging: sesi.kodeBagging,   // ← kunci merge multi-operator
+  DP:          sesi.dp,
+  JumlahManifest: sesi.jumlahManifest,
+};
+
+// badge rekonsiliasi (hitung dari store, bukan dari manifest → tahan karung > manifest):
+const scanned = returRecords.filter(r => r.KodeBagging === sesi.kodeBagging).length;
+const selisih = scanned - sesi.jumlahManifest;
+// tampilkan: selisih > 0 ? `+${selisih} di luar manifest` : selisih < 0 ? `${Math.abs(selisih)} belum discan` : 'sesuai manifest';
+
+// daftar retur: ganti filter/sort → pakai index baru
+//   group by KodeBagging (per karung) ATAU by TglDatang (per tanggal) ATAU by SellerID (per seller)
+
+
+
+=====================================================================================================
+Kode.gs
+// tambah kolom 20,21,22 (reuse fungsi migrasi existing, jangan bikin baru)
+const extra = ['KodeBagging', 'DP', 'JumlahManifest'];
+// loop append header jika sheet lama < 22 kolom → backward compat, tanpa input ulang.

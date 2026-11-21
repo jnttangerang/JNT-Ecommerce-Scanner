@@ -41,7 +41,7 @@ import {
   RETUR_METODE,
   Seller
 } from "../types";
-import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
+import { dbService, getDirectDriveImageUrl, getTodayLocalDateString, ReturSesi, getReturSesi, setReturSesi } from "../utils/db";
 import { SellerService } from "../utils/sellerService";
 import { Html5Qrcode } from "html5-qrcode";
 import { toast } from "sonner";
@@ -75,15 +75,27 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
 
   // ==========================================
-  // TAB 1: FORM TERIMA (DENGAN SESI & AUTOFILL)
+  // TAB 1: FORM TERIMA (SESI PER BAGGING + AUTOFILL)
   // ==========================================
-  const [sessionTglDatang, setSessionTglDatang] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem("jt_retur_session_tgldatang");
-      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) return saved;
-    } catch (_) {}
-    return getTodayLocalDateString();
+  const [sesi, setSesi] = useState<ReturSesi>(() => {
+    const saved = getReturSesi();
+    return {
+      kodeBagging: saved?.kodeBagging || "",
+      dp: saved?.dp || "",
+      tglDatang: saved?.tglDatang && /^\d{4}-\d{2}-\d{2}$/.test(saved.tglDatang)
+        ? saved.tglDatang
+        : getTodayLocalDateString(),
+      jumlahManifest: saved?.jumlahManifest || 0,
+    };
   });
+
+  const updateSesi = (patch: Partial<ReturSesi>) => {
+    setSesi((prev) => {
+      const next: ReturSesi = { ...prev, ...patch };
+      setReturSesi(next);
+      return next;
+    });
+  };
 
   // Master operator list for Terima Retur
   const operatorsList = React.useMemo(() => {
@@ -111,7 +123,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   const [terimaIsiPaket, setTerimaIsiPaket] = useState("");
   const [terimaCatatan, setTerimaCatatan] = useState("");
   const [terimaPhoto, setTerimaPhoto] = useState<string>("");
-  const [isTerimaScannerOpen, setIsTerimaScannerOpen] = useState(false);
+  const [scannerTarget, setScannerTarget] = useState<"RESI" | "BAGGING" | null>(null);
   const [isSubmittingTerima, setIsSubmittingTerima] = useState(false);
 
   // Autofill & Manual Seller Input State
@@ -128,6 +140,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   // ==========================================
   const [serahSellerId, setSerahSellerId] = useState("");
   const [serahSellerName, setSerahSellerName] = useState("");
+  const [serahDateFrom, setSerahDateFrom] = useState("");
+  const [serahDateTo, setSerahDateTo] = useState("");
   const [serahSelectedResis, setSerahSelectedResis] = useState<string[]>([]);
   const [serahMetode, setSerahMetode] = useState<ReturMetode>(RETUR_METODE.AMBIL_DI_OUTLET);
   const [serahNamaPenerima, setSerahNamaPenerima] = useState("");
@@ -141,6 +155,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   // ==========================================
   const [manifestSellerId, setManifestSellerId] = useState("");
   const [manifestSellerName, setManifestSellerName] = useState("");
+  const [manifestDateFrom, setManifestDateFrom] = useState("");
+  const [manifestDateTo, setManifestDateTo] = useState("");
   const [manifestSelectedResis, setManifestSelectedResis] = useState<string[]>([]);
   const [manifestTglPenyerahan, setManifestTglPenyerahan] = useState<string>(() => getTodayLocalDateString());
   const [manifestOutlet, setManifestOutlet] = useState<string>(currentOutlet || "Pasir Jaha Balaraja");
@@ -149,11 +165,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   });
 
   // ==========================================
-  // TAB 4: DAFTAR FILTERS
+  // TAB 4: DAFTAR FILTERS & GROUPING
   // ==========================================
   const [filterSearch, setFilterSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<"ALL" | "DITERIMA" | "DISERAHKAN">("ALL");
   const [filterSeller, setFilterSeller] = useState("ALL");
+  const [filterBagging, setFilterBagging] = useState("ALL");
+  const [groupBy, setGroupBy] = useState<"NONE" | "BAGGING" | "TGL_DATANG" | "SELLER">("NONE");
 
   // Camera scanner ref
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -190,7 +208,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   }, [activeTab]);
 
   // Helper lookup resi dari pickup record (memory cache dulu, fallback IndexedDB, tanpa network)
-  const lookupSellerForResi = async (cleanResi: string) => {
+  // ponytail: autofill hanya jadi default saat seller belum dipilih manual (multi-seller bagging aman di-override)
+  const lookupSellerForResi = async (cleanResi: string, hasManualSelection = false) => {
     const clean = cleanResi.trim().toUpperCase();
     if (!clean) {
       setAutofillBadge(null);
@@ -199,6 +218,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     }
     const res = await dbService.findPickupRecordByResi(clean);
     if (res.found && res.record && res.record.Seller) {
+      if (hasManualSelection) return;
       const sName = res.record.Seller.trim();
       setAutofillBadge({ found: true, tanggal: res.record.Tanggal, seller: sName });
       setIsSellerAutoFilled(true);
@@ -216,8 +236,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         setManualSellerText(sName);
       }
       toast.info(`Seller terdeteksi otomatis: ${sName}`);
-    } else {
-      // A.2: Resi tidak ditemukan di data pickup: seller kosong, tampilkan hint "Resi tidak ditemukan di data pickup, pilih seller manual", dan tombol Simpan nonaktif sampai seller dipilih
+    } else if (!hasManualSelection) {
       setAutofillBadge(null);
       setPickupNotFoundHint(true);
       setTerimaSellerId("");
@@ -228,11 +247,12 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     }
   };
 
-  // A.1: Setiap nilai resi berubah (ketik/scan baru): reset seller yang terisi OTOMATIS
+  // A.1: Setiap nilai resi berubah (ketik/scan baru): reset seller yang terisi OTOMATIS; seller manual tetap dipertahankan
   const handleResiChange = (rawVal: string) => {
     const clean = rawVal.trim().toUpperCase();
     setTerimaResi(clean);
 
+    const hasManualSelection = Boolean(!isSellerAutoFilled && terimaSellerId);
     if (isSellerAutoFilled) {
       setTerimaSellerId("");
       setTerimaSellerName("");
@@ -244,56 +264,66 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     setPickupNotFoundHint(false);
 
     if (clean) {
-      lookupSellerForResi(clean);
+      lookupSellerForResi(clean, hasManualSelection);
     } else {
       setAutofillBadge(null);
       setPickupNotFoundHint(false);
     }
   };
 
-  // Handle starting barcode scanner in Terima tab
-  const toggleTerimaScanner = async () => {
-    if (isTerimaScannerOpen) {
-      if (scannerRef.current) {
-        try {
-          await scannerRef.current.stop();
-          scannerRef.current.clear();
-        } catch (_) {}
-        scannerRef.current = null;
-      }
-      setIsTerimaScannerOpen(false);
-    } else {
-      setIsTerimaScannerOpen(true);
-      setTimeout(async () => {
-        try {
-          const qr = new Html5Qrcode("retur-camera-reader");
-          scannerRef.current = qr;
-          await qr.start(
-            { facingMode: "environment" },
-            {
-              fps: 15,
-              qrbox: { width: 260, height: 160 }
-            },
-            (decodedText) => {
-              const cleaned = decodedText.trim().toUpperCase();
+  // Handle starting barcode scanner in Terima tab (untuk Resi atau Kode Bagging)
+  const stopActiveScanner = async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+      } catch (_) {}
+      scannerRef.current = null;
+    }
+    setScannerTarget(null);
+  };
+
+  const toggleScanner = async (target: "RESI" | "BAGGING") => {
+    if (scannerTarget === target) {
+      await stopActiveScanner();
+      return;
+    }
+    await stopActiveScanner();
+    setScannerTarget(target);
+    setTimeout(async () => {
+      try {
+        const readerId = target === "BAGGING" ? "retur-bagging-camera-reader" : "retur-camera-reader";
+        const qr = new Html5Qrcode(readerId);
+        scannerRef.current = qr;
+        await qr.start(
+          { facingMode: "environment" },
+          {
+            fps: 15,
+            qrbox: { width: 260, height: 160 }
+          },
+          (decodedText) => {
+            const cleaned = decodedText.trim().toUpperCase();
+            if (target === "BAGGING") {
+              updateSesi({ kodeBagging: cleaned });
+              toast.success("Kode Bagging terdeteksi: " + cleaned);
+            } else {
               handleResiChange(cleaned);
               toast.success("Resi terdeteksi: " + cleaned);
-              // Auto stop scanner after reading
-              try {
-                qr.stop().then(() => qr.clear()).catch(() => {});
-              } catch (_) {}
-              scannerRef.current = null;
-              setIsTerimaScannerOpen(false);
-            },
-            () => {}
-          );
-        } catch (err: any) {
-          console.warn("Camera start failed:", err);
-          toast.error("Gagal membuka kamera: " + (err?.message || "Izin ditolak"));
-          setIsTerimaScannerOpen(false);
-        }
-      }, 150);
-    }
+            }
+            try {
+              qr.stop().then(() => qr.clear()).catch(() => {});
+            } catch (_) {}
+            scannerRef.current = null;
+            setScannerTarget(null);
+          },
+          () => {}
+        );
+      } catch (err: any) {
+        console.warn("Camera start failed:", err);
+        toast.error("Gagal membuka kamera: " + (err?.message || "Izin ditolak"));
+        setScannerTarget(null);
+      }
+    }, 150);
   };
 
   // Compress image helper (max 640px, JPEG 70%)
@@ -396,7 +426,10 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         seller: terimaSellerName,
         outlet: currentOutlet || "Outlet Pusat",
         sumber: "",
-        tglDatang: sessionTglDatang,
+        tglDatang: sesi.tglDatang,
+        kodeBagging: sesi.kodeBagging,
+        dp: sesi.dp,
+        jumlahManifest: sesi.jumlahManifest,
         kondisi: terimaKondisi,
         isiPaket: terimaIsiPaket,
         fotoTerima: terimaPhoto,
@@ -406,9 +439,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
       if (result.success) {
         toast.success("Paket Retur Berhasil Diterima!", {
-          description: `Resi ${terimaResi.toUpperCase()} telah dicatat dengan status DITERIMA.`
+          description: `Resi ${terimaResi.toUpperCase()} dicatat di karung ${sesi.kodeBagging || "-"} (DITERIMA).`
         });
-        // Reset form (IsiPaket dikosongkan per resi, sessionTglDatang tetap utuh)
+        // Reset per-resi fields (sesi bagging tetap aktif)
         setTerimaResi("");
         setTerimaIsiPaket("");
         setTerimaCatatan("");
@@ -516,10 +549,16 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     }
   };
 
-  // Available returs for selected seller in Serah Terima
-  const availableRetursForSeller = returs.filter(
-    r => r.SellerID === serahSellerId && r.Status === RETUR_STATUS.DITERIMA && !r.DeletedAt
-  );
+  // Available returs for selected seller in Serah Terima (multi KodeBagging, opsional filter rentang tanggal)
+  const availableRetursForSeller = React.useMemo(() => {
+    return returs.filter((r) => {
+      if (r.SellerID !== serahSellerId || r.Status !== RETUR_STATUS.DITERIMA || r.DeletedAt) return false;
+      const tgl = r.TglDatang || r.TglTerima;
+      if (serahDateFrom && tgl < serahDateFrom) return false;
+      if (serahDateTo && tgl > serahDateTo) return false;
+      return true;
+    });
+  }, [returs, serahSellerId, serahDateFrom, serahDateTo]);
 
   // Quick toggle resi in Serah Terima
   const toggleResiSelection = (resi: string) => {
@@ -577,10 +616,14 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
   const manifestAvailableReturs = React.useMemo(() => {
     if (!manifestSellerId) return [];
-    return returs.filter(
-      r => r.SellerID === manifestSellerId && r.Status === RETUR_STATUS.DITERIMA && !r.DeletedAt
-    );
-  }, [manifestSellerId, returs]);
+    return returs.filter((r) => {
+      if (r.SellerID !== manifestSellerId || r.Status !== RETUR_STATUS.DITERIMA || r.DeletedAt) return false;
+      const tgl = r.TglDatang || r.TglTerima;
+      if (manifestDateFrom && tgl < manifestDateFrom) return false;
+      if (manifestDateTo && tgl > manifestDateTo) return false;
+      return true;
+    });
+  }, [manifestSellerId, manifestDateFrom, manifestDateTo, returs]);
 
   useEffect(() => {
     if (!manifestSellerId && sellersWithDiterima.length > 0) {
@@ -593,13 +636,12 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       const currentSellerObj = sellersWithDiterima.find(s => s.id === manifestSellerId);
       const sName = currentSellerObj?.name || manifestSellerId;
       setManifestSellerName(sName);
-      const items = returs.filter(r => r.SellerID === manifestSellerId && r.Status === RETUR_STATUS.DITERIMA && !r.DeletedAt);
-      setManifestSelectedResis(items.map(r => r.Resi));
+      setManifestSelectedResis(manifestAvailableReturs.map(r => r.Resi));
     } else {
       setManifestSellerName("");
       setManifestSelectedResis([]);
     }
-  }, [manifestSellerId, returs, sellersWithDiterima]);
+  }, [manifestSellerId, manifestAvailableReturs, sellersWithDiterima]);
 
   const formatIndoDate = (dateStr?: string) => {
     if (!dateStr) return "";
@@ -651,21 +693,66 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     toast.success(`${manifestSelectedResis.length} resi dialihkan ke tab Serah Terima`);
   };
 
+  // Live reconciliation for active bagging session (dihitung dari store lokal termasuk hasil pull operator lain)
+  const activeBaggingCode = sesi.kodeBagging.trim().toUpperCase();
+  const scannedInBagging = React.useMemo(() => {
+    if (!activeBaggingCode) return 0;
+    return returs.filter(
+      (r) => !r.DeletedAt && (r.KodeBagging || "").trim().toUpperCase() === activeBaggingCode
+    ).length;
+  }, [returs, activeBaggingCode]);
+  const selisihBagging = scannedInBagging - (sesi.jumlahManifest || 0);
+
+  // Distinct bagging codes for Daftar filter
+  const distinctBaggings = React.useMemo(() => {
+    const set = new Set<string>();
+    returs.forEach((r) => {
+      if (!r.DeletedAt && r.KodeBagging) {
+        set.add(r.KodeBagging.trim().toUpperCase());
+      }
+    });
+    return Array.from(set).sort();
+  }, [returs]);
+
   // Filtered returs for Tab 4 (Daftar)
   const filteredReturs = returs.filter(r => {
     if (r.DeletedAt) return false;
     if (filterStatus !== "ALL" && r.Status !== filterStatus) return false;
     if (filterSeller !== "ALL" && r.SellerID !== filterSeller && r.Seller !== filterSeller) return false;
+    if (filterBagging !== "ALL") {
+      const kb = (r.KodeBagging || "").trim().toUpperCase();
+      if (filterBagging === "__EMPTY__" ? kb !== "" : kb !== filterBagging) return false;
+    }
     if (filterSearch.trim()) {
       const q = filterSearch.trim().toUpperCase();
       const matchResi = r.Resi.toUpperCase().includes(q);
       const matchSeller = r.Seller.toUpperCase().includes(q);
       const matchAdmin = (r.AdminTerima || "").toUpperCase().includes(q);
       const matchHandover = (r.HandoverID || "").toUpperCase().includes(q);
-      if (!matchResi && !matchSeller && !matchAdmin && !matchHandover) return false;
+      const matchBagging = (r.KodeBagging || "").toUpperCase().includes(q);
+      const matchDp = (r.DP || "").toUpperCase().includes(q);
+      if (!matchResi && !matchSeller && !matchAdmin && !matchHandover && !matchBagging && !matchDp) return false;
     }
     return true;
   });
+
+  // Grouped returs by KodeBagging / TglDatang / Seller
+  const groupedReturs = React.useMemo(() => {
+    if (groupBy === "NONE") return null;
+    const map = new Map<string, ReturRecord[]>();
+    filteredReturs.forEach((r) => {
+      const key =
+        groupBy === "BAGGING"
+          ? (r.KodeBagging || "").trim().toUpperCase() || "TANPA KODE BAGGING"
+          : groupBy === "TGL_DATANG"
+          ? r.TglDatang || r.TglTerima || "-"
+          : r.Seller || r.SellerID || "-";
+      const list = map.get(key) || [];
+      list.push(r);
+      map.set(key, list);
+    });
+    return Array.from(map.entries()).map(([key, items]) => ({ key, items }));
+  }, [filteredReturs, groupBy]);
 
   return (
     <div className="w-full max-w-4xl mx-auto px-3 sm:px-4 py-4 space-y-5 overflow-x-hidden">
@@ -787,27 +874,90 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             </p>
           </div>
 
-          {/* Panel Sesi Kedatangan & Petugas Penerima */}
-          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-bold text-amber-900 flex items-center">
-                  <Calendar className="h-4 w-4 mr-1 text-amber-700" /> Sesi Kedatangan:
-                </span>
+          {/* Panel Sesi Bagging (Karung LY) & Petugas Penerima */}
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3.5 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+              {/* Kode Bagging (LY) + Tombol Scan */}
+              <div className="lg:col-span-2 space-y-1">
+                <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">
+                  Kode Bagging / Karung
+                </label>
+                <div className="flex space-x-1.5">
+                  <input
+                    type="text"
+                    value={sesi.kodeBagging}
+                    onChange={(e) => updateSesi({ kodeBagging: e.target.value.toUpperCase() })}
+                    placeholder="Contoh: LY000042553913"
+                    className="flex-1 bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 uppercase focus:outline-none focus:border-red-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleScanner("BAGGING")}
+                    className={`px-2.5 py-1.5 rounded-lg border flex items-center text-xs font-bold transition-all ${
+                      scannerTarget === "BAGGING"
+                        ? "bg-red-600 text-white border-red-700"
+                        : "bg-white hover:bg-amber-100 text-amber-900 border-amber-300"
+                    }`}
+                    title="Scan barcode Kode Bagging (LY)"
+                  >
+                    <Camera className="h-3.5 w-3.5 mr-1" />
+                    <span>{scannerTarget === "BAGGING" ? "Tutup" : "Scan"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* DP Asal */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">
+                  DP Asal
+                </label>
                 <input
-                  type="date"
-                  value={sessionTglDatang}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setSessionTglDatang(val);
-                    try {
-                      localStorage.setItem("jt_retur_session_tgldatang", val);
-                    } catch (_) {}
-                  }}
-                  className="bg-white border border-amber-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                  type="text"
+                  value={sesi.dp}
+                  onChange={(e) => updateSesi({ dp: e.target.value.toUpperCase() })}
+                  placeholder="CANGKUDU/DPS999"
+                  className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 uppercase focus:outline-none focus:border-red-600"
                 />
               </div>
 
+              {/* Tgl Datang */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider flex items-center">
+                  <Calendar className="h-3.5 w-3.5 mr-1 text-amber-700" /> Tgl Datang
+                </label>
+                <input
+                  type="date"
+                  value={sesi.tglDatang}
+                  onChange={(e) => updateSesi({ tglDatang: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                />
+              </div>
+
+              {/* Jumlah Manifest */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">
+                  Jml Manifest
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={sesi.jumlahManifest}
+                  onChange={(e) => updateSesi({ jumlahManifest: Math.max(0, Number(e.target.value) || 0) })}
+                  className="w-full bg-white border border-amber-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-red-600"
+                />
+              </div>
+            </div>
+
+            {scannerTarget === "BAGGING" && (
+              <div className="border-2 border-red-400 rounded-2xl p-2 bg-black overflow-hidden">
+                <div id="retur-bagging-camera-reader" className="w-full h-48 rounded-xl overflow-hidden bg-black" />
+                <p className="text-center text-[10px] text-zinc-300 mt-1 font-medium">
+                  Arahkan kamera ke barcode Kode Bagging (awalan LY).
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-amber-200/70">
               <div className="flex items-center space-x-2">
                 <span className="text-xs font-bold text-amber-900 flex items-center">
                   <User className="h-4 w-4 mr-1 text-amber-700" /> Petugas Penerima:
@@ -830,11 +980,36 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   )}
                 </select>
               </div>
-            </div>
 
-            <span className="text-[11px] text-amber-800/80 italic">
-              * Tanggal &amp; nama petugas dicatat per sesi retur masuk.
-            </span>
+              {/* Live Badge Rekonsiliasi Karung vs Manifest */}
+              {activeBaggingCode ? (
+                <div
+                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg border text-xs font-bold ${
+                    selisihBagging > 0
+                      ? "bg-blue-50 text-blue-800 border-blue-200"
+                      : selisihBagging < 0
+                      ? "bg-amber-100 text-amber-900 border-amber-300"
+                      : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  }`}
+                >
+                  <span className="font-mono">
+                    {scannedInBagging} / {sesi.jumlahManifest} discan
+                  </span>
+                  <span>•</span>
+                  <span>
+                    {selisihBagging > 0
+                      ? `+${selisihBagging} di luar manifest`
+                      : selisihBagging < 0
+                      ? `${selisihBagging} belum discan`
+                      : "sesuai"}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-[11px] text-amber-800/80 italic">
+                  * Isi Kode Bagging (LY) untuk pantau rekonsiliasi jumlah manifest secara live.
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -849,28 +1024,28 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   value={terimaResi}
                   onChange={(e) => handleResiChange(e.target.value)}
                   onBlur={() => {
-                    if (terimaResi && !terimaSellerId) lookupSellerForResi(terimaResi);
+                    if (terimaResi && !terimaSellerId) lookupSellerForResi(terimaResi, false);
                   }}
                   placeholder="Scan atau ketik nomor resi..."
                   className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
                 />
                 <button
                   type="button"
-                  onClick={toggleTerimaScanner}
+                  onClick={() => toggleScanner("RESI")}
                   className={`px-3 py-2.5 rounded-xl border flex items-center justify-center text-xs font-bold transition-all ${
-                    isTerimaScannerOpen
+                    scannerTarget === "RESI"
                       ? "bg-red-50 text-red-600 border-red-200"
                       : "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
                   }`}
                   title="Scan pakai kamera"
                 >
                   <Camera className="h-4 w-4 mr-1" />
-                  <span>{isTerimaScannerOpen ? "Tutup" : "Scan"}</span>
+                  <span>{scannerTarget === "RESI" ? "Tutup" : "Scan"}</span>
                 </button>
               </div>
 
               {/* In-page Camera Reader Container */}
-              {isTerimaScannerOpen && (
+              {scannerTarget === "RESI" && (
                 <div className="mt-2 border-2 border-red-400 rounded-2xl p-2 bg-black overflow-hidden relative">
                   <div id="retur-camera-reader" className="w-full h-56 rounded-xl overflow-hidden bg-black" />
                   <p className="text-center text-[10px] text-zinc-400 mt-1 font-medium">
@@ -1288,6 +1463,39 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 )}
               </div>
 
+              {/* Filter Rentang Tanggal Kedatangan */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Dari Tgl Datang</label>
+                  <input
+                    type="date"
+                    value={serahDateFrom}
+                    onChange={(e) => setSerahDateFrom(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">Sampai Tgl Datang</label>
+                  <input
+                    type="date"
+                    value={serahDateTo}
+                    onChange={(e) => setSerahDateTo(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                {(serahDateFrom || serahDateTo) && (
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={() => { setSerahDateFrom(""); setSerahDateTo(""); }}
+                      className="text-xs font-bold text-red-600 hover:underline py-1.5"
+                    >
+                      Reset Tanggal
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Quick Scan to Check Resi */}
               <div className="pt-2">
                 <div className="flex space-x-2">
@@ -1334,7 +1542,14 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                             <Square className="h-4 w-4 text-slate-400 flex-shrink-0" />
                           )}
                           <div>
-                            <span className="font-mono font-bold text-xs">{r.Resi}</span>
+                            <div className="flex items-center flex-wrap gap-1.5">
+                              <span className="font-mono font-bold text-xs">{r.Resi}</span>
+                              {r.KodeBagging && (
+                                <span className="text-[9px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded">
+                                  {r.KodeBagging}
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[10px] text-slate-500 flex items-center space-x-2">
                               <span>Kondisi: {r.Kondisi}</span>
                               {r.IsiPaket && (
@@ -1346,8 +1561,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                             </div>
                           </div>
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          {r.TglTerima}
+                        <div className="text-[10px] text-slate-400 font-mono text-right">
+                          <div>{r.TglDatang || r.TglTerima}</div>
+                          {r.DP && <div className="text-[9px]">{r.DP}</div>}
                         </div>
                       </div>
                     );
@@ -1608,6 +1824,39 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               </div>
             </div>
 
+            {/* Filter Rentang Tanggal untuk Manifest Multi-Bagging */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Dari Tgl Datang</label>
+                <input
+                  type="date"
+                  value={manifestDateFrom}
+                  onChange={(e) => setManifestDateFrom(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Sampai Tgl Datang</label>
+                <input
+                  type="date"
+                  value={manifestDateTo}
+                  onChange={(e) => setManifestDateTo(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-800"
+                />
+              </div>
+              {(manifestDateFrom || manifestDateTo) && (
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => { setManifestDateFrom(""); setManifestDateTo(""); }}
+                    className="text-xs font-bold text-red-600 hover:underline py-1.5"
+                  >
+                    Reset Filter Tanggal
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Resi Selection Checklist */}
             {manifestAvailableReturs.length > 0 && (
               <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/60 space-y-2">
@@ -1639,6 +1888,11 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                       >
                         {checked ? <CheckSquare className="h-3.5 w-3.5 text-red-600" /> : <Square className="h-3.5 w-3.5 text-slate-400" />}
                         <span>{r.Resi}</span>
+                        {r.KodeBagging && (
+                          <span className="text-[9px] px-1 py-0.2 bg-slate-100 text-slate-600 rounded border border-slate-200">
+                            {r.KodeBagging}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -1675,14 +1929,15 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
               </div>
             </div>
 
-            {/* Tabel 4 kolom: No. | Resi | Isi Paket | Ceklist */}
+            {/* Tabel 5 kolom: No. | Resi | KodeBagging | Isi Paket | Ceklist */}
             <table className="manifest-table w-full border-collapse border border-black text-xs text-black">
               <thead>
                 <tr className="bg-slate-100 font-bold border-b border-black">
-                  <th className="border border-black px-2 py-1.5 text-center w-12 font-bold">No.</th>
-                  <th className="border border-black px-2 py-1.5 text-left w-52 font-bold">Resi</th>
+                  <th className="border border-black px-2 py-1.5 text-center w-10 font-bold">No.</th>
+                  <th className="border border-black px-2 py-1.5 text-left w-40 font-bold">Resi</th>
+                  <th className="border border-black px-2 py-1.5 text-left w-36 font-bold">KodeBagging</th>
                   <th className="border border-black px-2 py-1.5 text-left font-bold">Isi Paket</th>
-                  <th className="border border-black px-2 py-1.5 text-center w-20 font-bold">Ceklist</th>
+                  <th className="border border-black px-2 py-1.5 text-center w-16 font-bold">Ceklist</th>
                 </tr>
               </thead>
               <tbody>
@@ -1690,6 +1945,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   <tr key={r.ReturID} className="border-b border-black">
                     <td className="border border-black px-2 py-1.5 text-center font-mono">{idx + 1}</td>
                     <td className="border border-black px-2 py-1.5 font-mono font-bold">{r.Resi}</td>
+                    <td className="border border-black px-2 py-1.5 font-mono text-[11px]">{r.KodeBagging || "-"}</td>
                     <td className="border border-black px-2 py-1.5">{r.IsiPaket || ""}</td>
                     <td className="border border-black px-2 py-1.5 text-center">
                       <span className="inline-block w-3.5 h-3.5 border border-black"></span>
@@ -1703,6 +1959,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   return (
                     <tr key={`preview-blank-row-${bIdx}`} className="border-b border-black">
                       <td className="border border-black px-2 py-1.5 text-center font-mono">{rowNum}</td>
+                      <td className="border border-black px-2 py-1.5">&nbsp;</td>
                       <td className="border border-black px-2 py-1.5">&nbsp;</td>
                       <td className="border border-black px-2 py-1.5">&nbsp;</td>
                       <td className="border border-black px-2 py-1.5 text-center">
@@ -1776,14 +2033,15 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 </div>
               </div>
 
-              {/* Tabel 4 kolom: No. | Resi | Isi Paket | Ceklist */}
+              {/* Tabel 5 kolom: No. | Resi | KodeBagging | Isi Paket | Ceklist */}
               <table className="manifest-table w-full border-collapse border border-black text-xs text-black">
                 <thead>
                   <tr className="bg-transparent font-bold border-b border-black">
-                    <th className="border border-black px-2 py-1.5 text-center w-12 font-bold">No.</th>
-                    <th className="border border-black px-2 py-1.5 text-left w-52 font-bold">Resi</th>
+                    <th className="border border-black px-2 py-1.5 text-center w-10 font-bold">No.</th>
+                    <th className="border border-black px-2 py-1.5 text-left w-40 font-bold">Resi</th>
+                    <th className="border border-black px-2 py-1.5 text-left w-36 font-bold">KodeBagging</th>
                     <th className="border border-black px-2 py-1.5 text-left font-bold">Isi Paket</th>
-                    <th className="border border-black px-2 py-1.5 text-center w-20 font-bold">Ceklist</th>
+                    <th className="border border-black px-2 py-1.5 text-center w-16 font-bold">Ceklist</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1791,6 +2049,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     <tr key={r.ReturID} className="border-b border-black">
                       <td className="border border-black px-2 py-1.5 text-center font-mono">{idx + 1}</td>
                       <td className="border border-black px-2 py-1.5 font-mono font-bold">{r.Resi}</td>
+                      <td className="border border-black px-2 py-1.5 font-mono text-[11px]">{r.KodeBagging || "-"}</td>
                       <td className="border border-black px-2 py-1.5">{r.IsiPaket || ""}</td>
                       <td className="border border-black px-2 py-1.5 text-center">
                         <span className="inline-block w-3.5 h-3.5 border border-black"></span>
@@ -1804,6 +2063,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     return (
                       <tr key={`print-blank-row-${bIdx}`} className="border-b border-black">
                         <td className="border border-black px-2 py-1.5 text-center font-mono">{rowNum}</td>
+                        <td className="border border-black px-2 py-1.5">&nbsp;</td>
                         <td className="border border-black px-2 py-1.5">&nbsp;</td>
                         <td className="border border-black px-2 py-1.5">&nbsp;</td>
                         <td className="border border-black px-2 py-1.5 text-center">
@@ -1932,17 +2192,34 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
           </div>
 
           {/* Filter Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            {/* Search Resi */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {/* Search Resi / Bagging / DP */}
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <input
                 type="text"
                 value={filterSearch}
                 onChange={(e) => setFilterSearch(e.target.value)}
-                placeholder="Cari resi / seller / sumber..."
+                placeholder="Cari resi / seller / LY bagging / DP..."
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
               />
+            </div>
+
+            {/* Filter Kode Bagging */}
+            <div>
+              <select
+                value={filterBagging}
+                onChange={(e) => setFilterBagging(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-red-600 focus:bg-white"
+              >
+                <option value="ALL">Semua Bagging</option>
+                {distinctBaggings.map((kb) => (
+                  <option key={`flt-bag-${kb}`} value={kb}>
+                    {kb}
+                  </option>
+                ))}
+                <option value="__EMPTY__">Tanpa Kode Bagging</option>
+              </select>
             </div>
 
             {/* Filter Status */}
@@ -1975,6 +2252,30 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             </div>
           </div>
 
+          {/* Grouping Mode Switcher */}
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="font-bold text-slate-500 mr-1">Kelompokkan:</span>
+            {[
+              { id: "NONE", label: "Semua" },
+              { id: "BAGGING", label: "Per KodeBagging" },
+              { id: "TGL_DATANG", label: "Per TglDatang" },
+              { id: "SELLER", label: "Per Seller" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setGroupBy(opt.id as any)}
+                className={`px-2.5 py-1 rounded-lg border font-bold transition-all ${
+                  groupBy === opt.id
+                    ? "bg-slate-900 text-white border-slate-900"
+                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
           {/* Banner jika ada paket retur gagal sync / duplikat */}
           {returs.some(r => r.SyncStatus === "FAILED") && !isReadOnly && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-red-800">
@@ -2000,14 +2301,14 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             </div>
           )}
 
-          {/* List Items Card View */}
-          <div className="space-y-2.5 max-h-[600px] overflow-y-auto">
+          {/* List Items Card View (Flat or Grouped) */}
+          <div className="space-y-3 max-h-[600px] overflow-y-auto">
             {filteredReturs.length === 0 ? (
               <div className="py-12 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-2xl">
                 Tidak ada paket retur yang sesuai filter.
               </div>
-            ) : (
-              filteredReturs.map((r) => {
+            ) : (() => {
+              const renderReturCard = (r: ReturRecord) => {
                 const isDiserahkan = r.Status === RETUR_STATUS.DISERAHKAN;
                 return (
                   <div
@@ -2015,7 +2316,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:border-slate-300 transition-all"
                   >
                     <div className="flex items-start space-x-3">
-                      {/* Thumbnail Photo with Click-to-preview */}
                       {r.FotoTerimaURL ? (
                         <div
                           onClick={() => setPreviewPhoto({ url: getDirectDriveImageUrl(r.FotoTerimaURL), title: `Foto Resi ${r.Resi}` })}
@@ -2050,6 +2350,11 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                           >
                             {r.Status}
                           </span>
+                          {r.KodeBagging && (
+                            <span className="text-[9px] font-mono font-bold bg-slate-200/80 text-slate-800 px-1.5 py-0.5 rounded">
+                              {r.KodeBagging}
+                            </span>
+                          )}
                           {r.SyncStatus === "PENDING" && (
                             <span className="text-[9px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-bold">
                               PENDING SYNC
@@ -2083,7 +2388,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                         </div>
 
                         <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
-                          <span>Sesi Kedatangan: <strong className="text-slate-700">{r.TglDatang || r.TglTerima}</strong></span>
+                          <span>Tgl Datang: <strong className="text-slate-700">{r.TglDatang || r.TglTerima}</strong></span>
+                          {r.DP && (
+                            <>
+                              <span>•</span>
+                              <span>DP: <strong className="text-slate-700">{r.DP}</strong></span>
+                            </>
+                          )}
                           <span>•</span>
                           <span>Kondisi: <strong className={r.Kondisi === RETUR_KONDISI.BAIK ? "text-emerald-600" : "text-red-600"}>{r.Kondisi}</strong></span>
                           <span>•</span>
@@ -2104,7 +2415,6 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                       </div>
                     </div>
 
-                    {/* Timeline & Metadata */}
                     <div className="text-left sm:text-right text-[11px] text-slate-500 font-mono space-y-0.5 flex-shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200">
                       <div>Terima: {r.TglTerima} {r.JamTerima}</div>
                       <div className="text-slate-600 font-medium">Petugas: {r.AdminTerima || "-"}</div>
@@ -2116,8 +2426,50 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                     </div>
                   </div>
                 );
-              })
-            )}
+              };
+
+              if (!groupedReturs) {
+                return filteredReturs.map(renderReturCard);
+              }
+
+              return groupedReturs.map((grp) => {
+                const sample = grp.items[0];
+                const manifestCount = Math.max(...grp.items.map((x) => Number(x.JumlahManifest) || 0), 0);
+                const diff = grp.items.length - manifestCount;
+                return (
+                  <div key={`grp-${grp.key}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                    <div className="bg-slate-100/90 px-3.5 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center flex-wrap gap-2">
+                        <span className="font-mono font-extrabold text-slate-900">{grp.key}</span>
+                        {groupBy === "BAGGING" && sample?.DP && (
+                          <span className="text-[10px] font-bold bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded">
+                            DP: {sample.DP}
+                          </span>
+                        )}
+                        <span className="text-[11px] font-bold text-slate-600">
+                          ({grp.items.length} paket)
+                        </span>
+                      </div>
+                      {groupBy === "BAGGING" && grp.key !== "TANPA KODE BAGGING" && manifestCount > 0 && (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            diff > 0
+                              ? "bg-blue-50 text-blue-800 border-blue-200"
+                              : diff < 0
+                              ? "bg-amber-100 text-amber-900 border-amber-300"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          }`}
+                        >
+                          Manifest {manifestCount} •{" "}
+                          {diff > 0 ? `+${diff} di luar manifest` : diff < 0 ? `${diff} belum discan` : "sesuai"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="p-2.5 space-y-2">{grp.items.map(renderReturCard)}</div>
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
       )}

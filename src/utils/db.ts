@@ -258,13 +258,70 @@ export function getDirectDriveImageUrl(url: string | undefined): string {
 // ==========================================
 // IndexedDB setup & Helper Functions
 // ==========================================
-// IndexedDB setup & Helper Functions (v2: added retur_records & retur_handovers)
+// IndexedDB setup & Helper Functions (v3: added KodeBagging & TglDatang indexes)
 // ==========================================
 const IDB_NAME = "JnTScannerDB";
-const IDB_VERSION = 2;
+// ponytail: tambah index saja, tidak ubah keyPath → data lama aman, tanpa migrasi record.
+const IDB_VERSION = 3;
 const STORE_NAME = "records";
 const RETUR_STORE_NAME = "retur_records";
 const HANDOVER_STORE_NAME = "retur_handovers";
+
+export type ReturSesi = {
+  kodeBagging: string;
+  dp: string;
+  tglDatang: string;
+  jumlahManifest: number;
+};
+
+const RETUR_SESI_KEY = "jt_retur_session";
+const LEGACY_RETUR_SESI_KEY = "jt_retur_session_tgldatang";
+
+export function parseReturSesiRaw(raw: string | null): ReturSesi | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return {
+        kodeBagging: String(parsed?.kodeBagging || "").trim().toUpperCase(),
+        dp: String(parsed?.dp || "").trim().toUpperCase(),
+        tglDatang: String(parsed?.tglDatang || "").trim(),
+        jumlahManifest: Math.max(0, Number(parsed?.jumlahManifest) || 0),
+      };
+    } catch {
+      return null;
+    }
+  }
+  // ponytail: fallback baca key lama (string tanggal) tanpa migrasi paksa
+  return { kodeBagging: "", dp: "", tglDatang: trimmed, jumlahManifest: 0 };
+}
+
+export function getReturSesi(): ReturSesi | null {
+  try {
+    const raw =
+      localStorage.getItem(RETUR_SESI_KEY) ??
+      localStorage.getItem(LEGACY_RETUR_SESI_KEY);
+    return parseReturSesiRaw(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function setReturSesi(s: ReturSesi): void {
+  try {
+    localStorage.setItem(
+      RETUR_SESI_KEY,
+      JSON.stringify({
+        kodeBagging: (s.kodeBagging || "").trim().toUpperCase(),
+        dp: (s.dp || "").trim().toUpperCase(),
+        tglDatang: (s.tglDatang || "").trim(),
+        jumlahManifest: Math.max(0, Number(s.jumlahManifest) || 0),
+      })
+    );
+  } catch (_) {}
+}
 
 let cachedDBPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -288,7 +345,8 @@ function openIndexedDB(): Promise<IDBDatabase | null> {
         resolve(db);
       };
       request.onupgradeneeded = (e) => {
-        const db = (e.target as IDBOpenDBRequest).result;
+        const req = e.target as IDBOpenDBRequest;
+        const db = req.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME, { keyPath: "ID" });
         }
@@ -297,6 +355,15 @@ function openIndexedDB(): Promise<IDBDatabase | null> {
           returStore.createIndex("Resi", "Resi", { unique: false });
           returStore.createIndex("SellerID", "SellerID", { unique: false });
           returStore.createIndex("Status", "Status", { unique: false });
+        }
+        if (e.oldVersion < 3 && req.transaction && db.objectStoreNames.contains(RETUR_STORE_NAME)) {
+          const returStore = req.transaction.objectStore(RETUR_STORE_NAME);
+          if (!returStore.indexNames.contains("KodeBagging")) {
+            returStore.createIndex("KodeBagging", "KodeBagging", { unique: false });
+          }
+          if (!returStore.indexNames.contains("TglDatang")) {
+            returStore.createIndex("TglDatang", "TglDatang", { unique: false });
+          }
         }
         if (!db.objectStoreNames.contains(HANDOVER_STORE_NAME)) {
           const hoStore = db.createObjectStore(HANDOVER_STORE_NAME, { keyPath: "HandoverID" });
@@ -1737,6 +1804,9 @@ export class DatabaseService {
     outlet: string;
     sumber?: string;
     tglDatang?: string;
+    kodeBagging?: string;
+    dp?: string;
+    jumlahManifest?: number;
     kondisi: ReturKondisi;
     isiPaket?: string;
     fotoTerima: string;
@@ -1780,6 +1850,9 @@ export class DatabaseService {
 
     const effectiveTglDatang = (params.tglDatang || "").trim() || tgl;
     const cleanIsiPaket = (params.isiPaket || "").trim().slice(0, 60);
+    const cleanKodeBagging = (params.kodeBagging || "").trim().toUpperCase();
+    const cleanDp = (params.dp || "").trim().toUpperCase();
+    const cleanJumlahManifest = params.jumlahManifest !== undefined ? Math.max(0, Number(params.jumlahManifest) || 0) : undefined;
 
     const newRetur: ReturRecord = {
       ReturID: returId,
@@ -1789,6 +1862,9 @@ export class DatabaseService {
       Outlet: params.outlet,
       Sumber: (params.sumber || "").trim(),
       TglDatang: effectiveTglDatang,
+      ...(cleanKodeBagging ? { KodeBagging: cleanKodeBagging } : {}),
+      ...(cleanDp ? { DP: cleanDp } : {}),
+      ...(cleanJumlahManifest !== undefined ? { JumlahManifest: cleanJumlahManifest } : {}),
       TglTerima: tgl,
       JamTerima: jam,
       AdminTerima: params.adminTerima,
@@ -2122,17 +2198,26 @@ export class DatabaseService {
       const serverReturs: ReturRecord[] = data.returs || [];
       const serverHandovers: ReturHandover[] = data.handovers || [];
 
-      // Merge returs (TIDAK menimpa PENDING atau FAILED, dan TIDAK ubah jika UpdatedAt lokal lebih baru, preserve TglDatang & IsiPaket)
+      // Merge returs (TIDAK menimpa PENDING atau FAILED, dan TIDAK ubah jika UpdatedAt lokal lebih baru, preserve TglDatang, IsiPaket & Bagging)
       const localMap = new Map(this.retursCache.map(r => [r.ReturID, r]));
       serverReturs.forEach(sr => {
         const loc = localMap.get(sr.ReturID);
         const resolvedTglDatang = sr.TglDatang || loc?.TglDatang || sr.TglTerima;
         const resolvedIsiPaket = (sr.IsiPaket !== undefined && sr.IsiPaket !== "") ? sr.IsiPaket : (loc?.IsiPaket || undefined);
+        const resolvedKodeBagging = (sr.KodeBagging !== undefined && sr.KodeBagging !== "") ? sr.KodeBagging.trim().toUpperCase() : (loc?.KodeBagging || undefined);
+        const resolvedDP = (sr.DP !== undefined && sr.DP !== "") ? sr.DP.trim().toUpperCase() : (loc?.DP || undefined);
+        const resolvedJumlahManifest =
+          sr.JumlahManifest !== undefined && Number(sr.JumlahManifest) > 0
+            ? Number(sr.JumlahManifest)
+            : (loc?.JumlahManifest ?? (sr.JumlahManifest !== undefined ? Number(sr.JumlahManifest) : undefined));
         if (!loc) {
           localMap.set(sr.ReturID, {
             ...sr,
             TglDatang: resolvedTglDatang,
             IsiPaket: resolvedIsiPaket,
+            ...(resolvedKodeBagging ? { KodeBagging: resolvedKodeBagging } : {}),
+            ...(resolvedDP ? { DP: resolvedDP } : {}),
+            ...(resolvedJumlahManifest !== undefined ? { JumlahManifest: resolvedJumlahManifest } : {}),
             SyncStatus: "SYNCED"
           });
         } else {
@@ -2150,6 +2235,9 @@ export class DatabaseService {
             ...sr,
             TglDatang: resolvedTglDatang,
             IsiPaket: resolvedIsiPaket,
+            ...(resolvedKodeBagging ? { KodeBagging: resolvedKodeBagging } : {}),
+            ...(resolvedDP ? { DP: resolvedDP } : {}),
+            ...(resolvedJumlahManifest !== undefined ? { JumlahManifest: resolvedJumlahManifest } : {}),
             SyncStatus: "SYNCED"
           });
         }
