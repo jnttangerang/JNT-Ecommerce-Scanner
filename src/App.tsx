@@ -14,7 +14,7 @@ import { OwnerScreen } from "./components/OwnerScreen";
 import { ReturScreen } from "./components/ReturScreen";
 import { dbService } from "./utils/db";
 import { motion, AnimatePresence } from "motion/react";
-import { AlertCircle, AlertTriangle, X, Bell, RefreshCw, Check, HelpCircle, Layers } from "lucide-react";
+import { AlertCircle, AlertTriangle, X, Bell, RefreshCw, Check, HelpCircle, Layers, Truck, Package, Shield } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
 export default function App() {
@@ -337,7 +337,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none selection:bg-red-650 selection:text-white">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none selection:bg-red-650 selection:text-white pb-20 md:pb-0">
       <Toaster 
         position="top-center" 
         richColors 
@@ -385,7 +385,6 @@ export default function App() {
             {currentView === "WELCOME" && (
               <WelcomeScreen
                 onStartScanning={handleStartScanning}
-                onOpenRetur={() => changeView("RETUR")}
                 savedOutlet={selectedOutlet}
                 savedSeller={selectedSeller}
                 savedOperator={selectedOperator}
@@ -535,6 +534,60 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* Mobile Bottom Navigation (Android & iOS) */}
+      <nav
+        id="mobile-bottom-nav"
+        aria-label="Navigasi Utama Mobile"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_16px_rgba(0,0,0,0.12)] pb-[env(safe-area-inset-bottom)]"
+      >
+        <div className="grid grid-cols-3">
+          <button
+            type="button"
+            onClick={() => {
+              changeView("WELCOME");
+              updatePendingCount();
+            }}
+            className={`min-h-[54px] py-2 px-2 flex flex-col items-center justify-center gap-1 text-[11px] transition-colors ${
+              currentView === "WELCOME" || currentView === "SCANNER"
+                ? "text-red-600 font-bold bg-red-50/70"
+                : "text-slate-500 hover:text-slate-900 font-medium"
+            }`}
+          >
+            <Truck className="h-5 w-5" />
+            <span>Scan</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              changeView("RETUR");
+              updatePendingCount();
+            }}
+            className={`min-h-[54px] py-2 px-2 flex flex-col items-center justify-center gap-1 text-[11px] transition-colors ${
+              currentView === "RETUR"
+                ? "text-red-600 font-bold bg-red-50/70"
+                : "text-slate-500 hover:text-slate-900 font-medium"
+            }`}
+          >
+            <Package className="h-5 w-5" />
+            <span>Retur</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              changeView(currentView === "OWNER_DASHBOARD" ? "OWNER_DASHBOARD" : "OWNER_LOGIN");
+              updatePendingCount();
+            }}
+            className={`min-h-[54px] py-2 px-2 flex flex-col items-center justify-center gap-1 text-[11px] transition-colors ${
+              currentView === "OWNER_LOGIN" || currentView === "OWNER_DASHBOARD"
+                ? "text-slate-900 font-bold bg-slate-100"
+                : "text-slate-500 hover:text-slate-900 font-medium"
+            }`}
+          >
+            <Shield className="h-5 w-5" />
+            <span>Owner</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
