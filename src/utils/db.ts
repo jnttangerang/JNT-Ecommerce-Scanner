@@ -1727,9 +1727,48 @@ export class DatabaseService {
   }
 
   public getPendingReturCount(): number {
-    const pendingR = this.retursCache.filter(r => r.SyncStatus === "PENDING" && !r.DeletedAt).length;
+    const pendingR = this.retursCache.filter(r => r.SyncStatus === "PENDING").length;
     const pendingH = this.handoversCache.filter(h => h.SyncStatus === "PENDING" && !h.DeletedAt).length;
     return pendingR + pendingH;
+  }
+
+  public async deleteReturRecord(
+    returId: string,
+    deletedBy?: string
+  ): Promise<{ success: boolean; error?: string; cloudSynced?: boolean }> {
+    const found = this.retursCache.find(r => r.ReturID === returId && !r.DeletedAt);
+    if (!found) {
+      return { success: false, error: "Data retur tidak ditemukan" };
+    }
+    if (found.Status !== RETUR_STATUS.DITERIMA) {
+      return { success: false, error: "Hanya paket berstatus DITERIMA yang dapat dihapus." };
+    }
+    const wasSynced = found.SyncStatus === "SYNCED";
+    const nowIso = new Date().toISOString();
+    const updated: ReturRecord = {
+      ...found,
+      DeletedAt: nowIso,
+      UpdatedAt: nowIso,
+      Catatan: deletedBy && !found.Catatan ? `Dihapus oleh ${deletedBy}` : found.Catatan,
+      SyncStatus: wasSynced ? "PENDING" : "SYNCED"
+    };
+    this.retursCache = this.retursCache.map(r => r.ReturID === returId ? updated : r);
+    await putReturToIDB(updated);
+    window.dispatchEvent(new Event("jt_retur_updated"));
+
+    if (wasSynced && (typeof navigator === "undefined" || navigator.onLine)) {
+      const syncRes = await this.syncPendingReturs();
+      const latest = this.retursCache.find(r => r.ReturID === returId);
+      if (latest?.SyncStatus === "SYNCED") {
+        return { success: true, cloudSynced: true };
+      }
+      return {
+        success: true,
+        cloudSynced: false,
+        ...(syncRes.errors.length > 0 ? { error: syncRes.errors[0] } : {})
+      };
+    }
+    return { success: true, cloudSynced: !wasSynced };
   }
 
   public async deleteFailedRetur(returId: string): Promise<boolean> {
@@ -2026,6 +2065,41 @@ export class DatabaseService {
     const isHttpUrl = (url: any): boolean => typeof url === "string" && url.trim().toLowerCase().startsWith("http");
 
     try {
+      // 0. Sync pending deletes (record SYNCED yang dihapus lokal -> tandai DeletedAt di Spreadsheet)
+      const pendingDeletes = this.retursCache.filter(r => r.SyncStatus === "PENDING" && Boolean(r.DeletedAt));
+      for (const d of pendingDeletes) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 35000);
+          const res = await fetch(config.appsScriptUrl, {
+            method: "POST",
+            mode: "cors",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({
+              action: "delete_retur",
+              returId: d.ReturID,
+              deletedAt: d.DeletedAt
+            }),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+          const data = await res.json();
+          if (data.success) {
+            const updatedD: ReturRecord = { ...d, SyncStatus: "SYNCED" };
+            this.retursCache = this.retursCache.map(r => r.ReturID === d.ReturID ? updatedD : r);
+            await putReturToIDB(updatedD);
+            syncedReturs++;
+          } else {
+            errors.push(`Hapus ${d.Resi} ditolak: ${data.error || "Gagal hapus di server"}`);
+          }
+        } catch (e: any) {
+          errors.push(e.message || `Koneksi gagal saat hapus ${d.Resi}`);
+        }
+      }
+
       // 1. Sync pending returs: Kirim SEMUA retur SyncStatus PENDING apa pun status lokalnya
       const pendingReturs = this.retursCache.filter(r => r.SyncStatus === "PENDING" && !r.DeletedAt);
       if (pendingReturs.length > 0) {

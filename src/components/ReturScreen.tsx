@@ -73,6 +73,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
   // Active Photo Modal
   const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
+  // Delete Retur Confirmation Modal
+  const [confirmDeleteRetur, setConfirmDeleteRetur] = useState<ReturRecord | null>(null);
+  const [isDeletingRetur, setIsDeletingRetur] = useState(false);
 
   // ==========================================
   // TAB 1: FORM TERIMA (SESI PER BAGGING + AUTOFILL)
@@ -586,6 +589,31 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       }
     } finally {
       setIsSubmittingSerah(false);
+    }
+  };
+
+  // Delete Retur Record (Hanya status DITERIMA, lokal + tandai DeletedAt di Spreadsheet)
+  const handleConfirmDeleteRetur = async () => {
+    if (!confirmDeleteRetur || isDeletingRetur) return;
+    setIsDeletingRetur(true);
+    try {
+      const res = await dbService.deleteReturRecord(
+        confirmDeleteRetur.ReturID,
+        terimaOperator || currentOperator || "Admin Outlet"
+      );
+      if (res.success) {
+        if (res.cloudSynced) {
+          toast.success(`Resi ${confirmDeleteRetur.Resi} dihapus dan ditandai DeletedAt di Spreadsheet.`);
+        } else {
+          toast.info(`Resi ${confirmDeleteRetur.Resi} dihapus di lokal (antre sync Spreadsheet).`);
+        }
+        setConfirmDeleteRetur(null);
+        loadData();
+      } else {
+        toast.error("Gagal Menghapus Retur", { description: res.error || "Terjadi kesalahan." });
+      }
+    } finally {
+      setIsDeletingRetur(false);
     }
   };
 
@@ -2562,13 +2590,27 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                       </div>
                     </div>
 
-                    <div className="text-left sm:text-right text-[11px] text-slate-500 font-mono space-y-0.5 flex-shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200">
-                      <div>Terima: {r.TglTerima} {r.JamTerima}</div>
-                      <div className="text-slate-600 font-medium">Petugas: {r.AdminTerima || "-"}</div>
-                      {isDiserahkan && r.HandoverID && (
-                        <div className="text-blue-600 font-bold text-[10px]">
-                          ID Serah: {r.HandoverID}
-                        </div>
+                    <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 text-left sm:text-right text-[11px] text-slate-500 font-mono flex-shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200">
+                      <div className="space-y-0.5">
+                        <div>Terima: {r.TglTerima} {r.JamTerima}</div>
+                        <div className="text-slate-600 font-medium">Petugas: {r.AdminTerima || "-"}</div>
+                        {isDiserahkan && r.HandoverID && (
+                          <div className="text-blue-600 font-bold text-[10px]">
+                            ID Serah: {r.HandoverID}
+                          </div>
+                        )}
+                      </div>
+                      {!isReadOnly && r.Status === RETUR_STATUS.DITERIMA && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteRetur(r)}
+                          className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-white hover:bg-red-50 text-red-600 text-[11px] font-sans font-bold transition-colors"
+                          title={`Hapus resi retur ${r.Resi}`}
+                          aria-label={`Hapus resi ${r.Resi}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Hapus</span>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -2643,6 +2685,56 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                 className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold"
               >
                 Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Delete Confirmation Modal */}
+      {confirmDeleteRetur && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 p-5 space-y-4">
+            <div className="flex items-start space-x-3">
+              <div className="p-2.5 rounded-xl bg-red-50 text-red-600 border border-red-200 flex-shrink-0">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-slate-900">
+                  Hapus Paket Retur?
+                </h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Resi <strong className="font-mono text-slate-900">{confirmDeleteRetur.Resi}</strong> milik{" "}
+                  <strong className="text-slate-900">{confirmDeleteRetur.Seller}</strong> akan dihapus dari daftar aktif dan ditandai <code className="bg-slate-100 px-1 rounded">DeletedAt</code> di Spreadsheet.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeletingRetur}
+                onClick={() => setConfirmDeleteRetur(null)}
+                className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingRetur}
+                onClick={handleConfirmDeleteRetur}
+                className="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white text-xs font-bold flex items-center space-x-1.5 transition-colors"
+              >
+                {isDeletingRetur ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Ya, Hapus</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -95,6 +95,8 @@ function doPost(e) {
       return handleGetRetur();
     } else if (action === "get_retur_bagging") {
       return handleGetReturBagging(payload.kodeBagging);
+    } else if (action === "delete_retur") {
+      return handleDeleteRetur(payload.returId, payload.deletedAt, payload.deletedBy);
     }
     
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
@@ -1539,4 +1541,52 @@ function handleGetReturBagging(kodeBaggingRaw) {
     }
   }
   return jsonOut_({ success: true, kodeBagging: cleanCode, resis: resis });
+}
+
+function handleDeleteRetur(returIdRaw, deletedAtRaw, deletedByRaw) {
+  const cleanReturId = (returIdRaw || "").toString().trim();
+  if (!cleanReturId) {
+    return jsonOut_({ success: false, error: "ReturID kosong" });
+  }
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return jsonOut_({ success: false, error: "Server sibuk (lock timeout), coba lagi." });
+  }
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const returSheet = ss.getSheetByName("DATA_RETUR");
+    if (!returSheet || returSheet.getLastRow() <= 1) {
+      return jsonOut_({ success: true, notFound: true });
+    }
+    const lastRow = returSheet.getLastRow();
+    const data = returSheet.getRange(2, 1, lastRow - 1, 17).getValues();
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      if ((row[0] || "").toString().trim() !== cleanReturId) continue;
+      if (row[16]) {
+        return jsonOut_({ success: true, alreadyDeleted: true, returId: cleanReturId });
+      }
+      const status = (row[11] || "").toString().trim().toUpperCase();
+      if (status === "DISERAHKAN") {
+        return jsonOut_({ success: false, error: "Paket sudah berstatus DISERAHKAN dan tidak dapat dihapus." });
+      }
+      const cleanDeletedAt = (deletedAtRaw || "").toString().trim() || new Date().toISOString();
+      const sheetRow = i + 2;
+      returSheet.getRange(sheetRow, 16, 1, 2).setNumberFormat("@").setValues([[cleanDeletedAt, cleanDeletedAt]]);
+      writeAuditRetur_(
+        ss,
+        (deletedByRaw || "").toString().trim() || "Admin Outlet",
+        "Admin/Operator",
+        "HAPUS_RETUR",
+        cleanReturId,
+        "Hapus resi " + ((row[1] || "").toString().trim())
+      );
+      return jsonOut_({ success: true, returId: cleanReturId, deletedAt: cleanDeletedAt });
+    }
+    return jsonOut_({ success: true, notFound: true, returId: cleanReturId });
+  } catch (err) {
+    return jsonOut_({ success: false, error: err.toString() });
+  } finally {
+    lock.releaseLock();
+  }
 }
