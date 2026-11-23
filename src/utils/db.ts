@@ -5,6 +5,82 @@ import { Config, CONFIG_KEYS } from './config';
  */
 
 import { ScanRecord, Seller, Outlet, Operator, StatusType, ReturRecord, ReturHandover, ReturKondisi, ReturMetode, ReturStatus, RETUR_STATUS } from "../types";
+import { ref, set, onValue, serverTimestamp } from "firebase/database";
+import { rtdb } from "../firebase";
+
+export function slugifySeller(seller: string): string {
+  return (
+    (seller || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unknown-seller"
+  );
+}
+
+export function buildPickupReconPath(tanggal: string, seller: string, resi?: string): string {
+  const cleanTgl = (tanggal || "").trim().replace(/[^0-9-]/g, "") || getTodayLocalDateString();
+  const base = `pickup_recon/${cleanTgl}/${slugifySeller(seller)}`;
+  if (!resi) return base;
+  const cleanResi = resi.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+  return `${base}/${cleanResi}`;
+}
+
+// ponytail: pakai Firebase RTDB khusus counter real-time (<1s); polling Apps Script kena limit kuota & latensi.
+export async function publishPickupScanResi(
+  seller: string,
+  tanggal: string,
+  resi: string,
+  operator: string,
+  jenisLayanan: string
+): Promise<void> {
+  const cleanResi = (resi || "").trim().toUpperCase();
+  if (!cleanResi || !seller || !tanggal) return;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  try {
+    await set(ref(rtdb, buildPickupReconPath(tanggal, seller, cleanResi)), {
+      operator: (operator || "").trim(),
+      ts: serverTimestamp(),
+      jenisLayanan: jenisLayanan || "DROP_OFF",
+    });
+  } catch (err) {
+    console.warn("RTDB publishPickupScanResi skipped:", err);
+  }
+}
+
+// ponytail: listener onValue RTDB mengembalikan unsubscribe; data permanen tetap offline-first via Apps Script.
+export function subscribePickupRecon(
+  seller: string,
+  tanggal: string,
+  onUpdate: (resis: string[]) => void
+): () => void {
+  if (!seller || !tanggal) {
+    onUpdate([]);
+    return () => {};
+  }
+  try {
+    const reconRef = ref(rtdb, buildPickupReconPath(tanggal, seller));
+    return onValue(
+      reconRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        const resis =
+          val && typeof val === "object"
+            ? Object.keys(val).map((k) => k.trim().toUpperCase()).filter(Boolean)
+            : [];
+        onUpdate(resis);
+      },
+      (err) => {
+        console.warn("RTDB subscribePickupRecon error:", err);
+        onUpdate([]);
+      }
+    );
+  } catch (err) {
+    console.warn("RTDB subscribePickupRecon init error:", err);
+    onUpdate([]);
+    return () => {};
+  }
+}
 
 /**
  * Returns "today" as YYYY-MM-DD based on the DEVICE'S LOCAL time zone (WIB), not UTC.
@@ -966,6 +1042,7 @@ export class DatabaseService {
     seller: string;
     operator: string;
     photoURL?: string;
+    jenisLayanan?: "DROP_OFF" | "PICKUP";
   }): Promise<{ success: boolean; record?: ScanRecord; error?: string }> {
     const resi = data.resi.trim().toUpperCase();
     if (!resi) return { success: false, error: "Tracking number empty" };
@@ -1004,6 +1081,7 @@ export class DatabaseService {
       PhotoURL: photo,
       SyncStatus: syncStatus,
       ScanTimestamp: now.getTime(),
+      ...(data.jenisLayanan ? { JenisLayanan: data.jenisLayanan } : {}),
       PackageStatus: "NONE",
       WaybillStatus: "NONE",
       ReviewStatus: "PENDING",

@@ -19,6 +19,7 @@ export interface ScanRecord {
   PhotoURL: string; // Base64 data-uri or simulated URL
   SyncStatus: SyncStatusType;
   ScanTimestamp: number; // for sorting
+  JenisLayanan?: "DROP_OFF" | "PICKUP";
   RetakeStatus?: string;
   alertStatus?: string;
   confirmedBy?: string;

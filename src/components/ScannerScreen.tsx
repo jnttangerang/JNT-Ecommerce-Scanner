@@ -36,7 +36,7 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { ScanRecord, StatusType } from "../types";
-import { dbService, createMockResiPhoto, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
+import { dbService, createMockResiPhoto, getDirectDriveImageUrl, getTodayLocalDateString, publishPickupScanResi, subscribePickupRecon } from "../utils/db";
 import { audioService } from "../utils/audio";
 import { triggerHaptic } from "../utils/haptics";
 import { estimateSharpness, BLUR_WARNING_THRESHOLD } from "../utils/blur";
@@ -76,6 +76,36 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   const [scannedRecords, setScannedRecords] = useState<ScanRecord[]>([]);
   const [totalToday, setTotalToday] = useState(0);
   const [dailyTarget, setDailyTarget] = useState(() => dbService.getDailyTarget());
+
+  // Jenis Layanan (persisted last operator choice, default DROP_OFF) & RTDB real-time reconciliation
+  const [jenisLayanan, setJenisLayanan] = useState<"DROP_OFF" | "PICKUP">(() => {
+    try {
+      const saved = localStorage.getItem("jt_pickup_jenis_layanan");
+      if (saved === "PICKUP" || saved === "PICKUP_VIAR") return "PICKUP";
+      return "DROP_OFF";
+    } catch {
+      return "DROP_OFF";
+    }
+  });
+  const [localSellerResis, setLocalSellerResis] = useState<string[]>([]);
+  const [remoteReconResis, setRemoteReconResis] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("jt_pickup_jenis_layanan", jenisLayanan);
+    } catch {}
+  }, [jenisLayanan]);
+
+  // ponytail: pakai RTDB onValue agar rekonsiliasi lintas perangkat sub-detik tanpa polling Apps Script.
+  const todayReconDate = getTodayLocalDateString();
+  useEffect(() => {
+    const unsub = subscribePickupRecon(config.seller, todayReconDate, setRemoteReconResis);
+    return () => unsub();
+  }, [config.seller, todayReconDate]);
+
+  const totalUnikRecon = React.useMemo(() => {
+    return new Set<string>([...localSellerResis, ...remoteReconResis]).size;
+  }, [localSellerResis, remoteReconResis]);
 
   // Filter & Search states for the Scanned History Panel
   const [filterSearchQuery, setFilterSearchQuery] = useState("");
@@ -304,9 +334,23 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // Filter down to today's records specifically for this operator
     const todayStr = getTodayLocalDateString();
     const filteredToday = operatorRecords.filter(r => r.Tanggal === todayStr);
+    const sellerTodayResis = Array.from(
+      new Set(
+        all
+          .filter(
+            r =>
+              r.Tanggal === todayStr &&
+              r.Seller &&
+              r.Seller.trim().toLowerCase() === config.seller.trim().toLowerCase()
+          )
+          .map(r => (r.Resi || "").trim().toUpperCase())
+          .filter(Boolean)
+      )
+    );
     
     setScannedRecords(operatorRecords); // Store full list for robust, multi-day, on-demand filtering
     setTotalToday(filteredToday.length);
+    setLocalSellerResis(sellerTodayResis);
 
     // Get pending CANCELLED alerts for this outlet
     const alerts = all.filter(r => 
@@ -1096,7 +1140,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         outlet: config.outlet,
         seller: config.seller,
         operator: config.operator,
-        photoURL: pendingValidation.photoURL
+        photoURL: pendingValidation.photoURL,
+        jenisLayanan
       });
 
       const saveTime = Date.now() - startSaveTime;
@@ -1108,6 +1153,15 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         // Capture success sound "Teet" only if data is successfully saved
         audioService.playSuccess();
         toast.success(`Resi tersimpan: ${result.record.Resi}`);
+
+        // Publish resi to RTDB for sub-second cross-device reconciliation (non-blocking)
+        void publishPickupScanResi(
+          config.seller,
+          result.record.Tanggal,
+          result.record.Resi,
+          config.operator,
+          jenisLayanan
+        );
         
         setLatestResi(result.record.Resi);
         setSessionScannedResis(prev => {
@@ -1261,6 +1315,43 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 <span className="text-red-650 font-extrabold text-sm" style={{ color: "#ef2727" }}>{config.seller}</span>
                 <span className="text-slate-300 font-black">•</span>
                 <span className="text-slate-600 text-xs font-semibold truncate max-w-[100px]">{config.operator}</span>
+              </div>
+              {/* Segmented Toggle Jenis Layanan + Badge Rekonsiliasi Real-Time */}
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <div className="inline-flex bg-slate-100 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold" role="group" aria-label="Jenis Layanan">
+                  <button
+                    type="button"
+                    onClick={() => setJenisLayanan("DROP_OFF")}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      jenisLayanan === "DROP_OFF"
+                        ? "bg-red-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Drop di Outlet
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setJenisLayanan("PICKUP")}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      jenisLayanan === "PICKUP"
+                        ? "bg-red-600 text-white shadow-sm"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Dijemput Driver
+                  </button>
+                </div>
+                <div
+                  className="inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold"
+                  title="Rekonsiliasi unik lintas perangkat secara real-time untuk Seller & Tanggal hari ini"
+                  id="pickup-realtime-recon-badge"
+                >
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                  <span>
+                    Total Unik: {totalUnikRecon} (Lokal: {localSellerResis.length}, Real-time: {remoteReconResis.length})
+                  </span>
+                </div>
               </div>
             </div>
           </div>
