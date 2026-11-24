@@ -181,8 +181,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   const [filterBagging, setFilterBagging] = useState("ALL");
   const [groupBy, setGroupBy] = useState<"NONE" | "BAGGING" | "TGL_DATANG" | "SELLER">("NONE");
 
-  // Camera scanner ref
+  // Camera scanner & file input refs
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const terimaPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Refresh data from dbService
   const loadData = () => {
@@ -279,7 +280,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     }
   };
 
-  // Handle starting barcode scanner in Terima tab (untuk Resi atau Kode Bagging)
+  // Handle starting/stopping barcode scanner & releasing lingering MediaStream tracks
   const stopActiveScanner = async () => {
     if (scannerRef.current) {
       try {
@@ -287,6 +288,15 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
         scannerRef.current.clear();
       } catch (_) {}
       scannerRef.current = null;
+    }
+    if (typeof document !== "undefined") {
+      document.querySelectorAll<HTMLVideoElement>("#retur-camera-reader video, #retur-bagging-camera-reader video").forEach((video) => {
+        const stream = video.srcObject as MediaStream | null;
+        if (stream) {
+          stream.getTracks().forEach((t) => t.stop());
+          video.srcObject = null;
+        }
+      });
     }
     setScannerTarget(null);
   };
@@ -343,12 +353,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   };
 
   // Compress image helper (max 640px, JPEG 70%)
+  // ponytail: pakai ObjectURL (bukan FileReader Base64 mentah 5-15MB) + nolkan canvas agar HP tidak OOM crash setelah 5-10 foto.
   const processImageFile = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
           const maxDim = 640;
           let w = img.width;
           let h = img.height;
@@ -376,19 +387,27 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
           ctx.fillText(`RETUR • ${new Date().toLocaleDateString("id-ID")} ${new Date().toLocaleTimeString("id-ID")}`, 14, h - 13);
 
           const compressed = canvas.toDataURL("image/jpeg", 0.7);
+          canvas.width = 0;
+          canvas.height = 0;
           resolve(compressed);
-        };
-        img.onerror = () => reject(new Error("Gagal membaca gambar"));
-        img.src = e.target?.result as string;
+        } catch (err) {
+          reject(err);
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
       };
-      reader.onerror = () => reject(new Error("File error"));
-      reader.readAsDataURL(file);
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Gagal membaca gambar"));
+      };
+      img.src = objectUrl;
     });
   };
 
   // Handle Photo input for Terima
   const handleTerimaPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const inputEl = e.target;
+    const file = inputEl.files?.[0];
     if (!file) return;
     try {
       const compressed = await processImageFile(file);
@@ -396,6 +415,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       toast.success("Foto kondisi paket berhasil diambil!");
     } catch (err: any) {
       toast.error("Gagal memproses foto: " + err.message);
+    } finally {
+      inputEl.value = "";
     }
   };
 
@@ -504,14 +525,20 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       });
 
       if (result.success) {
+        // ponytail: bersihkan state foto, input file, dan track kamera aktif seketika setelah IDB commit untuk mencegah memory bloat.
+        setTerimaPhoto("");
+        if (terimaPhotoInputRef.current) {
+          terimaPhotoInputRef.current.value = "";
+        }
+        await stopActiveScanner();
+
         toast.success("Paket Retur Berhasil Diterima!", {
           description: `Resi ${terimaResi.toUpperCase()} dicatat di karung ${sesi.kodeBagging || "-"} (DITERIMA).`
         });
-        // Reset per-resi fields (sesi bagging tetap aktif)
+        // Reset per-resi fields (sesi bagging tetap aktif, tetap di tab TERIMA)
         setTerimaResi("");
         setTerimaIsiPaket("");
         setTerimaCatatan("");
-        setTerimaPhoto("");
         setAutofillBadge(null);
         setPickupNotFoundHint(false);
         setTerimaKondisi(RETUR_KONDISI.BAIK);
@@ -531,6 +558,11 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
           description: result.error || "Terjadi kesalahan saat menyimpan data."
         });
       }
+    } catch (err: any) {
+      // ponytail: tetap bertahan di layar Retur saat error agar operator bisa retry tanpa kehilangan input/sesi.
+      toast.error("Gagal Menyimpan Retur", {
+        description: err?.message || "Terjadi kesalahan tak terduga saat menyimpan."
+      });
     } finally {
       setIsSubmittingTerima(false);
     }
@@ -1540,6 +1572,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   Foto langsung dengan kamera HP atau unggah bukti foto (Max 640px)
                 </span>
                 <input
+                  ref={terimaPhotoInputRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
@@ -2505,6 +2538,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                           <img
                             src={getDirectDriveImageUrl(r.FotoTerimaURL)}
                             alt="Foto Retur"
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-cover"
                           />
                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">

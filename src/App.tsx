@@ -33,6 +33,9 @@ export default function App() {
     if (savedView === "OWNER_DASHBOARD" && Config.get(CONFIG_KEYS.OWNER_AUTHENTICATED) === "true") {
       return "OWNER_DASHBOARD";
     }
+    if (savedView === "RETUR") {
+      return "RETUR";
+    }
     return "WELCOME";
   });
 

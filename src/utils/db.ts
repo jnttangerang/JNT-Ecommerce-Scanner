@@ -556,6 +556,7 @@ function putReturToIDB(retur: ReturRecord): Promise<boolean> {
         tx.objectStore(RETUR_STORE_NAME).put(retur);
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
       } catch {
         resolve(false);
       }
@@ -576,6 +577,7 @@ function putRetursBatchToIDB(returs: ReturRecord[]): Promise<boolean> {
         }
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
       } catch {
         resolve(false);
       }
@@ -1950,6 +1952,8 @@ export class DatabaseService {
       return { success: false, error: "Foto kondisi paket + resi wajib diambil" };
     }
 
+    await this.ensureIdbLoaded();
+
     // Duplicate check on active records
     const existing = this.retursCache.find(r => r.Resi === cleanResi && !r.DeletedAt);
     if (existing) {
@@ -1999,8 +2003,16 @@ export class DatabaseService {
       SyncStatus: "PENDING"
     };
 
+    // ponytail: await commit IDB (tx.oncomplete/onabort) dulu agar data scan beruntun tidak hilang jika tab di-kill browser.
+    const idbOk = await putReturToIDB(newRetur);
+    if (!idbOk && typeof window !== "undefined" && window.indexedDB) {
+      return {
+        success: false,
+        error: "Penyimpanan lokal IndexedDB gagal atau dibatalkan. Silakan coba simpan ulang."
+      };
+    }
+
     this.retursCache = [newRetur, ...this.retursCache];
-    await putReturToIDB(newRetur);
     window.dispatchEvent(new Event("jt_retur_updated"));
 
     if (typeof navigator !== "undefined" && navigator.onLine) {
