@@ -87,8 +87,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
       return "DROP_OFF";
     }
   });
-  const [localSellerResis, setLocalSellerResis] = useState<string[]>([]);
-  const [remoteReconResis, setRemoteReconResis] = useState<string[]>([]);
+  const [localResis, setLocalResis] = useState<Set<string>>(() => new Set());
+  const [remoteResis, setRemoteResis] = useState<string[]>([]);
 
   useEffect(() => {
     try {
@@ -99,13 +99,17 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
   // ponytail: pakai RTDB onValue agar rekonsiliasi lintas perangkat sub-detik tanpa polling Apps Script.
   const todayReconDate = getTodayLocalDateString();
   useEffect(() => {
-    const unsub = subscribePickupRecon(config.seller, todayReconDate, setRemoteReconResis);
+    const unsub = subscribePickupRecon(config.seller, todayReconDate, setRemoteResis);
     return () => unsub();
   }, [config.seller, todayReconDate]);
 
-  const totalUnikRecon = React.useMemo(() => {
-    return new Set<string>([...localSellerResis, ...remoteReconResis]).size;
-  }, [localSellerResis, remoteReconResis]);
+  const totalUnik = React.useMemo(() => {
+    return new Set<string>([...localResis, ...remoteResis]).size;
+  }, [localResis, remoteResis]);
+
+  const realtimeOnlyCount = React.useMemo(() => {
+    return remoteResis.filter((r) => !localResis.has(r)).length;
+  }, [localResis, remoteResis]);
 
   // Filter & Search states for the Scanned History Panel
   const [filterSearchQuery, setFilterSearchQuery] = useState("");
@@ -334,23 +338,21 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
     // Filter down to today's records specifically for this operator
     const todayStr = getTodayLocalDateString();
     const filteredToday = operatorRecords.filter(r => r.Tanggal === todayStr);
-    const sellerTodayResis = Array.from(
-      new Set(
-        all
-          .filter(
-            r =>
-              r.Tanggal === todayStr &&
-              r.Seller &&
-              r.Seller.trim().toLowerCase() === config.seller.trim().toLowerCase()
-          )
-          .map(r => (r.Resi || "").trim().toUpperCase())
-          .filter(Boolean)
-      )
+    const sellerTodayResis = new Set(
+      all
+        .filter(
+          r =>
+            r.Tanggal === todayStr &&
+            r.Seller &&
+            r.Seller.trim().toLowerCase() === config.seller.trim().toLowerCase()
+        )
+        .map(r => (r.Resi || "").trim().toUpperCase())
+        .filter(Boolean)
     );
     
     setScannedRecords(operatorRecords); // Store full list for robust, multi-day, on-demand filtering
     setTotalToday(filteredToday.length);
-    setLocalSellerResis(sellerTodayResis);
+    setLocalResis(sellerTodayResis);
 
     // Get pending CANCELLED alerts for this outlet
     const alerts = all.filter(r => 
@@ -1349,7 +1351,7 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
                 >
                   <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
                   <span>
-                    Total Unik: {totalUnikRecon} (Lokal: {localSellerResis.length}, Real-time: {remoteReconResis.length})
+                    Total Unik: {totalUnik} (Lokal: {localResis.size}, Real-time: {realtimeOnlyCount})
                   </span>
                 </div>
               </div>

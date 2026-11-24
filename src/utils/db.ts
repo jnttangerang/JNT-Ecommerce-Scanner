@@ -13,8 +13,8 @@ export function slugifySeller(seller: string): string {
     (seller || "")
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "unknown-seller"
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "unknown_seller"
   );
 }
 
