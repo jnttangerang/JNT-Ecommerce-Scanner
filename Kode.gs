@@ -1436,40 +1436,79 @@ function handleGetRetur() {
     const lastCol = returSheet.getLastColumn();
     const numCols = Math.min(lastCol, RETUR_HEADERS.length);
     if (numCols > 0) {
-      const data = returSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
-      for (let i = 0; i < data.length; i++) {
-        const row = data[i];
-        const deletedAt = (row.length > 16 && row[16]) ? row[16].toString() : "";
+      // ponytail: baca baris header + data sekaligus dengan Math.min(lastCol, 21) & fallback indeks 21-kolom pasca-hapus DP (DeletedAt=16..JumlahManifest=20).
+      const allValues = returSheet.getRange(1, 1, lastRow, numCols).getValues();
+      const headerRow = allValues[0] || [];
+      const colIdx = function(name, fallbackIdx) {
+        const idx = headerRow.indexOf(name);
+        return idx >= 0 ? idx : fallbackIdx;
+      };
+      const iReturID = colIdx("ReturID", 0);
+      const iResi = colIdx("Resi", 1);
+      const iSellerID = colIdx("SellerID", 2);
+      const iSeller = colIdx("Seller", 3);
+      const iOutlet = colIdx("Outlet", 4);
+      const iSumber = colIdx("Sumber", 5);
+      const iTglTerima = colIdx("TglTerima", 6);
+      const iJamTerima = colIdx("JamTerima", 7);
+      const iAdminTerima = colIdx("AdminTerima", 8);
+      const iKondisi = colIdx("Kondisi", 9);
+      const iFotoTerimaURL = colIdx("FotoTerimaURL", 10);
+      const iStatus = colIdx("Status", 11);
+      const iHandoverID = colIdx("HandoverID", 12);
+      const iCatatan = colIdx("Catatan", 13);
+      const iCreatedAt = colIdx("CreatedAt", 14);
+      const iUpdatedAt = colIdx("UpdatedAt", 15);
+      const iDeletedAt = colIdx("DeletedAt", 16);
+      const iTglDatang = colIdx("TglDatang", 17);
+      const iIsiPaket = colIdx("IsiPaket", 18);
+      const iKodeBagging = colIdx("KodeBagging", 19);
+      const iJumlahManifest = colIdx("JumlahManifest", 20);
+      const cellStr = function(row, idx) {
+        return (idx < row.length && row[idx] !== null && row[idx] !== undefined) ? row[idx].toString().trim() : "";
+      };
+      const cellIso = function(row, idx) {
+        if (idx >= row.length || row[idx] === null || row[idx] === undefined || row[idx] === "") return "";
+        return (row[idx] instanceof Date) ? row[idx].toISOString() : row[idx].toString().trim();
+      };
+
+      for (let i = 1; i < allValues.length; i++) {
+        const row = allValues[i];
+        const deletedAt = cellStr(row, iDeletedAt);
         if (deletedAt) continue;
 
-        let tglStr = (row.length > 6 && row[6] instanceof Date) ? Utilities.formatDate(row[6], "GMT+7", "yyyy-MM-dd") : ((row.length > 6 && row[6]) ? row[6].toString() : "");
-        let jamStr = (row.length > 7 && row[7] instanceof Date) ? Utilities.formatDate(row[7], "GMT+7", "HH:mm:ss") : ((row.length > 7 && row[7]) ? row[7].toString() : "");
-        let tglDatangStr = (row.length > 17 && row[17] instanceof Date) ? Utilities.formatDate(row[17], "GMT+7", "yyyy-MM-dd") : ((row.length > 17 && row[17]) ? row[17].toString() : tglStr);
-        let isiPaketStr = (row.length > 18 && row[18]) ? row[18].toString() : "";
-        let kodeBaggingStr = (row.length > 19 && row[19]) ? row[19].toString().trim().toUpperCase() : "";
-        let jumlahManifestNum = (row.length > 20 && row[20] !== "" && row[20] !== null && row[20] !== undefined) ? (Number(row[20]) || 0) : 0;
+        const returIdStr = cellStr(row, iReturID);
+        const resiStr = cellStr(row, iResi).toUpperCase();
+        if (!returIdStr && !resiStr) continue;
+
+        let tglStr = (iTglTerima < row.length && row[iTglTerima] instanceof Date) ? Utilities.formatDate(row[iTglTerima], "GMT+7", "yyyy-MM-dd") : cellStr(row, iTglTerima);
+        let jamStr = (iJamTerima < row.length && row[iJamTerima] instanceof Date) ? Utilities.formatDate(row[iJamTerima], "GMT+7", "HH:mm:ss") : cellStr(row, iJamTerima);
+        let tglDatangStr = (iTglDatang < row.length && row[iTglDatang] instanceof Date) ? Utilities.formatDate(row[iTglDatang], "GMT+7", "yyyy-MM-dd") : (cellStr(row, iTglDatang) || tglStr);
+        let isiPaketStr = cellStr(row, iIsiPaket);
+        let kodeBaggingStr = cellStr(row, iKodeBagging).toUpperCase();
+        let jumlahManifestNum = (iJumlahManifest < row.length && row[iJumlahManifest] !== "" && row[iJumlahManifest] !== null && row[iJumlahManifest] !== undefined) ? (Number(row[iJumlahManifest]) || 0) : 0;
 
         returs.push({
-          ReturID: (row.length > 0 && row[0]) ? row[0].toString() : "",
-          Resi: (row.length > 1 && row[1]) ? row[1].toString() : "",
-          SellerID: (row.length > 2 && row[2]) ? row[2].toString() : "",
-          Seller: (row.length > 3 && row[3]) ? row[3].toString() : "",
-          Outlet: (row.length > 4 && row[4]) ? row[4].toString() : "",
-          Sumber: (row.length > 5 && row[5]) ? row[5].toString() : "",
+          ReturID: returIdStr,
+          Resi: resiStr,
+          SellerID: cellStr(row, iSellerID),
+          Seller: cellStr(row, iSeller),
+          Outlet: cellStr(row, iOutlet),
+          Sumber: cellStr(row, iSumber),
           TglDatang: tglDatangStr,
           KodeBagging: kodeBaggingStr,
           JumlahManifest: jumlahManifestNum,
           TglTerima: tglStr,
           JamTerima: jamStr,
-          AdminTerima: (row.length > 8 && row[8]) ? row[8].toString() : "",
-          Kondisi: (row.length > 9 && row[9]) ? row[9].toString() : "Baik",
+          AdminTerima: cellStr(row, iAdminTerima),
+          Kondisi: cellStr(row, iKondisi) || "Baik",
           IsiPaket: isiPaketStr,
-          FotoTerimaURL: (row.length > 10 && row[10]) ? row[10].toString() : "",
-          Status: (row.length > 11 && row[11]) ? row[11].toString() : "DITERIMA",
-          HandoverID: (row.length > 12 && row[12]) ? row[12].toString() : "",
-          Catatan: (row.length > 13 && row[13]) ? row[13].toString() : "",
-          CreatedAt: (row.length > 14 && row[14]) ? row[14].toString() : "",
-          UpdatedAt: (row.length > 15 && row[15]) ? row[15].toString() : "",
+          FotoTerimaURL: cellStr(row, iFotoTerimaURL),
+          Status: (cellStr(row, iStatus).toUpperCase() || "DITERIMA"),
+          HandoverID: cellStr(row, iHandoverID),
+          Catatan: cellStr(row, iCatatan),
+          CreatedAt: cellIso(row, iCreatedAt),
+          UpdatedAt: cellIso(row, iUpdatedAt),
           DeletedAt: deletedAt,
           SyncStatus: "SYNCED"
         });

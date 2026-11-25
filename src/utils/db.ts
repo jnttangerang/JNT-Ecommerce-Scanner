@@ -2357,29 +2357,52 @@ export class DatabaseService {
       return false;
     }
     try {
+      // ponytail: tunggu bootstrap IDB selesai dulu agar auto-pull saat mount tidak balapan menimpa/tertimpa cache lokal.
+      await this.ensureIdbLoaded();
+
       const url = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_retur`;
       const res = await fetch(url, { method: "GET", mode: "cors" });
       if (!res.ok) return false;
       const data = await res.json();
       if (!data.success) return false;
 
-      const serverReturs: ReturRecord[] = data.returs || [];
-      const serverHandovers: ReturHandover[] = data.handovers || [];
+      const serverReturs: ReturRecord[] = Array.isArray(data.returs) ? data.returs : [];
+      const serverHandovers: ReturHandover[] = Array.isArray(data.handovers) ? data.handovers : [];
 
       // Merge returs (TIDAK menimpa PENDING atau FAILED, dan TIDAK ubah jika UpdatedAt lokal lebih baru, preserve TglDatang, IsiPaket & Bagging)
       const localMap = new Map(this.retursCache.map(r => [r.ReturID, r]));
+      let parsedRetursCount = 0;
       serverReturs.forEach(sr => {
-        const loc = localMap.get(sr.ReturID);
-        const resolvedTglDatang = sr.TglDatang || loc?.TglDatang || sr.TglTerima;
-        const resolvedIsiPaket = (sr.IsiPaket !== undefined && sr.IsiPaket !== "") ? sr.IsiPaket : (loc?.IsiPaket || undefined);
-        const resolvedKodeBagging = (sr.KodeBagging !== undefined && sr.KodeBagging !== "") ? sr.KodeBagging.trim().toUpperCase() : (loc?.KodeBagging || undefined);
+        const cleanResi = (sr.Resi || "").toString().trim().toUpperCase();
+        const cleanReturId = (sr.ReturID || "").toString().trim() || (cleanResi ? `RET-SHEET-${cleanResi}` : "");
+        if (!cleanReturId || !cleanResi) return;
+
+        const cleanDeletedAt = (sr.DeletedAt || "").toString().trim();
+        const normalizedStatus = (sr.Status || "DITERIMA").toString().trim().toUpperCase() === RETUR_STATUS.DISERAHKAN
+          ? RETUR_STATUS.DISERAHKAN
+          : RETUR_STATUS.DITERIMA;
+        const normalizedSr: ReturRecord = {
+          ...sr,
+          ReturID: cleanReturId,
+          Resi: cleanResi,
+          Status: normalizedStatus,
+          ...(cleanDeletedAt ? { DeletedAt: cleanDeletedAt } : { DeletedAt: undefined }),
+        };
+        if (!cleanDeletedAt) delete normalizedSr.DeletedAt;
+
+        const loc = localMap.get(cleanReturId);
+        const resolvedTglDatang = normalizedSr.TglDatang || loc?.TglDatang || normalizedSr.TglTerima;
+        const resolvedIsiPaket = (normalizedSr.IsiPaket !== undefined && normalizedSr.IsiPaket !== "") ? normalizedSr.IsiPaket : (loc?.IsiPaket || undefined);
+        const resolvedKodeBagging = (normalizedSr.KodeBagging !== undefined && normalizedSr.KodeBagging !== "") ? normalizedSr.KodeBagging.trim().toUpperCase() : (loc?.KodeBagging || undefined);
         const resolvedJumlahManifest =
-          sr.JumlahManifest !== undefined && Number(sr.JumlahManifest) > 0
-            ? Number(sr.JumlahManifest)
-            : (loc?.JumlahManifest ?? (sr.JumlahManifest !== undefined ? Number(sr.JumlahManifest) : undefined));
+          normalizedSr.JumlahManifest !== undefined && Number(normalizedSr.JumlahManifest) > 0
+            ? Number(normalizedSr.JumlahManifest)
+            : (loc?.JumlahManifest ?? (normalizedSr.JumlahManifest !== undefined ? Number(normalizedSr.JumlahManifest) : undefined));
+        parsedRetursCount++;
+
         if (!loc) {
-          localMap.set(sr.ReturID, {
-            ...sr,
+          localMap.set(cleanReturId, {
+            ...normalizedSr,
             TglDatang: resolvedTglDatang,
             IsiPaket: resolvedIsiPaket,
             ...(resolvedKodeBagging ? { KodeBagging: resolvedKodeBagging } : {}),
@@ -2393,12 +2416,12 @@ export class DatabaseService {
           }
           // Jangan mengubah record lokal jika UpdatedAt lokal lebih baru dari server
           const locTime = new Date(loc.UpdatedAt || loc.CreatedAt || 0).getTime();
-          const serverTime = new Date(sr.UpdatedAt || sr.CreatedAt || 0).getTime();
+          const serverTime = new Date(normalizedSr.UpdatedAt || normalizedSr.CreatedAt || 0).getTime();
           if (locTime > serverTime) {
             return;
           }
-          localMap.set(sr.ReturID, {
-            ...sr,
+          localMap.set(cleanReturId, {
+            ...normalizedSr,
             TglDatang: resolvedTglDatang,
             IsiPaket: resolvedIsiPaket,
             ...(resolvedKodeBagging ? { KodeBagging: resolvedKodeBagging } : {}),
@@ -2410,6 +2433,7 @@ export class DatabaseService {
       this.retursCache = Array.from(localMap.values()).sort(
         (a, b) => new Date(b.CreatedAt || 0).getTime() - new Date(a.CreatedAt || 0).getTime()
       );
+      console.log(`[pullReturs] parsed ${parsedRetursCount}/${serverReturs.length} server returs -> ${this.retursCache.length} cached before IDB save`);
       await putRetursBatchToIDB(this.retursCache);
 
       // Merge handovers (sama: proteksi lokal PENDING/FAILED dan timestamp)

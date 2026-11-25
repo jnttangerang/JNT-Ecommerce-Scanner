@@ -70,6 +70,8 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [pendingReturCount, setPendingReturCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isPullingReturs, setIsPullingReturs] = useState(false);
+  const pullInFlightRef = useRef(false);
 
   // Active Photo Modal
   const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
@@ -193,16 +195,40 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
     setSellers(SellerService.getAll());
   };
 
+  const handleRefreshReturs = async (silent = false) => {
+    if (pullInFlightRef.current) return;
+    pullInFlightRef.current = true;
+    setIsPullingReturs(true);
+    try {
+      const ok = await dbService.pullReturs();
+      loadData();
+      if (!ok && !silent) {
+        toast.error("Gagal memuat data retur dari Google Sheets");
+      }
+    } finally {
+      pullInFlightRef.current = false;
+      setIsPullingReturs(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
     const handleUpdate = () => loadData();
     window.addEventListener("jt_retur_updated", handleUpdate);
     window.addEventListener("jt_sellers_updated", handleUpdate);
+    // ponytail: auto-pull sekali saat layar Retur dibuka agar daftar tidak kosong di perangkat baru.
+    handleRefreshReturs(true);
     return () => {
       window.removeEventListener("jt_retur_updated", handleUpdate);
       window.removeEventListener("jt_sellers_updated", handleUpdate);
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "DAFTAR") {
+      handleRefreshReturs(true);
+    }
+  }, [activeTab]);
 
   // Cleanup scanner on unmount or tab change
   useEffect(() => {
@@ -876,8 +902,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
 
   // Filtered returs for Tab 4 (Daftar)
   const filteredReturs = returs.filter(r => {
-    if (r.DeletedAt) return false;
-    if (filterStatus !== "ALL" && r.Status !== filterStatus) return false;
+    if ((r.DeletedAt || "").toString().trim()) return false;
+    const statusNorm = (r.Status || "").toString().trim().toUpperCase();
+    if (filterStatus !== "ALL" && statusNorm !== filterStatus) return false;
     if (filterSeller !== "ALL" && r.SellerID !== filterSeller && r.Seller !== filterSeller) return false;
     if (filterBagging !== "ALL") {
       const kb = (r.KodeBagging || "").trim().toUpperCase();
@@ -2396,12 +2423,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
             </div>
             
             <button
-              onClick={() => dbService.pullReturs()}
-              className="self-start sm:self-auto flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all"
+              onClick={() => handleRefreshReturs(false)}
+              disabled={isPullingReturs}
+              className="self-start sm:self-auto flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 text-slate-700 rounded-xl text-xs font-bold transition-all"
               title="Tarik data terbaru dari Google Sheets"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-              <span>Muat Ulang</span>
+              <RefreshCw className={`h-3.5 w-3.5 ${isPullingReturs ? "animate-spin" : ""}`} />
+              <span>{isPullingReturs ? "Memuat..." : "Muat Ulang"}</span>
             </button>
           </div>
 
