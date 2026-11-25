@@ -2361,7 +2361,9 @@ export class DatabaseService {
       await this.ensureIdbLoaded();
 
       const url = `${config.appsScriptUrl}${config.appsScriptUrl.includes("?") ? "&" : "?"}action=get_retur`;
-      const res = await fetch(url, { method: "GET", mode: "cors" });
+      // ponytail: log URL aktual & bypass cache browser/SW agar ketidaksesuaian deployment Vercel langsung terlihat.
+      console.warn("[PULL_RETUR_DIAGNOSTIC] Fetching from URL:", config.appsScriptUrl);
+      const res = await fetch(url, { method: "GET", mode: "cors", cache: "no-cache" });
       if (!res.ok) return false;
       const data = await res.json();
       if (!data.success) return false;

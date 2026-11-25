@@ -181,6 +181,13 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
   const [filterStatus, setFilterStatus] = useState<"ALL" | "DITERIMA" | "DISERAHKAN">("ALL");
   const [filterSeller, setFilterSeller] = useState("ALL");
   const [filterBagging, setFilterBagging] = useState("ALL");
+  // ponytail: prevents UI overload and ensures recent successful tests (like yesterday's) are visible by default.
+  const [filterDateFrom, setFilterDateFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return getTodayLocalDateString(d);
+  });
+  const [filterDateTo, setFilterDateTo] = useState<string>(() => getTodayLocalDateString());
   const [groupBy, setGroupBy] = useState<"NONE" | "BAGGING" | "TGL_DATANG" | "SELLER">("NONE");
 
   // Camera scanner & file input refs
@@ -910,6 +917,9 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
       const kb = (r.KodeBagging || "").trim().toUpperCase();
       if (filterBagging === "__EMPTY__" ? kb !== "" : kb !== filterBagging) return false;
     }
+    const recordDate = (r.TglDatang || r.TglTerima || "").slice(0, 10);
+    if (filterDateFrom && recordDate && recordDate < filterDateFrom) return false;
+    if (filterDateTo && recordDate && recordDate > filterDateTo) return false;
     if (filterSearch.trim()) {
       const q = filterSearch.trim().toUpperCase();
       const matchResi = r.Resi.toUpperCase().includes(q);
@@ -2434,7 +2444,7 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
           </div>
 
           {/* Filter Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
             {/* Search Resi / Bagging */}
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -2491,6 +2501,30 @@ export const ReturScreen: React.FC<ReturScreenProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Filter Tanggal Dari */}
+            <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+              <span className="text-[11px] font-bold text-slate-500 whitespace-nowrap">Dari:</span>
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                aria-label="Filter tanggal dari"
+                className="w-full bg-transparent text-xs font-medium text-slate-800 focus:outline-none"
+              />
+            </div>
+
+            {/* Filter Tanggal Sampai */}
+            <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+              <span className="text-[11px] font-bold text-slate-500 whitespace-nowrap">Sampai:</span>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                aria-label="Filter tanggal sampai"
+                className="w-full bg-transparent text-xs font-medium text-slate-800 focus:outline-none"
+              />
             </div>
           </div>
 
