@@ -31,7 +31,8 @@ const RESI_HEADERS = [
   "CancelEvidencePhoto",  // P: Link Foto Bukti Pemisahan Paket Batal
   "CancelHandledBy",      // Q: Operator yang memisahkan paket batal
   "CancelHandledAt",      // R: Waktu pemisahan paket batal
-  "CancelRemark"          // S: Catatan pembatalan paket
+  "CancelRemark",         // S: Catatan pembatalan paket
+  "BatchSeq"              // T: Sesi batch scan harian per seller (default 1)
 ];
 
 function doGet(e) {
@@ -97,6 +98,8 @@ function doPost(e) {
       return handleGetReturBagging(payload.kodeBagging);
     } else if (action === "delete_retur") {
       return handleDeleteRetur(payload.returId, payload.deletedAt, payload.deletedBy);
+    } else if (action === "save_cancel_serah") {
+      return handleSaveCancelSerah(payload);
     }
     
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: "Action '" + action + "' not found" }))
@@ -133,10 +136,12 @@ function syncBatchLocked_(records) {
       
       const sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
       
-      // Set headers jika kosong
+      // Set headers jika kosong, atau migrasi kolom baru non-destruktif
       if (sheet.getLastRow() === 0) {
         sheet.appendRow(RESI_HEADERS);
         sheet.getRange(1, 1, 1, RESI_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
+      } else {
+        ensureResiColumns_(sheet);
       }
       
       // Load existing resis for this sheet from cache, or query and cache if not loaded yet
@@ -198,7 +203,8 @@ function syncBatchLocked_(records) {
         finalCancelEvidencePhoto || "",
         r.CancelHandledBy || "",
         r.CancelHandledAt || "",
-        r.CancelRemark || ""
+        r.CancelRemark || "",
+        Number(r.BatchSeq) >= 1 ? Number(r.BatchSeq) : 1
       ]);
       
       // Track newly added Resi in our local cache list so duplicates within the same batch are resolved without slow sheet re-reads
@@ -363,14 +369,14 @@ function handleGetRecords() {
       const lastRow = sheets[i].getLastRow();
       const lastCol = sheets[i].getLastColumn();
       if (lastRow > 1) {
-        // Read up to 19 columns, but clip to actual lastCol if it is smaller to prevent errors
-        const colsToRead = Math.min(19, lastCol);
+        // Read up to RESI_HEADERS.length (20) columns, clip to actual lastCol for legacy 19-col sheets
+        const colsToRead = Math.min(RESI_HEADERS.length, lastCol);
         const data = sheets[i].getRange(2, 1, lastRow - 1, colsToRead).getValues();
         for (let j = 0; j < data.length; j++) {
           const rawRow = data[j];
-          // Pad row with empty strings up to 19 elements
+          // Pad row with empty strings up to RESI_HEADERS.length elements
           const row = [];
-          for (let colIdx = 0; colIdx < 19; colIdx++) {
+          for (let colIdx = 0; colIdx < RESI_HEADERS.length; colIdx++) {
             row.push(colIdx < rawRow.length ? rawRow[colIdx] : "");
           }
           
@@ -423,6 +429,7 @@ function handleGetRecords() {
             CancelHandledBy: row[16] ? row[16].toString() : "",
             CancelHandledAt: cancelHandledAtStr,
             CancelRemark: row[18] ? row[18].toString() : "",
+            BatchSeq: Number(row[19]) >= 1 ? Number(row[19]) : 1,
             SyncStatus: "SYNCED"
           });
         }
@@ -476,6 +483,7 @@ function updateRowStatus(sheet, resi, status, record) {
         if (record.CancelHandledBy !== undefined) sheet.getRange(rowNum, 17).setValue(record.CancelHandledBy);
         if (record.CancelHandledAt !== undefined) sheet.getRange(rowNum, 18).setValue(record.CancelHandledAt);
         if (record.CancelRemark !== undefined) sheet.getRange(rowNum, 19).setValue(record.CancelRemark);
+        if (record.BatchSeq !== undefined) sheet.getRange(rowNum, 20).setValue(Number(record.BatchSeq) >= 1 ? Number(record.BatchSeq) : 1);
       }
       break;
     }
@@ -646,6 +654,10 @@ function setupSheetHeaders() {
     {
       name: "AUDIT_RETUR",
       headers: AUDIT_RETUR_HEADERS
+    },
+    {
+      name: "DATA_CANCEL_SERAH",
+      headers: CANCEL_SERAH_HEADERS
     }
   ];
   
@@ -1027,6 +1039,22 @@ const HANDOVER_HEADERS = [
 const AUDIT_RETUR_HEADERS = [
   "Waktu", "User", "Role", "Aksi", "RecordID", "Detail"
 ];
+
+const CANCEL_SERAH_HEADERS = [
+  "CancelSerahID", "Resi", "SellerID", "Seller", "Outlet", "TglSerah", "AdminSerah", "FotoBuktiURL", "CreatedAt"
+];
+
+// ponytail: reuse pola ensureReturColumns_ untuk tambah BatchSeq di col 20 secara non-destruktif.
+function ensureResiColumns_(sheet) {
+  if (!sheet) return;
+  const lastCol = sheet.getLastColumn();
+  if (lastCol > 0 && lastCol < RESI_HEADERS.length) {
+    const missingCount = RESI_HEADERS.length - lastCol;
+    sheet.insertColumnsAfter(lastCol, missingCount);
+    const missingHeaders = RESI_HEADERS.slice(lastCol);
+    sheet.getRange(1, lastCol + 1, 1, missingCount).setValues([missingHeaders]).setFontWeight("bold").setBackground("#f1f5f9");
+  }
+}
 
 function ensureReturColumns_(sheet) {
   if (!sheet) return;
@@ -1653,6 +1681,93 @@ function handleDeleteRetur(returIdRaw, deletedAtRaw, deletedByRaw) {
       return jsonOut_({ success: true, returId: cleanReturId, deletedAt: cleanDeletedAt });
     }
     return jsonOut_({ success: true, notFound: true, returId: cleanReturId });
+  } catch (err) {
+    return jsonOut_({ success: false, error: err.toString() });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleSaveCancelSerah(payload) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return jsonOut_({ success: false, error: "Server sibuk (lock timeout), coba lagi dalam beberapa detik." });
+  }
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const rawResis = Array.isArray(payload.resis) ? payload.resis : String(payload.resis || "").split(",");
+    const cleanResis = Array.from(new Set(rawResis.map(function(s) { return (s || "").toString().trim().toUpperCase(); }).filter(Boolean)));
+    if (cleanResis.length === 0) {
+      return jsonOut_({ success: false, error: "Daftar resi kosong" });
+    }
+
+    const cancelSerahId = (payload.cancelSerahId || ("CS-" + Date.now())).toString().trim();
+    const createdAt = (payload.createdAt || new Date().toISOString()).toString().trim();
+    const tglSerah = (payload.tglSerah || Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd")).toString().trim();
+    const adminSerah = (payload.adminSerah || "Owner").toString().trim();
+
+    let finalPhotoUrl = (payload.fotoUrl || "").toString().trim();
+    if (finalPhotoUrl && finalPhotoUrl.indexOf("data:image") === 0) {
+      const driveFolder = DriveApp.getFolderById(FOTO_FOLDER_ID);
+      const rawBase64 = finalPhotoUrl.split(",")[1];
+      const blob = Utilities.newBlob(Utilities.base64Decode(rawBase64), "image/jpeg", "CancelSerah_" + cancelSerahId + "_" + Date.now() + ".jpg");
+      const file = driveFolder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      finalPhotoUrl = file.getUrl();
+    }
+
+    let archiveSheet = ss.getSheetByName("DATA_CANCEL_SERAH");
+    if (!archiveSheet) {
+      archiveSheet = ss.insertSheet("DATA_CANCEL_SERAH");
+      archiveSheet.appendRow(CANCEL_SERAH_HEADERS);
+      archiveSheet.getRange(1, 1, 1, CANCEL_SERAH_HEADERS.length).setFontWeight("bold").setBackground("#f1f5f9");
+    }
+
+    const appends = cleanResis.map(function(resi) {
+      return [
+        cancelSerahId,
+        resi,
+        payload.sellerId || "",
+        payload.seller || "",
+        payload.outlet || "",
+        tglSerah,
+        adminSerah,
+        finalPhotoUrl,
+        createdAt
+      ];
+    });
+    const startRow = archiveSheet.getLastRow() + 1;
+    archiveSheet.getRange(startRow, 1, appends.length, CANCEL_SERAH_HEADERS.length).setValues(appends);
+
+    // Update AlertStatus -> HANDED_OVER pada sheet Data Resi terkait
+    const resiLookup = {};
+    cleanResis.forEach(function(r) { resiLookup[r] = true; });
+    const sheets = ss.getSheets();
+    for (let s = 0; s < sheets.length; s++) {
+      const sheet = sheets[s];
+      const sName = sheet.getName();
+      if (sName.indexOf("Data Resi") !== 0) continue;
+      const lastRow = sheet.getLastRow();
+      if (lastRow <= 1) continue;
+      const resiCol = sheet.getRange(2, 4, lastRow - 1, 1).getValues();
+      for (let i = 0; i < resiCol.length; i++) {
+        const resiVal = (resiCol[i][0] || "").toString().trim().toUpperCase();
+        if (resiLookup[resiVal]) {
+          const rowNum = i + 2;
+          sheet.getRange(rowNum, 14).setValue("HANDED_OVER");
+          if (finalPhotoUrl) sheet.getRange(rowNum, 16).setValue(finalPhotoUrl);
+          sheet.getRange(rowNum, 17).setValue(adminSerah);
+          sheet.getRange(rowNum, 18).setValue(createdAt);
+        }
+      }
+    }
+
+    return jsonOut_({
+      success: true,
+      cancelSerahId: cancelSerahId,
+      photoUrl: finalPhotoUrl,
+      archivedCount: cleanResis.length
+    });
   } catch (err) {
     return jsonOut_({ success: false, error: err.toString() });
   } finally {

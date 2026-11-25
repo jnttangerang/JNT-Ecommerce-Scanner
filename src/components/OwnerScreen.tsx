@@ -8,6 +8,7 @@ import { ServiceBadge } from './ServiceBadge';
  */
 
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { 
   Shield, 
   Key, 
@@ -46,10 +47,11 @@ import {
   Eye,
   X,
   Target,
-  Package
+  Package,
+  Printer
 } from "lucide-react";
 import { ScanRecord, StatusType, Seller, Operator, Outlet } from "../types";
-import { dbService, getDirectDriveImageUrl, getTodayLocalDateString } from "../utils/db";
+import { dbService, getDirectDriveImageUrl, getTodayLocalDateString, subscribeReviewSession, incrementBatchSeq } from "../utils/db";
 import { ReturScreen } from "./ReturScreen";
 import { toast } from "sonner";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
@@ -93,6 +95,22 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const [selectedReviewSeller, setSelectedReviewSeller] = useState<string | null>(null);
+  const [selectedReviewBatch, setSelectedReviewBatch] = useState<{ tanggal: string; batchSeq: number } | null>(null);
+  const [pendingCancelDateFilter, setPendingCancelDateFilter] = useState<"TODAY" | "THIS_WEEK" | "ALL">("TODAY");
+  const [separatingCancelRecord, setSeparatingCancelRecord] = useState<ScanRecord | null>(null);
+  const [separationPhoto, setSeparationPhoto] = useState("");
+  const [separationRemark, setSeparationRemark] = useState("");
+  const [isSavingSeparation, setIsSavingSeparation] = useState(false);
+  const [handoverCancelModal, setHandoverCancelModal] = useState<{
+    seller: string;
+    sellerId?: string;
+    outlet: string;
+    selectedResis: string[];
+    tglSerah: string;
+    adminSerah: string;
+    fotoUrl: string;
+  } | null>(null);
+  const [isSavingCancelHandover, setIsSavingCancelHandover] = useState(false);
   const [reviewSellerPage, setReviewSellerPage] = useState(1);
   const [reviewSellerPageSize, setReviewSellerPageSize] = useState<number | "ALL">(6);
   const [detailRecordIndex, setDetailRecordIndex] = useState<number | null>(null);
@@ -246,6 +264,23 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
       loadData();
     }
   }, [isAuthenticated, isPulling]);
+
+  // ponytail: subscribe status Selesai Scan lintas device dari RTDB (offline fallback tetap ke Config lokal).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const todayStr = getTodayLocalDateString();
+    const unsub = subscribeReviewSession(todayStr, "", ({ completedIds }) => {
+      if (completedIds.length === 0) return;
+      setCompletedRecordIds((prev) => {
+        const merged = Array.from(new Set([...prev, ...completedIds]));
+        if (merged.length === prev.length) return prev;
+        Config.set(CONFIG_KEYS.REVIEW_COMPLETED_DATE, todayStr);
+        Config.set(CONFIG_KEYS.COMPLETED_REVIEW_RECORDS, JSON.stringify(merged));
+        return merged;
+      });
+    });
+    return () => unsub();
+  }, [isAuthenticated]);
 
   // Listen for database updates and reload local records automatically
   useEffect(() => {
@@ -1870,12 +1905,52 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
   }, [allRecords]);
 
   const pendingCancelRecords = React.useMemo(() => {
-    return cancelledRecords.filter(r => r.AlertStatus !== "RESOLVED");
-  }, [cancelledRecords]);
+    const todayStr = getTodayLocalDateString();
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - day + (day === 0 ? -6 : 1));
+    const offset = monday.getTimezoneOffset() * 60000;
+    const weekStartStr = new Date(monday.getTime() - offset).toISOString().split("T")[0];
+
+    return cancelledRecords.filter((r) => {
+      const status = (r.AlertStatus || "").toUpperCase();
+      if (status === "RESOLVED" || status === "HANDED_OVER") return false;
+      if (pendingCancelDateFilter === "TODAY") return r.Tanggal === todayStr;
+      if (pendingCancelDateFilter === "THIS_WEEK") return r.Tanggal >= weekStartStr && r.Tanggal <= todayStr;
+      return true;
+    });
+  }, [cancelledRecords, pendingCancelDateFilter]);
 
   const resolvedCancelRecords = React.useMemo(() => {
-    return cancelledRecords.filter(r => r.AlertStatus === "RESOLVED");
+    return cancelledRecords.filter((r) => r.AlertStatus === "RESOLVED");
   }, [cancelledRecords]);
+
+  // ponytail: kompres foto langsung di browser (max 640px) agar upload Apps Script tetap ringan.
+  const compressCancelPhotoFile = (file: File, onDone: (base64: string) => void) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, 640 / Math.max(img.width, img.height, 1));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          onDone(canvas.toDataURL("image/jpeg", 0.7));
+        }
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      toast.error("Gagal membaca file foto");
+    };
+    img.src = objectUrl;
+  };
 
   // Cancel order trigger function (marks status to CANCELLED)
   const handleMarkCancelled = async (targetResi: string) => {
@@ -1923,11 +1998,15 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     });
   }, [filteredRecords, completedRecordIds]);
 
-  // Get records specifically for the currently selected review seller
+  // Get records specifically for the currently selected review seller & batch session
   const reviewDeckRecords = React.useMemo(() => {
     if (!selectedReviewSeller) return [];
-    return deckEligibleRecords.filter(r => r.Seller === selectedReviewSeller);
-  }, [deckEligibleRecords, selectedReviewSeller]);
+    return deckEligibleRecords.filter((r) => {
+      if (r.Seller !== selectedReviewSeller) return false;
+      if (!selectedReviewBatch) return true;
+      return r.Tanggal === selectedReviewBatch.tanggal && (r.BatchSeq || 1) === selectedReviewBatch.batchSeq;
+    });
+  }, [deckEligibleRecords, selectedReviewSeller, selectedReviewBatch]);
 
   // Reviews indices navigation centered at middle-bottom
   const handlePrevReview = React.useCallback(() => {
@@ -2178,39 +2257,53 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
     };
   }, [selectedReviewSeller, isFocusMode, reviewDeckRecords, filteredRecords, handlePrevReview, handleNextReview]);
 
-  // Get unique list of sellers present in deckEligibleRecords with stats
+  // Get unique list of seller batches present in deckEligibleRecords (Seller + Tanggal + BatchSeq)
   const sellersInFilteredSet = React.useMemo(() => {
-    const map: Record<string, { name: string; total: number; cancelled: number; lastScanTime: string }> = {};
+    const map: Record<string, { key: string; name: string; tanggal: string; batchSeq: number; total: number; cancelled: number; lastScanTime: string }> = {};
     deckEligibleRecords.forEach(r => {
-      if (!map[r.Seller]) {
-        map[r.Seller] = { name: r.Seller, total: 0, cancelled: 0, lastScanTime: r.Jam };
+      const batchSeq = Number(r.BatchSeq) >= 1 ? Number(r.BatchSeq) : 1;
+      const key = `${r.Seller}::${r.Tanggal}::${batchSeq}`;
+      if (!map[key]) {
+        map[key] = { key, name: r.Seller, tanggal: r.Tanggal, batchSeq, total: 0, cancelled: 0, lastScanTime: r.Jam };
       }
-      map[r.Seller].total++;
+      map[key].total++;
       if (r.Status === "CANCELLED") {
-        map[r.Seller].cancelled++;
+        map[key].cancelled++;
       }
-      if (r.Jam > map[r.Seller].lastScanTime) {
-        map[r.Seller].lastScanTime = r.Jam;
+      if (r.Jam > map[key].lastScanTime) {
+        map[key].lastScanTime = r.Jam;
       }
     });
     return Object.values(map).sort((a, b) => b.lastScanTime.localeCompare(a.lastScanTime));
   }, [deckEligibleRecords]);
 
-  // Mark seller's current eligible records as completed
-  const completeSellerRecords = (sellerName: string) => {
-    const sellerRecordsInDeck = deckEligibleRecords.filter(r => r.Seller === sellerName);
+  // Mark seller batch's current eligible records as completed & advance BatchSeq for next scan session
+  const completeSellerRecords = (sellerName: string, tanggal?: string, batchSeq?: number) => {
+    const targetTanggal = tanggal || selectedReviewBatch?.tanggal || getTodayLocalDateString();
+    const targetBatch = batchSeq ?? selectedReviewBatch?.batchSeq;
+    const sellerRecordsInDeck = deckEligibleRecords.filter((r) => {
+      if (r.Seller !== sellerName) return false;
+      if (targetBatch !== undefined) {
+        return r.Tanggal === targetTanggal && (Number(r.BatchSeq) || 1) === targetBatch;
+      }
+      return true;
+    });
     if (sellerRecordsInDeck.length === 0) return;
 
     const newIds = sellerRecordsInDeck.map(r => r.ID);
     const newList = Array.from(new Set([...completedRecordIds, ...newIds]));
-    
+    const maxBatchInDeck = sellerRecordsInDeck.reduce((m, r) => Math.max(m, Number(r.BatchSeq) || 1), targetBatch || 1);
+
     setCompletedRecordIds(newList);
+    Config.set(CONFIG_KEYS.REVIEW_COMPLETED_DATE, getTodayLocalDateString());
     Config.set(CONFIG_KEYS.COMPLETED_REVIEW_RECORDS, JSON.stringify(newList));
-    dbService.completeReviews(newIds);
-    toast.success(`${newIds.length} resi dari ${sellerName} ditandai Selesai!`);
+    void dbService.completeReviews(newIds, { seller: sellerName, tanggal: targetTanggal });
+    void incrementBatchSeq(sellerName, targetTanggal, maxBatchInDeck);
+    toast.success(`${newIds.length} resi ${sellerName} (Batch #${maxBatchInDeck}) ditandai Selesai!`);
 
     if (selectedReviewSeller === sellerName) {
       setSelectedReviewSeller(null);
+      setSelectedReviewBatch(null);
       setReviewIndex(0);
     }
   };
@@ -2275,6 +2368,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               <button
                 onClick={() => {
                   setSelectedReviewSeller(null);
+                  setSelectedReviewBatch(null);
                   setReviewIndex(0);
                 }}
                 type="button"
@@ -2288,7 +2382,9 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               <div className="flex items-center space-x-2">
                 <div className="bg-red-600 w-3.5 h-3.5 rounded-full animate-pulse" />
                 <h2 className="text-sm font-black tracking-widest uppercase text-slate-200">
-                  {selectedReviewSeller ? `FOCUS MODE: ${selectedReviewSeller}` : "OWNER FOCUS MODE (MODE FOKUS)"}
+                  {selectedReviewSeller
+                    ? `FOCUS MODE: ${selectedReviewSeller}${selectedReviewBatch ? ` (BATCH #${selectedReviewBatch.batchSeq})` : ""}`
+                    : "OWNER FOCUS MODE (MODE FOKUS)"}
                 </h2>
               </div>
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">
@@ -2302,7 +2398,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
             {selectedReviewSeller && (
               <button
-                onClick={() => completeSellerRecords(selectedReviewSeller)}
+                onClick={() => completeSellerRecords(selectedReviewSeller, selectedReviewBatch?.tanggal, selectedReviewBatch?.batchSeq)}
                 type="button"
                 className="font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer bg-green-600 hover:bg-green-700 text-white border-none"
               >
@@ -2334,16 +2430,16 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 sellersInFilteredSet.map((s) => {
                   return (
                     <div 
-                      key={s.name}
+                      key={s.key}
                       className="border rounded-2xl p-6 transition-all flex flex-col justify-between hover:border-slate-700 bg-slate-900 border-slate-850 hover:bg-slate-850/50"
                     >
                       <div>
-                        <div className="flex items-start justify-between">
+                        <div className="flex items-start justify-between gap-2">
                           <span className="font-extrabold text-white text-base truncate max-w-[180px]" title={s.name}>
                             {s.name}
                           </span>
-                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider bg-slate-800 text-slate-400 font-medium">
-                            Belum Scan
+                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider bg-slate-800 text-amber-300 font-mono shrink-0">
+                            Batch #{s.batchSeq}
                           </span>
                         </div>
                         
@@ -2359,7 +2455,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                             </div>
                           )}
                           <div className="flex justify-between text-[11px] text-slate-500 pt-1">
-                            <span>Scan Terakhir:</span>
+                            <span>Scan Terakhir ({s.tanggal}):</span>
                             <span className="font-mono">{s.lastScanTime}</span>
                           </div>
                         </div>
@@ -2367,7 +2463,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
                       <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between gap-3">
                         <button
-                          onClick={() => completeSellerRecords(s.name)}
+                          onClick={() => completeSellerRecords(s.name, s.tanggal, s.batchSeq)}
                           type="button"
                           className="px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center space-x-1.5 border cursor-pointer bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-300"
                         >
@@ -2378,6 +2474,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                         <button
                           onClick={() => {
                             setSelectedReviewSeller(s.name);
+                            setSelectedReviewBatch({ tanggal: s.tanggal, batchSeq: s.batchSeq });
                             setReviewIndex(0);
                           }}
                           type="button"
@@ -3419,6 +3516,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
               <button
                 onClick={() => {
                   setSelectedReviewSeller(null);
+                  setSelectedReviewBatch(null);
                   setReviewIndex(0);
                 }}
                 type="button"
@@ -3431,7 +3529,9 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
             <div>
               <h3 className="font-bold text-sm text-[#f20000] flex items-center" style={{ color: "#f20000" }}>
                 <Compass className="h-4 w-4 text-red-650 mr-2 animate-pulse" />
-                {selectedReviewSeller ? `FOTO RESI: ${selectedReviewSeller}` : "REVIEW FOTO RESI & BARCODE SCANNER DECK"}
+                {selectedReviewSeller
+                  ? `FOTO RESI: ${selectedReviewSeller}${selectedReviewBatch ? ` (Batch #${selectedReviewBatch.batchSeq})` : ""}`
+                  : "REVIEW FOTO RESI & BARCODE SCANNER DECK"}
               </h3>
               <p className="text-[10px] text-slate-500 font-medium">
                 {selectedReviewSeller 
@@ -3445,7 +3545,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           <div className="flex items-center space-x-2 self-start sm:self-center">
             {selectedReviewSeller && (
               <button
-                onClick={() => completeSellerRecords(selectedReviewSeller)}
+                onClick={() => completeSellerRecords(selectedReviewSeller, selectedReviewBatch?.tanggal, selectedReviewBatch?.batchSeq)}
                 type="button"
                 className="font-black px-4 py-2 rounded-xl text-xs transition-all flex items-center space-x-1.5 shadow-sm border cursor-pointer bg-green-600 hover:bg-green-700 text-white border-none"
               >
@@ -3490,16 +3590,16 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                   return paginatedSellers.map((s) => {
                     return (
                       <div 
-                        key={s.name}
+                        key={s.key}
                         className="border rounded-2xl p-4 transition-all flex flex-col justify-between hover:shadow-md bg-white border-slate-200/80 hover:border-red-200"
                       >
                         <div>
-                          <div className="flex items-start justify-between">
+                          <div className="flex items-start justify-between gap-2">
                             <span className="font-extrabold text-slate-800 text-sm md:text-base truncate max-w-[170px]" title={s.name}>
                               {s.name}
                             </span>
-                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-slate-100 text-slate-500 font-medium">
-                              Belum Scan
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200 font-mono shrink-0">
+                              Batch #{s.batchSeq}
                             </span>
                           </div>
                           
@@ -3515,7 +3615,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                               </div>
                             )}
                             <div className="flex justify-between text-[10px] text-slate-400 pt-1">
-                              <span>Scan Terakhir:</span>
+                              <span>Scan Terakhir ({s.tanggal}):</span>
                               <span className="font-mono font-bold text-slate-600">{s.lastScanTime}</span>
                             </div>
                           </div>
@@ -3523,7 +3623,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
                         <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
                           <button
-                            onClick={() => completeSellerRecords(s.name)}
+                            onClick={() => completeSellerRecords(s.name, s.tanggal, s.batchSeq)}
                             type="button"
                             className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center space-x-1 border border-transparent cursor-pointer text-white hover:opacity-90"
                             style={{ backgroundColor: "#ff0000" }}
@@ -3535,6 +3635,7 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                           <button
                             onClick={() => {
                               setSelectedReviewSeller(s.name);
+                              setSelectedReviewBatch({ tanggal: s.tanggal, batchSeq: s.batchSeq });
                               setReviewIndex(0);
                             }}
                             type="button"
@@ -3788,13 +3889,21 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Column 1: Pending Separations */}
-          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col h-[300px]">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col h-[320px]">
+            <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2 gap-2">
               <span className="text-xs font-black tracking-wide text-red-700 uppercase flex items-center gap-1.5">
                 <span className="h-2 w-2 rounded-full bg-red-600 animate-ping" />
                 MENUNGGU PEMISAHAN ({pendingCancelRecords.length})
               </span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase">Pending</span>
+              <select
+                value={pendingCancelDateFilter}
+                onChange={(e) => setPendingCancelDateFilter(e.target.value as "TODAY" | "THIS_WEEK" | "ALL")}
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-600 focus:outline-none"
+              >
+                <option value="TODAY">Hari Ini</option>
+                <option value="THIS_WEEK">Minggu Ini</option>
+                <option value="ALL">Semua</option>
+              </select>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
@@ -3804,19 +3913,28 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                 </div>
               ) : (
                 pendingCancelRecords.map((r, idx) => (
-                  <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
-                    <div className="text-xs space-y-1">
+                  <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between gap-2 shadow-sm">
+                    <div className="text-xs space-y-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-mono font-bold text-slate-800 tracking-wider">{r.Resi}</span>
                         <ServiceBadge resi={r.Resi} />
                       </div>
-                      <div className="text-[10px] text-slate-500 font-medium">
-                        Seller: {r.Seller} • Operator: {r.Operator}
+                      <div className="text-[10px] text-slate-500 font-medium truncate">
+                        Seller: {r.Seller} • {r.Tanggal}
                       </div>
                     </div>
-                    <span className="bg-red-50 text-red-600 border border-red-100 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
-                      Pending
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSeparatingCancelRecord(r);
+                        setSeparationPhoto("");
+                        setSeparationRemark(r.CancelRemark || "");
+                      }}
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider flex items-center gap-1 shrink-0 cursor-pointer border-none"
+                    >
+                      <Camera className="h-3 w-3" />
+                      <span>Pisahkan & Foto</span>
+                    </button>
                   </div>
                 ))
               )}
@@ -3824,23 +3942,23 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           </div>
 
           {/* Column 2: Resolved Separations */}
-          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col h-[300px]">
+          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 flex flex-col h-[320px]">
             <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
               <span className="text-xs font-black tracking-wide text-emerald-700 uppercase flex items-center gap-1.5">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 BERHASIL DIPISAHKAN ({resolvedCancelRecords.length})
               </span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase">Resolved</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase">Siap Serah</span>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               {resolvedCancelRecords.length === 0 ? (
                 <div className="text-center py-16 text-slate-400 text-xs font-semibold">
-                  Belum ada paket batal yang berhasil dipisahkan hari ini.
+                  Belum ada paket batal yang siap diserahkan.
                 </div>
               ) : (
                 resolvedCancelRecords.map((r, idx) => (
-                  <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                  <div key={`${r.ID}-${idx}`} className="bg-white border border-slate-100 rounded-xl p-3 flex items-center justify-between gap-2 shadow-sm">
                     <div className="text-xs space-y-1 min-w-0 flex-1 pr-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-mono font-bold text-slate-800 tracking-wider">{r.Resi}</span>
@@ -3856,11 +3974,12 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                     <div className="flex items-center space-x-2 shrink-0">
                       {r.CancelEvidencePhoto && (
                         <button
+                          type="button"
                           onClick={() => {
-                            const idx = filteredRecords.findIndex(item => item.ID === r.ID);
-                            if (idx !== -1) setDetailRecordIndex(idx);
+                            const recIdx = filteredRecords.findIndex(item => item.ID === r.ID);
+                            if (recIdx !== -1) setDetailRecordIndex(recIdx);
                           }}
-                          className="h-10 w-10 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer"
+                          className="h-9 w-9 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer"
                           title="Lihat Bukti Foto Pemisahan"
                         >
                           <img
@@ -3871,9 +3990,24 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
                           />
                         </button>
                       )}
-                      <span className="bg-green-50 text-green-700 border border-green-100 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                        Selesai
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sellerObj = sellers.find((s) => s.nama === r.Seller);
+                          setHandoverCancelModal({
+                            seller: r.Seller,
+                            sellerId: sellerObj?.id || "",
+                            outlet: r.Outlet || outlets[0]?.NamaOutlet || "J&T Pasir Jaha Balaraja",
+                            selectedResis: [r.Resi],
+                            tglSerah: getTodayLocalDateString(),
+                            adminSerah: "Owner",
+                            fotoUrl: "",
+                          });
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-lg uppercase tracking-wider shrink-0 cursor-pointer border-none"
+                      >
+                        Serahkan ke Seller
+                      </button>
                     </div>
                   </div>
                 ))
@@ -3882,6 +4016,365 @@ export const OwnerScreen: React.FC<OwnerDashboardProps> = ({ onStatusChanged, is
           </div>
         </div>
       </div>
+
+      {/* Modal 1: Pisahkan & Foto Paket Batal */}
+      {separatingCancelRecord && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-black text-slate-900 uppercase">Pisahkan Paket Batal</h4>
+                <p className="text-[11px] font-mono text-slate-500">
+                  {separatingCancelRecord.Resi} • {separatingCancelRecord.Seller}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSeparatingCancelRecord(null)}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                  Foto Bukti Pemisahan <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) compressCancelPhotoFile(file, setSeparationPhoto);
+                  }}
+                  className="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-900 file:text-white file:text-xs file:font-bold"
+                />
+                {separationPhoto && (
+                  <img
+                    src={separationPhoto}
+                    alt="Preview Pemisahan"
+                    className="mt-2 h-36 w-full object-contain rounded-xl bg-slate-950 border border-slate-200"
+                  />
+                )}
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                  Catatan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={separationRemark}
+                  onChange={(e) => setSeparationRemark(e.target.value)}
+                  placeholder="Contoh: Sudah dipisahkan ke rak cancel"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-red-600"
+                />
+              </div>
+            </div>
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSeparatingCancelRecord(null)}
+                className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={!separationPhoto || isSavingSeparation}
+                onClick={async () => {
+                  if (!separatingCancelRecord || !separationPhoto) return;
+                  setIsSavingSeparation(true);
+                  try {
+                    const ok = await dbService.resolveCancelAlert(
+                      separatingCancelRecord.Resi,
+                      separationPhoto,
+                      "Owner",
+                      separationRemark.trim() || "Dipisahkan oleh Owner"
+                    );
+                    if (ok) {
+                      void dbService.syncPendingRecords();
+                      loadData();
+                      onStatusChanged();
+                      toast.success(`Resi ${separatingCancelRecord.Resi} dipindahkan ke Berhasil Dipisahkan`);
+                      setSeparatingCancelRecord(null);
+                    } else {
+                      toast.error("Gagal memperbarui status paket batal");
+                    }
+                  } finally {
+                    setIsSavingSeparation(false);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-bold cursor-pointer"
+              >
+                {isSavingSeparation ? "Menyimpan..." : "Simpan Pemisahan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Serahkan Paket Batal ke Seller + Cetak Manifest A4 */}
+      {handoverCancelModal && (() => {
+        const sameSellerResolved = resolvedCancelRecords.filter(
+          (r) => r.Seller === handoverCancelModal.seller
+        );
+        const selectedSet = new Set(handoverCancelModal.selectedResis);
+        const selectedCancelItems = sameSellerResolved.filter((r) => selectedSet.has(r.Resi));
+        const blankRowsCount = Math.max(0, 10 - selectedCancelItems.length);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 no-print">
+            <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-black text-slate-900 uppercase">Serahkan Paket Batal ke Seller</h4>
+                  <p className="text-xs font-bold text-red-600">{handoverCancelModal.seller}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHandoverCancelModal(null)}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] font-bold text-slate-700 uppercase">
+                      Pilih Resi Seller ({selectedCancelItems.length}/{sameSellerResolved.length})
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allSelected = selectedCancelItems.length === sameSellerResolved.length;
+                        setHandoverCancelModal({
+                          ...handoverCancelModal,
+                          selectedResis: allSelected ? [] : sameSellerResolved.map((r) => r.Resi),
+                        });
+                      }}
+                      className="text-[11px] font-bold text-red-600 hover:underline cursor-pointer"
+                    >
+                      {selectedCancelItems.length === sameSellerResolved.length ? "Batal Semua" : "Pilih Semua"}
+                    </button>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-xl p-2 space-y-1.5 bg-slate-50">
+                    {sameSellerResolved.map((item) => {
+                      const checked = selectedSet.has(item.Resi);
+                      return (
+                        <label
+                          key={item.ID || item.Resi}
+                          className="flex items-center justify-between bg-white border border-slate-100 rounded-lg px-2.5 py-1.5 text-xs cursor-pointer"
+                        >
+                          <span className="flex items-center gap-2 font-mono font-bold text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                const next = checked
+                                  ? handoverCancelModal.selectedResis.filter((x) => x !== item.Resi)
+                                  : [...handoverCancelModal.selectedResis, item.Resi];
+                                setHandoverCancelModal({ ...handoverCancelModal, selectedResis: next });
+                              }}
+                            />
+                            <span>{item.Resi}</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">{item.Tanggal}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Tanggal Serah</label>
+                    <input
+                      type="date"
+                      value={handoverCancelModal.tglSerah}
+                      onChange={(e) => setHandoverCancelModal({ ...handoverCancelModal, tglSerah: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Admin Penyerah</label>
+                    <input
+                      type="text"
+                      value={handoverCancelModal.adminSerah}
+                      onChange={(e) => setHandoverCancelModal({ ...handoverCancelModal, adminSerah: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                    Foto Bukti Serah Terima <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        compressCancelPhotoFile(file, (b64) =>
+                          setHandoverCancelModal((prev) => (prev ? { ...prev, fotoUrl: b64 } : null))
+                        );
+                      }
+                    }}
+                    className="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-900 file:text-white file:text-xs file:font-bold"
+                  />
+                  {handoverCancelModal.fotoUrl && (
+                    <img
+                      src={handoverCancelModal.fotoUrl}
+                      alt="Bukti Serah Batal"
+                      className="mt-2 h-32 w-full object-contain rounded-xl bg-slate-950 border border-slate-200"
+                    />
+                  )}
+                </div>
+              </div>
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={selectedCancelItems.length === 0}
+                  onClick={() => window.print()}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  <span>Cetak Manifest A4</span>
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHandoverCancelModal(null)}
+                    className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-bold cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedCancelItems.length === 0 || !handoverCancelModal.fotoUrl || isSavingCancelHandover}
+                    onClick={async () => {
+                      setIsSavingCancelHandover(true);
+                      try {
+                        const res = await dbService.saveCancelSerah({
+                          resis: selectedCancelItems.map((r) => r.Resi),
+                          seller: handoverCancelModal.seller,
+                          sellerId: handoverCancelModal.sellerId,
+                          outlet: handoverCancelModal.outlet,
+                          tglSerah: handoverCancelModal.tglSerah,
+                          adminSerah: handoverCancelModal.adminSerah || "Owner",
+                          fotoUrl: handoverCancelModal.fotoUrl,
+                        });
+                        if (res.success) {
+                          loadData();
+                          onStatusChanged();
+                          toast.success(
+                            `${selectedCancelItems.length} paket batal diarsipkan (${res.cloudSynced ? "Sinkron Sheet" : "Tersimpan Lokal"})`
+                          );
+                          setHandoverCancelModal(null);
+                        } else {
+                          toast.error(res.error || "Gagal menyimpan serah terima");
+                        }
+                      } finally {
+                        setIsSavingCancelHandover(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-bold cursor-pointer"
+                  >
+                    {isSavingCancelHandover ? "Mengarsipkan..." : `Simpan & Arsipkan (${selectedCancelItems.length})`}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* ponytail: reuse pola .manifest-print-root + @media print A4 dari ReturScreen.tsx */}
+            {typeof document !== "undefined" && createPortal(
+              <div className="manifest-print-root">
+                <div className="text-center mb-4">
+                  <h2 className="text-base font-bold tracking-wide uppercase text-black">
+                    MANIFEST SERAH TERIMA PAKET BATAL
+                  </h2>
+                </div>
+                <div className="mb-4 text-xs font-semibold text-black space-y-1">
+                  <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                    <span>Tanggal penyerahan</span><span>:</span><span>{handoverCancelModal.tglSerah}</span>
+                  </div>
+                  <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                    <span>Mini Drop Point J&amp;T</span><span>:</span><span>{handoverCancelModal.outlet}</span>
+                  </div>
+                  <div className="grid grid-cols-[160px_10px_1fr] items-baseline">
+                    <span>Nama Seller</span><span>:</span><span>{handoverCancelModal.seller}</span>
+                  </div>
+                </div>
+                <table className="manifest-table w-full border-collapse border border-black text-xs text-black">
+                  <thead>
+                    <tr className="font-bold border-b border-black">
+                      <th className="border border-black px-2 py-1.5 text-center w-10">No.</th>
+                      <th className="border border-black px-2 py-1.5 text-left">Resi</th>
+                      <th className="border border-black px-2 py-1.5 text-left">Tanggal Scan</th>
+                      <th className="border border-black px-2 py-1.5 text-left">Catatan</th>
+                      <th className="border border-black px-2 py-1.5 text-center w-16">Ceklist</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedCancelItems.map((r, idx) => (
+                      <tr key={r.ID || r.Resi} className="border-b border-black">
+                        <td className="border border-black px-2 py-1.5 text-center font-mono">{idx + 1}</td>
+                        <td className="border border-black px-2 py-1.5 font-mono font-bold">{r.Resi}</td>
+                        <td className="border border-black px-2 py-1.5 font-mono">{r.Tanggal}</td>
+                        <td className="border border-black px-2 py-1.5">{r.CancelRemark || "Batal Pembeli"}</td>
+                        <td className="border border-black px-2 py-1.5 text-center">
+                          <span className="inline-block w-3.5 h-3.5 border border-black"></span>
+                        </td>
+                      </tr>
+                    ))}
+                    {Array.from({ length: blankRowsCount }).map((_, bIdx) => (
+                      <tr key={`cancel-blank-${bIdx}`} className="border-b border-black">
+                        <td className="border border-black px-2 py-1.5 text-center font-mono">{selectedCancelItems.length + bIdx + 1}</td>
+                        <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                        <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                        <td className="border border-black px-2 py-1.5">&nbsp;</td>
+                        <td className="border border-black px-2 py-1.5 text-center"><span className="inline-block w-3.5 h-3.5 border border-black"></span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="text-xs font-bold my-3 text-black">Total paket: {selectedCancelItems.length}</div>
+                <div className="manifest-signature-block mt-4 text-black">
+                  <div className="grid grid-cols-2 gap-8 text-xs">
+                    <div className="space-y-1">
+                      <p className="font-semibold">Yang menyerahkan,</p>
+                      <p className="font-semibold">PIC J&amp;T Express</p>
+                      <div className="min-h-[25mm] h-[28mm]"></div>
+                      <p className="font-bold">{handoverCancelModal.adminSerah || "Owner"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-semibold">Diterima,</p>
+                      <p className="font-semibold">PIC Seller</p>
+                      <div className="min-h-[25mm] h-[28mm]"></div>
+                      <div className="border-b border-black w-48 mb-1"></div>
+                      <p className="text-[11px]">Nama - Posisi</p>
+                    </div>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )}
+            <style>{`
+              @media print {
+                @page { size: A4 portrait; margin: 12mm; }
+                body > *:not(.manifest-print-root) { display: none !important; }
+                .manifest-print-root { display: block !important; position: static !important; width: 100% !important; background: #fff !important; color: #000 !important; }
+                .manifest-print-root * { color: #000 !important; }
+                table.manifest-table { width: 100% !important; border-collapse: collapse !important; }
+                table.manifest-table th, table.manifest-table td { border: 1px solid #000 !important; padding: 4px 6px !important; }
+              }
+              @media screen { .manifest-print-root { display: none !important; } }
+            `}</style>
+          </div>
+        );
+      })()}
 
       {/* Main filter query and full records directory catalog */}
       <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">

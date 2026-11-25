@@ -5,7 +5,7 @@ import { Config, CONFIG_KEYS } from './config';
  */
 
 import { ScanRecord, Seller, Outlet, Operator, StatusType, ReturRecord, ReturHandover, ReturKondisi, ReturMetode, ReturStatus, RETUR_STATUS } from "../types";
-import { ref, set, onValue, serverTimestamp } from "firebase/database";
+import { ref, set, get, onValue, serverTimestamp } from "firebase/database";
 import { rtdb } from "../firebase";
 
 export function slugifySeller(seller: string): string {
@@ -80,6 +80,110 @@ export function subscribePickupRecon(
     onUpdate([]);
     return () => {};
   }
+}
+
+// ponytail: reuse pola RTDB pickup_recon untuk sinkron status Selesai Scan & BatchSeq lintas perangkat (<1s).
+export function buildReviewSessionPath(
+  tanggal: string,
+  seller?: string,
+  field?: "completedIds" | "batchSeq"
+): string {
+  const cleanTgl = (tanggal || "").trim().replace(/[^0-9-]/g, "") || getTodayLocalDateString();
+  if (!seller || !seller.trim()) return `review_sessions/${cleanTgl}`;
+  const base = `review_sessions/${cleanTgl}/${slugifySeller(seller)}`;
+  return field ? `${base}/${field}` : base;
+}
+
+const getBatchSeqCacheKey = (tanggal: string, seller: string) =>
+  `jt_batch_seq_${(tanggal || "").trim()}_${slugifySeller(seller)}`;
+
+export function getCachedBatchSeq(seller: string, tanggal: string = getTodayLocalDateString()): number {
+  try {
+    const raw = localStorage.getItem(getBatchSeqCacheKey(tanggal, seller));
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function setCachedBatchSeq(seller: string, tanggal: string, batchSeq: number): void {
+  try {
+    localStorage.setItem(getBatchSeqCacheKey(tanggal, seller), String(Math.max(1, Number(batchSeq) || 1)));
+  } catch {}
+}
+
+export function subscribeReviewSession(
+  tanggal: string,
+  seller: string,
+  onUpdate: (data: { completedIds: string[]; batchSeq: number }) => void
+): () => void {
+  const cleanTgl = (tanggal || "").trim() || getTodayLocalDateString();
+  try {
+    const targetRef = ref(rtdb, buildReviewSessionPath(cleanTgl, seller));
+    return onValue(
+      targetRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        if (!val || typeof val !== "object") {
+          onUpdate({ completedIds: [], batchSeq: seller ? getCachedBatchSeq(seller, cleanTgl) : 1 });
+          return;
+        }
+        if (seller && seller.trim()) {
+          const ids = Array.isArray(val.completedIds) ? val.completedIds.map(String).filter(Boolean) : [];
+          const seq = Number(val.batchSeq) >= 1 ? Number(val.batchSeq) : getCachedBatchSeq(seller, cleanTgl);
+          setCachedBatchSeq(seller, cleanTgl, seq);
+          onUpdate({ completedIds: ids, batchSeq: seq });
+          return;
+        }
+        // Owner dashboard subscribes at date root to aggregate all sellers on cleanTgl
+        const mergedIds = new Set<string>();
+        Object.values(val).forEach((entry: any) => {
+          if (entry && Array.isArray(entry.completedIds)) {
+            entry.completedIds.forEach((id: any) => {
+              const s = String(id || "").trim();
+              if (s) mergedIds.add(s);
+            });
+          }
+        });
+        onUpdate({ completedIds: Array.from(mergedIds), batchSeq: 1 });
+      },
+      (err) => {
+        console.warn("RTDB subscribeReviewSession error:", err);
+      }
+    );
+  } catch (err) {
+    console.warn("RTDB subscribeReviewSession init error:", err);
+    return () => {};
+  }
+}
+
+export async function incrementBatchSeq(
+  seller: string,
+  tanggal: string = getTodayLocalDateString(),
+  minCurrentSeq = 1
+): Promise<number> {
+  const cleanTgl = (tanggal || "").trim() || getTodayLocalDateString();
+  let current = Math.max(1, minCurrentSeq, getCachedBatchSeq(seller, cleanTgl));
+  if (typeof navigator === "undefined" || navigator.onLine) {
+    try {
+      const snap = await get(ref(rtdb, buildReviewSessionPath(cleanTgl, seller, "batchSeq")));
+      const remoteVal = Number(snap.val());
+      if (Number.isFinite(remoteVal) && remoteVal >= current) {
+        current = remoteVal;
+      }
+    } catch {}
+  }
+  const nextSeq = current + 1;
+  setCachedBatchSeq(seller, cleanTgl, nextSeq);
+  if (typeof navigator === "undefined" || navigator.onLine) {
+    try {
+      await set(ref(rtdb, buildReviewSessionPath(cleanTgl, seller, "batchSeq")), nextSeq);
+    } catch (err) {
+      console.warn("RTDB incrementBatchSeq skipped (offline fallback):", err);
+    }
+  }
+  return nextSeq;
 }
 
 /**
@@ -1045,6 +1149,7 @@ export class DatabaseService {
     operator: string;
     photoURL?: string;
     jenisLayanan?: "DROP_OFF" | "PICKUP";
+    batchSeq?: number;
   }): Promise<{ success: boolean; record?: ScanRecord; error?: string }> {
     const resi = data.resi.trim().toUpperCase();
     if (!resi) return { success: false, error: "Tracking number empty" };
@@ -1071,6 +1176,10 @@ export class DatabaseService {
     // Determine sync state - always start as PENDING so that the queue picks it up to upload to the server
     const syncStatus = "PENDING";
 
+    const activeBatchSeq = data.batchSeq && data.batchSeq >= 1
+      ? data.batchSeq
+      : getCachedBatchSeq(data.seller, tanggal);
+
     const newRecord: ScanRecord = {
       ID: String(records.length + 5001),
       Tanggal: tanggal,
@@ -1083,6 +1192,7 @@ export class DatabaseService {
       PhotoURL: photo,
       SyncStatus: syncStatus,
       ScanTimestamp: now.getTime(),
+      BatchSeq: activeBatchSeq,
       ...(data.jenisLayanan ? { JenisLayanan: data.jenisLayanan } : {}),
       PackageStatus: "NONE",
       WaybillStatus: "NONE",
@@ -1214,7 +1324,8 @@ export class DatabaseService {
       CancelHandledAt: new Date().toISOString(),
       CancelRemark: remark,
       AlertStatus: "RESOLVED",
-      alertStatus: "RESOLVED" // keep alertStatus synchronized for compatibility
+      alertStatus: "RESOLVED", // keep alertStatus synchronized for compatibility
+      SyncStatus: "PENDING"
     };
 
     return await this.saveRecords(records);
@@ -1224,11 +1335,15 @@ export class DatabaseService {
    * Deletes a specific scan record/resi from local database
    */
 
-  public async completeReviews(ids: string[]): Promise<boolean> {
+  public async completeReviews(
+    ids: string[],
+    meta?: { seller?: string; tanggal?: string }
+  ): Promise<boolean> {
     const records = [...this.getRecords()];
     let updatedCount = 0;
     const idSet = new Set(ids);
-    
+    const groupedBySellerDate = new Map<string, { seller: string; tanggal: string; ids: string[] }>();
+
     for (let i = 0; i < records.length; i++) {
       if (idSet.has(records[i].ID)) {
         records[i] = {
@@ -1236,13 +1351,44 @@ export class DatabaseService {
           ReviewStatus: "COMPLETED"
         };
         updatedCount++;
+        const s = records[i].Seller || meta?.seller || "";
+        const t = records[i].Tanggal || meta?.tanggal || getTodayLocalDateString();
+        if (s) {
+          const key = `${t}::${slugifySeller(s)}`;
+          const entry = groupedBySellerDate.get(key) || { seller: s, tanggal: t, ids: [] };
+          entry.ids.push(records[i].ID);
+          groupedBySellerDate.set(key, entry);
+        }
       }
     }
-    
-    if (updatedCount > 0) {
-      return await this.saveRecords(records);
+
+    if (groupedBySellerDate.size === 0 && meta?.seller && ids.length > 0) {
+      const t = meta.tanggal || getTodayLocalDateString();
+      groupedBySellerDate.set(`${t}::${slugifySeller(meta.seller)}`, {
+        seller: meta.seller,
+        tanggal: t,
+        ids: [...ids]
+      });
     }
-    return true;
+
+    const ok = updatedCount > 0 ? await this.saveRecords(records) : true;
+
+    // ponytail: push completedIds ke RTDB non-blocking agar Owner di device lain langsung sinkron (<1s).
+    if (typeof navigator === "undefined" || navigator.onLine) {
+      groupedBySellerDate.forEach(async ({ seller, tanggal, ids: groupIds }) => {
+        try {
+          const path = buildReviewSessionPath(tanggal, seller, "completedIds");
+          const snap = await get(ref(rtdb, path));
+          const existing = Array.isArray(snap.val()) ? snap.val().map(String) : [];
+          const merged = Array.from(new Set([...existing, ...groupIds]));
+          await set(ref(rtdb, path), merged);
+        } catch (err) {
+          console.warn("RTDB completeReviews push skipped (offline fallback):", err);
+        }
+      });
+    }
+
+    return ok;
   }
 
   public deleteRecord(resi: string): boolean {
@@ -1712,6 +1858,7 @@ export class DatabaseService {
                 ...cloudRec,
                 ID: localRec.ID || cloudRec.ID,
                 ScanTimestamp: localRec.ScanTimestamp || cloudRec.ScanTimestamp,
+                BatchSeq: cloudRec.BatchSeq || localRec.BatchSeq || 1,
                 SyncStatus: "SYNCED",
                 // Preserve business states if they have been locally initialized/changed
                 PackageStatus: (localRec.PackageStatus && localRec.PackageStatus !== "NONE") ? localRec.PackageStatus : (cloudRec.PackageStatus || "NONE"),
@@ -2490,6 +2637,88 @@ export class DatabaseService {
     } catch {
       return [];
     }
+  }
+
+  // ponytail: arsip serah terima paket batal ke DATA_CANCEL_SERAH + reuse CancelEvidencePhoto untuk bukti serah.
+  public async saveCancelSerah(params: {
+    resis: string[];
+    seller: string;
+    sellerId?: string;
+    outlet: string;
+    tglSerah: string;
+    adminSerah: string;
+    fotoUrl: string;
+  }): Promise<{ success: boolean; cancelSerahId?: string; cloudSynced?: boolean; error?: string }> {
+    const cleanResis = Array.from(new Set((params.resis || []).map((r) => r.trim().toUpperCase()).filter(Boolean)));
+    if (cleanResis.length === 0) {
+      return { success: false, error: "Pilih minimal 1 resi batal untuk diserahkan." };
+    }
+    if (!params.fotoUrl) {
+      return { success: false, error: "Foto bukti serah terima wajib diambil." };
+    }
+
+    const cancelSerahId = `CS-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const nowIso = new Date().toISOString();
+    const resiSet = new Set(cleanResis);
+    const records = [...this.getRecords()];
+    for (let i = 0; i < records.length; i++) {
+      if (resiSet.has((records[i].Resi || "").toUpperCase())) {
+        records[i] = {
+          ...records[i],
+          AlertStatus: "HANDED_OVER",
+          alertStatus: "HANDED_OVER",
+          CancelEvidencePhoto: params.fotoUrl || records[i].CancelEvidencePhoto,
+          CancelHandledBy: params.adminSerah || records[i].CancelHandledBy,
+          CancelHandledAt: nowIso,
+          SyncStatus: "PENDING",
+        };
+      }
+    }
+    await this.saveRecords(records);
+
+    let cloudSynced = false;
+    const config = this.getCloudConfig();
+    if (
+      config.appsScriptUrl &&
+      !config.appsScriptUrl.includes("Example_Apps_Script_Web_App") &&
+      !config.appsScriptUrl.includes("AKfycbz_Example") &&
+      (typeof navigator === "undefined" || navigator.onLine)
+    ) {
+      try {
+        const res = await fetch(config.appsScriptUrl, {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            action: "save_cancel_serah",
+            cancelSerahId,
+            resis: cleanResis,
+            sellerId: params.sellerId || "",
+            seller: params.seller,
+            outlet: params.outlet,
+            tglSerah: params.tglSerah || getTodayLocalDateString(),
+            adminSerah: params.adminSerah || "Owner",
+            fotoUrl: params.fotoUrl,
+            createdAt: nowIso,
+          }),
+        });
+        const data = await res.json();
+        if (data && data.success) {
+          cloudSynced = true;
+          const finalUrl = data.photoUrl || params.fotoUrl;
+          const syncedRecs = [...this.getRecords()].map((r) =>
+            resiSet.has((r.Resi || "").toUpperCase())
+              ? { ...r, CancelEvidencePhoto: finalUrl, SyncStatus: "SYNCED" as const }
+              : r
+          );
+          await this.saveRecords(syncedRecs);
+        }
+      } catch (err) {
+        console.warn("saveCancelSerah cloud sync skipped (saved locally):", err);
+      }
+    }
+
+    return { success: true, cancelSerahId, cloudSynced };
   }
 
   /**

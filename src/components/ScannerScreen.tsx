@@ -36,7 +36,7 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { ScanRecord, StatusType } from "../types";
-import { dbService, createMockResiPhoto, getDirectDriveImageUrl, getTodayLocalDateString, publishPickupScanResi, subscribePickupRecon } from "../utils/db";
+import { dbService, createMockResiPhoto, getDirectDriveImageUrl, getTodayLocalDateString, publishPickupScanResi, subscribePickupRecon, subscribeReviewSession } from "../utils/db";
 import { audioService } from "../utils/audio";
 import { triggerHaptic } from "../utils/haptics";
 import { estimateSharpness, BLUR_WARNING_THRESHOLD } from "../utils/blur";
@@ -98,8 +98,16 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
 
   // ponytail: pakai RTDB onValue agar rekonsiliasi lintas perangkat sub-detik tanpa polling Apps Script.
   const todayReconDate = getTodayLocalDateString();
+  const [activeBatchSeq, setActiveBatchSeq] = useState(1);
   useEffect(() => {
     const unsub = subscribePickupRecon(config.seller, todayReconDate, setRemoteResis);
+    return () => unsub();
+  }, [config.seller, todayReconDate]);
+
+  useEffect(() => {
+    const unsub = subscribeReviewSession(todayReconDate, config.seller, ({ batchSeq }) => {
+      setActiveBatchSeq(batchSeq);
+    });
     return () => unsub();
   }, [config.seller, todayReconDate]);
 
@@ -1143,7 +1151,8 @@ export const ScannerScreen: React.FC<ScannerProps> = ({
         seller: config.seller,
         operator: config.operator,
         photoURL: pendingValidation.photoURL,
-        jenisLayanan
+        jenisLayanan,
+        batchSeq: activeBatchSeq
       });
 
       const saveTime = Date.now() - startSaveTime;

@@ -19,6 +19,7 @@ export interface ScanRecord {
   PhotoURL: string; // Base64 data-uri or simulated URL
   SyncStatus: SyncStatusType;
   ScanTimestamp: number; // for sorting
+  BatchSeq?: number; // ponytail: sesi batch harian per seller (default 1)
   JenisLayanan?: "DROP_OFF" | "PICKUP";
   RetakeStatus?: string;
   alertStatus?: string;
