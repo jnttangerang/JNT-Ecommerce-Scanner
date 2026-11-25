@@ -2366,8 +2366,10 @@ export class DatabaseService {
       const data = await res.json();
       if (!data.success) return false;
 
-      const serverReturs: ReturRecord[] = Array.isArray(data.returs) ? data.returs : [];
-      const serverHandovers: ReturHandover[] = Array.isArray(data.handovers) ? data.handovers : [];
+      const rawReturs = data.returs ?? data?.data?.returs ?? [];
+      const serverReturs: ReturRecord[] = Array.isArray(rawReturs) ? rawReturs : [];
+      const rawHandovers = data.handovers ?? data?.data?.handovers ?? [];
+      const serverHandovers: ReturHandover[] = Array.isArray(rawHandovers) ? rawHandovers : [];
 
       // Merge returs (TIDAK menimpa PENDING atau FAILED, dan TIDAK ubah jika UpdatedAt lokal lebih baru, preserve TglDatang, IsiPaket & Bagging)
       const localMap = new Map(this.retursCache.map(r => [r.ReturID, r]));

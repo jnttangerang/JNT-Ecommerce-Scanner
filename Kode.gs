@@ -1423,10 +1423,25 @@ function handleSaveHandover(handover) {
   }
 }
 
+// ponytail: resolusi nama sheet toleran (exact -> trim + case/spasi/underscore-insensitive) tanpa menyentuh handleSaveReturBatch.
+function resolveSheet_(ss, expectedName) {
+  const exact = ss.getSheetByName(expectedName);
+  if (exact) return exact;
+  const norm = function(s) {
+    return (s || "").toString().trim().toUpperCase().replace(/[\s_]+/g, "_");
+  };
+  const target = norm(expectedName);
+  const sheets = ss.getSheets ? ss.getSheets() : [];
+  for (let i = 0; i < sheets.length; i++) {
+    if (norm(sheets[i].getName()) === target) return sheets[i];
+  }
+  return null;
+}
+
 function handleGetRetur() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const returSheet = ss.getSheetByName("DATA_RETUR");
-  const hoSheet = ss.getSheetByName("DATA_RETUR_SERAH");
+  const returSheet = resolveSheet_(ss, "DATA_RETUR");
+  const hoSheet = resolveSheet_(ss, "DATA_RETUR_SERAH");
 
   const returs = [];
   const handovers = [];
@@ -1473,77 +1488,92 @@ function handleGetRetur() {
       };
 
       for (let i = 1; i < allValues.length; i++) {
-        const row = allValues[i];
-        const deletedAt = cellStr(row, iDeletedAt);
-        if (deletedAt) continue;
+        try {
+          const row = allValues[i];
+          const deletedAt = cellStr(row, iDeletedAt);
+          if (deletedAt) continue;
 
-        const returIdStr = cellStr(row, iReturID);
-        const resiStr = cellStr(row, iResi).toUpperCase();
-        if (!returIdStr && !resiStr) continue;
+          const returIdStr = cellStr(row, iReturID);
+          const resiStr = cellStr(row, iResi).toUpperCase();
+          if (!returIdStr && !resiStr) continue;
 
-        let tglStr = (iTglTerima < row.length && row[iTglTerima] instanceof Date) ? Utilities.formatDate(row[iTglTerima], "GMT+7", "yyyy-MM-dd") : cellStr(row, iTglTerima);
-        let jamStr = (iJamTerima < row.length && row[iJamTerima] instanceof Date) ? Utilities.formatDate(row[iJamTerima], "GMT+7", "HH:mm:ss") : cellStr(row, iJamTerima);
-        let tglDatangStr = (iTglDatang < row.length && row[iTglDatang] instanceof Date) ? Utilities.formatDate(row[iTglDatang], "GMT+7", "yyyy-MM-dd") : (cellStr(row, iTglDatang) || tglStr);
-        let isiPaketStr = cellStr(row, iIsiPaket);
-        let kodeBaggingStr = cellStr(row, iKodeBagging).toUpperCase();
-        let jumlahManifestNum = (iJumlahManifest < row.length && row[iJumlahManifest] !== "" && row[iJumlahManifest] !== null && row[iJumlahManifest] !== undefined) ? (Number(row[iJumlahManifest]) || 0) : 0;
+          let tglStr = (iTglTerima < row.length && row[iTglTerima] instanceof Date) ? Utilities.formatDate(row[iTglTerima], "GMT+7", "yyyy-MM-dd") : cellStr(row, iTglTerima);
+          let jamStr = (iJamTerima < row.length && row[iJamTerima] instanceof Date) ? Utilities.formatDate(row[iJamTerima], "GMT+7", "HH:mm:ss") : cellStr(row, iJamTerima);
+          let tglDatangStr = (iTglDatang < row.length && row[iTglDatang] instanceof Date) ? Utilities.formatDate(row[iTglDatang], "GMT+7", "yyyy-MM-dd") : (cellStr(row, iTglDatang) || tglStr);
+          let isiPaketStr = cellStr(row, iIsiPaket);
+          let kodeBaggingStr = cellStr(row, iKodeBagging).toUpperCase();
+          let jumlahManifestNum = (iJumlahManifest < row.length && row[iJumlahManifest] !== "" && row[iJumlahManifest] !== null && row[iJumlahManifest] !== undefined) ? (Number(row[iJumlahManifest]) || 0) : 0;
 
-        returs.push({
-          ReturID: returIdStr,
-          Resi: resiStr,
-          SellerID: cellStr(row, iSellerID),
-          Seller: cellStr(row, iSeller),
-          Outlet: cellStr(row, iOutlet),
-          Sumber: cellStr(row, iSumber),
-          TglDatang: tglDatangStr,
-          KodeBagging: kodeBaggingStr,
-          JumlahManifest: jumlahManifestNum,
-          TglTerima: tglStr,
-          JamTerima: jamStr,
-          AdminTerima: cellStr(row, iAdminTerima),
-          Kondisi: cellStr(row, iKondisi) || "Baik",
-          IsiPaket: isiPaketStr,
-          FotoTerimaURL: cellStr(row, iFotoTerimaURL),
-          Status: (cellStr(row, iStatus).toUpperCase() || "DITERIMA"),
-          HandoverID: cellStr(row, iHandoverID),
-          Catatan: cellStr(row, iCatatan),
-          CreatedAt: cellIso(row, iCreatedAt),
-          UpdatedAt: cellIso(row, iUpdatedAt),
-          DeletedAt: deletedAt,
-          SyncStatus: "SYNCED"
-        });
+          returs.push({
+            ReturID: returIdStr,
+            Resi: resiStr,
+            SellerID: cellStr(row, iSellerID),
+            Seller: cellStr(row, iSeller),
+            Outlet: cellStr(row, iOutlet),
+            Sumber: cellStr(row, iSumber),
+            TglDatang: tglDatangStr,
+            KodeBagging: kodeBaggingStr,
+            JumlahManifest: jumlahManifestNum,
+            TglTerima: tglStr,
+            JamTerima: jamStr,
+            AdminTerima: cellStr(row, iAdminTerima),
+            Kondisi: cellStr(row, iKondisi) || "Baik",
+            IsiPaket: isiPaketStr,
+            FotoTerimaURL: cellStr(row, iFotoTerimaURL),
+            Status: (cellStr(row, iStatus).toUpperCase() || "DITERIMA"),
+            HandoverID: cellStr(row, iHandoverID),
+            Catatan: cellStr(row, iCatatan),
+            CreatedAt: cellIso(row, iCreatedAt),
+            UpdatedAt: cellIso(row, iUpdatedAt),
+            DeletedAt: deletedAt,
+            SyncStatus: "SYNCED"
+          });
+        } catch (rowErr) {
+          Logger.log("[get_retur] row " + (i + 1) + " error: " + rowErr.toString());
+        }
       }
     }
   }
 
+  Logger.log(
+    "[get_retur] sheet=" + (returSheet ? returSheet.getName() : "NOT_FOUND") +
+    " lastRow=" + (returSheet ? returSheet.getLastRow() : 0) +
+    " lastCol=" + (returSheet ? returSheet.getLastColumn() : 0) +
+    " return returs=" + returs.length
+  );
+
   if (hoSheet && hoSheet.getLastRow() > 1) {
     const data = hoSheet.getRange(2, 1, hoSheet.getLastRow() - 1, 15).getValues();
     for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      const deletedAt = row[14] ? row[14].toString() : "";
-      if (deletedAt) continue;
+      try {
+        const row = data[i];
+        const deletedAt = row[14] ? row[14].toString().trim() : "";
+        if (deletedAt) continue;
 
-      let tglStr = row[4] instanceof Date ? Utilities.formatDate(row[4], "GMT+7", "yyyy-MM-dd") : (row[4] ? row[4].toString() : "");
-      let jamStr = row[5] instanceof Date ? Utilities.formatDate(row[5], "GMT+7", "HH:mm:ss") : (row[5] ? row[5].toString() : "");
+        let tglStr = row[4] instanceof Date ? Utilities.formatDate(row[4], "GMT+7", "yyyy-MM-dd") : (row[4] ? row[4].toString() : "");
+        let jamStr = row[5] instanceof Date ? Utilities.formatDate(row[5], "GMT+7", "HH:mm:ss") : (row[5] ? row[5].toString() : "");
 
-      handovers.push({
-        HandoverID: row[0] ? row[0].toString() : "",
-        SellerID: row[1] ? row[1].toString() : "",
-        Seller: row[2] ? row[2].toString() : "",
-        Outlet: row[3] ? row[3].toString() : "",
-        TglSerah: tglStr,
-        JamSerah: jamStr,
-        AdminSerah: row[6] ? row[6].toString() : "",
-        Metode: row[7] ? row[7].toString() : "AMBIL_DI_OUTLET",
-        JumlahPaket: Number(row[8]) || 0,
-        DaftarResi: row[9] ? row[9].toString() : "",
-        NamaPenerima: row[10] ? row[10].toString() : "",
-        FotoBuktiURL: row[11] ? row[11].toString() : "",
-        Catatan: row[12] ? row[12].toString() : "",
-        CreatedAt: row[13] ? row[13].toString() : "",
-        DeletedAt: deletedAt,
-        SyncStatus: "SYNCED"
-      });
+        handovers.push({
+          HandoverID: row[0] ? row[0].toString() : "",
+          SellerID: row[1] ? row[1].toString() : "",
+          Seller: row[2] ? row[2].toString() : "",
+          Outlet: row[3] ? row[3].toString() : "",
+          TglSerah: tglStr,
+          JamSerah: jamStr,
+          AdminSerah: row[6] ? row[6].toString() : "",
+          Metode: row[7] ? row[7].toString() : "AMBIL_DI_OUTLET",
+          JumlahPaket: Number(row[8]) || 0,
+          DaftarResi: row[9] ? row[9].toString() : "",
+          NamaPenerima: row[10] ? row[10].toString() : "",
+          FotoBuktiURL: row[11] ? row[11].toString() : "",
+          Catatan: row[12] ? row[12].toString() : "",
+          CreatedAt: row[13] ? row[13].toString() : "",
+          DeletedAt: deletedAt,
+          SyncStatus: "SYNCED"
+        });
+      } catch (hoErr) {
+        Logger.log("[get_retur] handover row " + (i + 2) + " error: " + hoErr.toString());
+      }
     }
   }
 
